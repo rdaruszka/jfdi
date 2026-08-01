@@ -1,4 +1,4 @@
-# JFDI — Just Fucking Do It
+# JFDI — Just F'ing Do It
 
 A command-line harness around the Claude Code harness. Hand it a ticket; it runs
 the ticket through an **implement → review → QA** loop in an isolated git
@@ -25,7 +25,19 @@ Review failures loop back to a fresh Implementation session with the feedback
 **Blocked** with the question *and a recommended answer* written into the ticket
 note. The board is the question queue.
 
+## Installation
+
+Requires Node 22+, git, and the `claude` CLI on your `PATH`.
+
+```bash
+pnpm install && pnpm build && pnpm pack && npm i -g ./jfdi-0.0.1.tgz
+```
+
+To upgrade, rebuild and reinstall the same way.
+
 ## Usage
+
+Run `jfdi` from the root of the project you want it to work on.
 
 ```
 jfdi init             # scaffold .jfdi/ and set up the mechanical gate
@@ -41,13 +53,3 @@ The board (`.jfdi/board.md`) uses the Obsidian Kanban plugin format, so it
 renders as a live board in Obsidian. Column names are yours; map them to roles
 in `.jfdi/config.json`. Cards are one line; link a fuller spec with a
 `[[wikilink]]` into `.jfdi/tickets/`.
-
-## Development
-
-```
-pnpm install
-pnpm build && pnpm test && pnpm lint   # the mechanical gate
-```
-
-JFDI is self-hosted: this repo has its own `.jfdi/` and its backlog flows
-through its own pipeline.

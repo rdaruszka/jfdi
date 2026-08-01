@@ -1,4 +1,4 @@
-const USAGE = `jfdi — Just Fucking Do It
+const USAGE = `jfdi — Just F'ing Do It
 
 Usage:
   jfdi run <ticket>     Run one ticket through the full pipeline (card text,

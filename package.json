@@ -1,11 +1,14 @@
 {
   "name": "jfdi",
   "version": "0.0.1",
-  "description": "Just Fucking Do It — a CLI harness around the Claude Code harness",
+  "description": "Just F'ing Do It — a CLI harness around the Claude Code harness",
   "type": "module",
   "bin": {
     "jfdi": "./dist/index.js"
   },
+  "files": [
+    "dist"
+  ],
   "engines": {
     "node": ">=22"
   },

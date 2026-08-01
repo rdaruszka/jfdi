@@ -1,4 +1,4 @@
-# JFDI — Just Fucking Do It
+# JFDI — Just F'ing Do It
 
 A CLI harness around the Claude Code harness. Hand it a ticket; it runs implement → review → QA in an isolated git worktree, then merges. Point it at a Kanban board and it does that continuously, several tickets at a time.
 

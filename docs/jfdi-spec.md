@@ -1,6 +1,6 @@
 # JFDI — System Specification (Iteration 2)
 
-> **JFDI** — *Just Fucking Do It.*
+> **JFDI** — *Just F'ing Do It.*
 >
 > A command-line harness around the Claude Code harness. Hand it a ticket; it runs the ticket through an implement → review → QA loop in an isolated git worktree, then merges. Point it at a Kanban board and it does that continuously, several tickets at a time.
 

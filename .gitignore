@@ -6,3 +6,4 @@ dist/
 .jfdi/runs/
 .jfdi/events.jsonl
 .jfdi/state.json
+*.tgz
