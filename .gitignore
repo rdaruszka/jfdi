@@ -2,8 +2,11 @@ node_modules/
 dist/
 *.log
 
-# JFDI runtime state (versioned: board.md, tickets/, config.json, sandbox.md, prompts)
+# JFDI runtime state + work tracking (versioned: config.json, sandbox.md, prompts)
+# — .jfdi/.gitignore is authoritative; these mirror it for a root-level view
 .jfdi/runs/
 .jfdi/events.jsonl
 .jfdi/state.json
+.jfdi/board.md
+.jfdi/tickets/
 *.tgz

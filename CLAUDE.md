@@ -29,6 +29,10 @@ The **coordinator** watches `board.md` (Obsidian Kanban format), dispatches each
 ```
 docs/jfdi-spec.md    — the spec (normative)
 src/                 — TypeScript source
+fixtures/half-app/   — "penny": a half-finished CLI + 7-ticket board for test runs
+                       (see fixtures/README.md; minted via src/fixture-project.ts)
+fixtures/half-app.grading/ — per-ticket acceptance checks, kept out of the template
+scripts/playground.mjs     — `pnpm playground`: mint a disposable half-app copy
 .jfdi/               — JFDI's own state once self-hosting begins:
   config.json          project config (§9)
   board.md             Kanban board (Obsidian Kanban plugin format)
@@ -39,7 +43,7 @@ src/                 — TypeScript source
   state.json           derived snapshot (gitignored)
 ```
 
-`board.md`, `tickets/`, `config.json`, `sandbox.md`, and the stage prompt files are versioned; `runs/`, `events.jsonl`, `state.json` are gitignored.
+`config.json`, `sandbox.md`, and the stage prompt files are versioned. `board.md` and `tickets/` are **not** — they are work-tracking artifacts external to the product (typically symlinked into an Obsidian vault; a JIRA-style service later via the spec §12 seam), mutated mid-run by human and coordinator alike. `runs/`, `events.jsonl`, `state.json`, and `worktrees/` are runtime state; `.jfdi/.gitignore` (owned by the scaffold) covers all of the above.
 
 ## Hard invariants — do not violate
 
@@ -74,3 +78,4 @@ Self-hosting is live: this repo's own [.jfdi/](.jfdi/config.json) has the pnpm g
 - Self-hosting hazard: tests exercise a product that spawns agent sessions and creates worktrees. Test fixtures (scratch git repos) live **outside any parent git repo** (e.g. under the OS temp dir) — Claude Code walks up the tree looking for an enclosing repo, and that bit Iteration 1.
 - Guard against nested/runaway session spawning in QA sandboxes; inner JFDI runs get their own scratch repo and `.jfdi/` state.
 - Unit tests belong to Implementation and ship with the code; acceptance/regression tests belong to QA, derive from the *ticket* (not the diff), and accumulate over time.
+- For realistic end-to-end material, mint a copy of `fixtures/half-app` with `createProjectFixture()` ([src/fixture-project.ts](src/fixture-project.ts)) — never run JFDI against the template in place. The template's flaws (float bug, duplicated storage, `length + 1` ids) are load-bearing ticket targets; keep its own gate green when editing it (`fixtures/README.md` has the rules).

@@ -1,0 +1,24 @@
+{
+  "board": {
+    "path": ".jfdi/board.md",
+    "columns": {
+      "begin": "Ready",
+      "inProgress": "In Progress",
+      "done": "Done",
+      "blocked": "Blocked",
+      "readyToMerge": "Ready to Merge"
+    }
+  },
+  "ticketsDir": ".jfdi/tickets",
+  "gate": [
+    { "name": "deps", "cmd": "pnpm install --prefer-offline" },
+    { "name": "build", "cmd": "pnpm build" },
+    { "name": "test", "cmd": "pnpm test" },
+    { "name": "lint", "cmd": "pnpm lint" }
+  ],
+  "pipeline": { "max_rounds": 3 },
+  "integration": { "target_branch": "main", "mode": "on-approval" },
+  "max_concurrent": 2,
+  "harness": "claude",
+  "harnessArgs": ["--permission-mode", "bypassPermissions"]
+}

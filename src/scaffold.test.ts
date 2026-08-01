@@ -39,7 +39,16 @@ describe("scaffoldJfdi", () => {
       "Sandbox Contract",
     );
     const ignore = await fs.readFile(path.join(jfdiDir, ".gitignore"), "utf8");
-    for (const entry of ["worktrees/", "runs/", "events.jsonl", "state.json"])
+    // Runtime state plus the board and tickets — work tracking stays out of
+    // product history (spec §2).
+    for (const entry of [
+      "worktrees/",
+      "runs/",
+      "events.jsonl",
+      "state.json",
+      "board.md",
+      "tickets/",
+    ])
       expect(ignore).toContain(entry);
   });
 

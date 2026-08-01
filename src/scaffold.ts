@@ -6,15 +6,21 @@ import { atomicWrite, ensureDir, fileExists } from "./util/fsx.js";
 
 /**
  * Runtime state under .jfdi/ must never be committed — worktrees would even be
- * picked up as embedded repos by a stray `git add -A`. JFDI owns a .gitignore
- * inside .jfdi/ so this holds regardless of the repo's root .gitignore.
- * (board.md, tickets/, config.json, sandbox.md, prompts/ remain versioned.)
+ * picked up as embedded repos by a stray `git add -A`. Neither are the board
+ * and tickets: they're work-tracking artifacts external to the product (think
+ * JIRA), mutated mid-run by human and coordinator alike (spec §2). JFDI owns a
+ * .gitignore inside .jfdi/ so this holds regardless of the repo's root
+ * .gitignore. (config.json, sandbox.md, prompts/ remain versioned.)
  */
 const JFDI_GITIGNORE = `# JFDI runtime state — never committed
 worktrees/
 runs/
 events.jsonl
 state.json
+
+# Work tracking lives outside product history (often a symlink into a vault)
+board.md
+tickets/
 `;
 
 export async function ensureJfdiStateScaffold(jfdiDir: string): Promise<void> {

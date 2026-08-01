@@ -39,7 +39,7 @@ JFDI operates on **one project**: the git repository in the current working dire
   state.json         — current coordinator snapshot (derived, rebuildable from events)
 ```
 
-`.jfdi/` is committed to the repo (runs/ and events may be gitignored — builder's choice, but board and tickets are versioned). Obsidian visibility is achieved by symlinking `.jfdi/` (or the board/tickets within it) into the vault, or the vault into it — the tool itself never searches or writes outside the project folder.
+`.jfdi/` is committed to the repo, with two exclusions. Runtime state (runs/, events.jsonl, state.json, worktrees/) is gitignored. So are `board.md` and `tickets/`: they are work-tracking artifacts external to the product — the same information that would live in JIRA or another ticket service (§12's ticket-source seam) — and they are mutated continuously by both the human and the coordinator mid-run, so versioning them would entangle work-tracking churn with product history. What *is* versioned is the project's JFDI setup: config.json, sandbox.md, and the stage prompts. Obsidian visibility is achieved by symlinking `.jfdi/` (or the board/tickets within it) into the vault, or the vault into it — the tool itself never searches or writes outside the project folder.
 
 ## 3. The Board and Tickets
 
