@@ -4,6 +4,16 @@ A CLI harness around the Claude Code harness. Hand it a ticket; it runs implemen
 
 **The spec is the source of truth: [docs/jfdi-spec.md](docs/jfdi-spec.md) (Iteration 2).** This file summarizes conventions and invariants for working in this repo; when in doubt, the spec wins. Anything under `Iteration 1/` is historical, not normative.
 
+## Which JFDI is which
+
+Self-hosting makes three distinct things easy to conflate. Keep them apart:
+
+1. **The JFDI project** — this codebase: the source that compiles into the tool. This is what CLAUDE.md governs and what tickets change.
+2. **JFDI the tool** — the compiled product: a coding tool that runs agent pipelines against a target project. Some files in this repo are *product content the tool ships to target projects* — `docs/coding-guidelines.md`, `docs/agent-enforcement.md`, `src/guidelines.ts`, the scaffold templates — not rules or config for this repo itself.
+3. **`.jfdi/` — one tool instance's configuration.** This repo's `.jfdi/` configures a running instance of the JFDI tool whose target project happens to be the JFDI project (like Claude Code being used to build Claude Code). Its board and tickets track work on the project; its config and prompts steer that instance's runs.
+
+The test: a file copied into target projects at init is **product content** (edit it to change what users get); a file steering this repo's own runs is **instance config** (edit `.jfdi/`); everything else is **project source** (edit it to change the tool). The project's own coding standards are this file's Code guidelines plus `biome.json`/`tsconfig.json` — never the shipped guideline docs.
+
 ## Toolchain
 
 - **Runtime:** Node.js + TypeScript (strict mode)
