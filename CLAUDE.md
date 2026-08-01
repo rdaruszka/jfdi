@@ -152,6 +152,6 @@ Self-hosting is live: this repo's own [.jfdi/](.jfdi/config.json) has the pnpm g
 ## Testing notes
 
 - Self-hosting hazard: tests exercise a product that spawns agent sessions and creates worktrees. Test fixtures (scratch git repos) live **outside any parent git repo** (e.g. under the OS temp dir) — Claude Code walks up the tree looking for an enclosing repo, and that bit Iteration 1.
-- Guard against nested/runaway session spawning in QA sandboxes; inner JFDI runs get their own scratch repo and `.jfdi/` state.
+- Guard against nested/runaway session spawning in QA sandboxes; inner JFDI runs get their own scratch repo, their own `.jfdi/`, and a scratch `JFDI_HOME` — without the last one an inner run writes its `runs/`, `events.jsonl` and `state.json` into the real `~/.jfdi/projects/`.
 - Unit tests belong to Implementation and ship with the code; acceptance/regression tests belong to QA, derive from the *ticket* (not the diff), and accumulate over time.
 - For realistic end-to-end material, mint a copy of `fixtures/half-app` with `createProjectFixture()` ([src/fixture-project.ts](src/fixture-project.ts)) — never run JFDI against the template in place. The template's flaws (float bug, duplicated storage, `length + 1` ids) are load-bearing ticket targets; keep its own gate green when editing it (`fixtures/README.md` has the rules).

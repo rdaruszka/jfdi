@@ -8,7 +8,6 @@ import { git } from "./git.js";
 import type { FakeHandler } from "./harness/fake.js";
 import { FakeHarness } from "./harness/fake.js";
 import type { PipelineContext } from "./pipeline.js";
-import { projectKey } from "./state-dir.js";
 
 export interface Fixture {
   root: string;
@@ -37,7 +36,7 @@ export async function makeFixture(configOverrides: Partial<JfdiConfig> = {}): Pr
   const jfdiDir = path.join(repo, ".jfdi");
   const ticketsDir = path.join(jfdiDir, "tickets");
   await fs.mkdir(ticketsDir, { recursive: true });
-  const stateDir = path.join(root, "state", projectKey(repo));
+  const stateDir = path.join(root, "state");
   const config: JfdiConfig = { ...defaultConfig(), gate: [], ...configOverrides };
 
   return {

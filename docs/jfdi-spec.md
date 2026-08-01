@@ -145,7 +145,7 @@ Per-ticket override: `mode: ask` in the ticket note's frontmatter lowers the esc
 - **Terminal-driven sandboxes ship first** (CLIs, daemons, JFDI itself): invocation patterns, expected outputs, scratch-directory conventions.
 - **Browser-driven sandboxes** (web apps, via Playwright or the harness's browser tooling) are the second sandbox type, needed when JFDI is pointed at the work webapp.
 
-**Self-hosting note:** JFDI's first target is JFDI. The sandbox contract must therefore handle a product-under-test that itself spawns agent sessions and creates worktrees — QA runs must isolate the inner JFDI (scratch repos outside the outer worktree, separate `.jfdi/` state, guard against runaway nested session spawning). Iteration 1 hit the related failure of Claude Code walking up the directory tree to find an enclosing repo; test fixtures live outside any parent git repo.
+**Self-hosting note:** JFDI's first target is JFDI. The sandbox contract must therefore handle a product-under-test that itself spawns agent sessions and creates worktrees — QA runs must isolate the inner JFDI (scratch repos outside the outer worktree, a separate `.jfdi/`, a scratch `JFDI_HOME` so run state stays out of the real `~/.jfdi/projects/`, guard against runaway nested session spawning). Iteration 1 hit the related failure of Claude Code walking up the directory tree to find an enclosing repo; test fixtures live outside any parent git repo.
 
 ## 7. Integration
 

@@ -2,11 +2,14 @@ node_modules/
 dist/
 *.log
 
-# JFDI runtime state + work tracking (versioned: config.json, sandbox.md, prompts)
-# — .jfdi/.gitignore is authoritative; these mirror it for a root-level view
+# Work tracking, external to the product (.jfdi/.gitignore is authoritative;
+# config.json, sandbox.md and prompts/ stay versioned)
+.jfdi/board.md
+.jfdi/tickets/
+
+# Legacy in-project run state — superseded by ~/.jfdi/projects/<project-key>/.
+# Nothing writes these anymore; kept ignored while this repo's old files remain.
 .jfdi/runs/
 .jfdi/events.jsonl
 .jfdi/state.json
-.jfdi/board.md
-.jfdi/tickets/
 *.tgz

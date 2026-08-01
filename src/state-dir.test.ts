@@ -3,11 +3,11 @@ import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { jfdiHome, projectKey, projectStateDir } from "./state-dir.js";
 
-const ORIGINAL_HOME = process.env.JFDI_HOME;
+const ORIGINAL_JFDI_HOME = process.env.JFDI_HOME;
 
 afterEach(() => {
-  if (ORIGINAL_HOME === undefined) delete process.env.JFDI_HOME;
-  else process.env.JFDI_HOME = ORIGINAL_HOME;
+  if (ORIGINAL_JFDI_HOME === undefined) delete process.env.JFDI_HOME;
+  else process.env.JFDI_HOME = ORIGINAL_JFDI_HOME;
 });
 
 describe("projectKey", () => {
