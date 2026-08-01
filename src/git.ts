@@ -56,6 +56,15 @@ export async function isWorkingTreeClean(repo: string): Promise<boolean> {
   return (await git(repo, "status", "--porcelain")) === "";
 }
 
+/**
+ * Like isWorkingTreeClean but ignoring untracked files — the right check
+ * before a fast-forward, where only tracked modifications can conflict
+ * (git itself refuses if a checkout would clobber an untracked file).
+ */
+export async function hasTrackedChanges(repo: string): Promise<boolean> {
+  return (await git(repo, "status", "--porcelain", "--untracked-files=no")) !== "";
+}
+
 /** True if `ancestor` is contained in `ref` (already-merged detection). */
 export async function isAncestor(repo: string, ancestor: string, ref: string): Promise<boolean> {
   const r = await gitTry(repo, "merge-base", "--is-ancestor", ancestor, ref);
@@ -160,7 +169,7 @@ export async function fastForward(repo: string, target: string, branch: string):
     throw new GitError(`cannot fast-forward ${target} to ${branch}: not a descendant`);
   const head = await currentBranch(repo);
   if (head === target) {
-    if (!(await isWorkingTreeClean(repo)))
+    if (await hasTrackedChanges(repo))
       throw new GitError(
         `target branch "${target}" is checked out with uncommitted changes; commit or stash before merging`,
       );

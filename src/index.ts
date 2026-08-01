@@ -1,4 +1,4 @@
 #!/usr/bin/env node
-import { greeting } from "./greeting.js";
+import { main } from "./cli.js";
 
-console.log(greeting());
+process.exitCode = await main(process.argv.slice(2));

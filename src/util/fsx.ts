@@ -40,9 +40,28 @@ export class MtimeConflictError extends Error {
   }
 }
 
+/** In-process writers to the same file are strictly serialized. */
+const fileLocks = new Map<string, Promise<unknown>>();
+
+function withFileLock<T>(filePath: string, job: () => Promise<T>): Promise<T> {
+  const prev = fileLocks.get(filePath) ?? Promise.resolve();
+  const run = prev.then(job, job);
+  fileLocks.set(
+    filePath,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return run;
+}
+
 /**
- * Atomic read-modify-write with mtime conflict detection and retry.
- * `modify` returns the new content, or null to skip writing.
+ * Atomic read-modify-write with conflict detection and retry. In-process
+ * writers are serialized by a per-path lock; external writers (Obsidian edits
+ * the board too) are detected by re-reading the content just before the
+ * rename and retrying on any change. `modify` returns the new content, or
+ * null to skip writing.
  */
 export async function readModifyWrite(
   filePath: string,
@@ -51,18 +70,19 @@ export async function readModifyWrite(
 ): Promise<boolean> {
   const retries = opts.retries ?? 5;
   const retryDelayMs = opts.retryDelayMs ?? 50;
-  for (let attempt = 0; ; attempt++) {
-    const before = await fs.stat(filePath);
-    const content = await fs.readFile(filePath, "utf8");
-    const next = modify(content);
-    if (next === null) return false;
-    const after = await fs.stat(filePath);
-    if (after.mtimeMs !== before.mtimeMs || after.size !== before.size) {
-      if (attempt >= retries) throw new MtimeConflictError(filePath);
-      await new Promise((r) => setTimeout(r, retryDelayMs * (attempt + 1)));
-      continue;
+  return withFileLock(filePath, async () => {
+    for (let attempt = 0; ; attempt++) {
+      const content = await fs.readFile(filePath, "utf8");
+      const next = modify(content);
+      if (next === null) return false;
+      const reread = await fs.readFile(filePath, "utf8");
+      if (reread !== content) {
+        if (attempt >= retries) throw new MtimeConflictError(filePath);
+        await new Promise((r) => setTimeout(r, retryDelayMs * (attempt + 1)));
+        continue;
+      }
+      await atomicWrite(filePath, next);
+      return true;
     }
-    await atomicWrite(filePath, next);
-    return true;
-  }
+  });
 }

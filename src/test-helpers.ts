@@ -1,0 +1,89 @@
+/** Shared test fixtures (excluded from the build). */
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import { defaultConfig, type JfdiConfig } from "./config.js";
+import { EventLog } from "./events.js";
+import { git } from "./git.js";
+import type { FakeHandler } from "./harness/fake.js";
+import { FakeHarness } from "./harness/fake.js";
+import type { PipelineContext } from "./pipeline.js";
+
+export interface Fixture {
+  root: string;
+  repo: string;
+  jfdiDir: string;
+  ticketsDir: string;
+  config: JfdiConfig;
+  ctx: (handler: FakeHandler) => PipelineContext & { harness: FakeHarness };
+  cleanup: () => Promise<void>;
+}
+
+/** Scratch repo under the OS temp dir — never inside a parent git repo. */
+export async function makeFixture(configOverrides: Partial<JfdiConfig> = {}): Promise<Fixture> {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-pipe-"));
+  const repo = path.join(root, "repo");
+  await fs.mkdir(repo);
+  await git(repo, "init", "-b", "main");
+  await git(repo, "config", "user.email", "test@jfdi.local");
+  await git(repo, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(repo, "README.md"), "product\n");
+  await git(repo, "add", "-A");
+  await git(repo, "commit", "-m", "initial");
+
+  const jfdiDir = path.join(repo, ".jfdi");
+  const ticketsDir = path.join(jfdiDir, "tickets");
+  await fs.mkdir(ticketsDir, { recursive: true });
+  const config: JfdiConfig = { ...defaultConfig(), gate: [], ...configOverrides };
+
+  return {
+    root,
+    repo,
+    jfdiDir,
+    ticketsDir,
+    config,
+    ctx: (handler) => {
+      const harness = new FakeHarness(handler);
+      return {
+        repoRoot: repo,
+        jfdiDir,
+        config,
+        harness,
+        log: new EventLog(jfdiDir, false),
+      };
+    },
+    cleanup: () => fs.rm(root, { recursive: true, force: true }),
+  };
+}
+
+/** Which pipeline stage a prompt belongs to (prompts name their agent). */
+export function stageOf(prompt: string): "implementation" | "code-review" | "qa" | "integration" {
+  if (prompt.includes("Implementation agent")) return "implementation";
+  if (prompt.includes("Code Review agent")) return "code-review";
+  if (prompt.includes("Quality Assurance agent")) return "qa";
+  if (prompt.includes("Integration agent")) return "integration";
+  throw new Error(`cannot determine stage from prompt: ${prompt.slice(0, 100)}`);
+}
+
+/** Pull the verdict file path out of a rendered prompt. */
+export function verdictPathOf(prompt: string): string {
+  const m = /(\/\S+\.verdict\.json)/.exec(prompt);
+  if (!m?.[1]) throw new Error("no verdict path in prompt");
+  return m[1];
+}
+
+export async function writeVerdict(prompt: string, verdict: object): Promise<void> {
+  await fs.writeFile(verdictPathOf(prompt), JSON.stringify(verdict));
+}
+
+export async function commitFile(
+  cwd: string,
+  file: string,
+  content: string,
+  message: string,
+): Promise<void> {
+  await fs.mkdir(path.dirname(path.join(cwd, file)), { recursive: true });
+  await fs.writeFile(path.join(cwd, file), content);
+  await git(cwd, "add", "-A");
+  await git(cwd, "commit", "-m", message);
+}
