@@ -19,7 +19,8 @@ worktree). Useful commands and expectations:
 - `... init --bare` — scaffolds `.jfdi/` in the *current directory's* repo, exit 0
 - `... run "<ticket text>"` — full pipeline with inline streaming; exit 0 on
   pass, 2 on blocked, 1 on failure
-- `... status` / `... status --json` — snapshot of `.jfdi/state.json`
+- `... status` / `... status --json` — snapshot of the project's `state.json`
+  under `$JFDI_HOME/projects/<project-key>/`
 - `... logs <ticket-id>` — raw session logs for the latest run
 - `... merge <ticket-id>` — approve a ready-to-merge ticket
 
@@ -34,13 +35,16 @@ JFDI-under-test spawns its own agent sessions and creates its own worktrees:
    executable on PATH that replays canned stream-json lines and writes the
    verdict file its prompt names (match `/(\/\S+\.verdict\.json)/`). This also
    guards against runaway nested session spawning.
-3. The inner JFDI gets its own `.jfdi/` state inside the scratch repo (its
+3. The inner JFDI gets its own `.jfdi/` setup inside the scratch repo (its
    `init --bare` creates it). Never point it at this repo's `.jfdi/`.
-4. Configure the scratch repo's git user (`git config user.email/name`) or
+4. **Always export `JFDI_HOME` to a scratch directory.** Run state now lives in
+   `~/.jfdi/projects/<project-key>/`; without the override, JFDI-under-test
+   writes into the real home directory.
+5. Configure the scratch repo's git user (`git config user.email/name`) or
    commits will fail.
 
 ## Teardown
 
-`rm -rf` the scratch directory. Nothing else is left behind — JFDI-under-test
-keeps all state in the scratch repo. Verify no stray `claude` processes remain
+`rm -rf` the scratch directory and the `JFDI_HOME` directory — between them they
+hold everything JFDI-under-test wrote. Verify no stray `claude` processes remain
 if a test killed a run mid-flight.

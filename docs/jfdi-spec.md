@@ -26,7 +26,7 @@ Iteration 1 specified a PO agent, PRD builder, decomposition engine, question qu
 
 ## 2. Project Scope and Layout
 
-JFDI operates on **one project**: the git repository in the current working directory, the same mental model as running `claude` in a folder. All JFDI state lives in a `.jfdi/` directory at the repo root:
+JFDI operates on **one project**: the git repository in the current working directory, the same mental model as running `claude` in a folder. The project's JFDI setup lives in a `.jfdi/` directory at the repo root:
 
 ```
 .jfdi/
@@ -34,12 +34,22 @@ JFDI operates on **one project**: the git repository in the current working dire
   board.md           — the Kanban board (Obsidian Kanban plugin format)
   tickets/           — one markdown note per non-trivial ticket
   sandbox.md         — the QA sandbox contract (§6)
-  runs/<ticket-id>/  — per-run state, session logs, reports, decision records
+  prompts/           — the stage prompt templates
+  worktrees/<ticket-id>/ — the isolated checkout each run builds in (§5)
+```
+
+Run state lives outside the project, in a per-project directory under the user's home:
+
+```
+~/.jfdi/projects/<project-key>/
+  runs/<ticket-id>/  — per-run session logs, reports, decision records
   events.jsonl       — append-only coordinator event stream (§8)
   state.json         — current coordinator snapshot (derived, rebuildable from events)
 ```
 
-`.jfdi/` is committed to the repo, with two exclusions. Runtime state (runs/, events.jsonl, state.json, worktrees/) is gitignored. So are `board.md` and `tickets/`: they are work-tracking artifacts external to the product — the same information that would live in JIRA or another ticket service (§12's ticket-source seam) — and they are mutated continuously by both the human and the coordinator mid-run, so versioning them would entangle work-tracking churn with product history. What *is* versioned is the project's JFDI setup: config.json, sandbox.md, and the stage prompts. Obsidian visibility is achieved by symlinking `.jfdi/` (or the board/tickets within it) into the vault, or the vault into it — the tool itself never searches or writes outside the project folder.
+`<project-key>` is the project root's absolute path with every path separator turned into `-` (`/Users/alice/dev/app` → `-Users-alice-dev-app`), the way Claude Code keys `~/.claude/projects/`; a `-` in a folder name is indistinguishable from a separator, an ambiguity accepted here as it is there. The key derives from the project root — the directory holding `.jfdi/` — so state written mid-run on behalf of a worktree still resolves to the project's own directory. `~/.jfdi/` itself is reserved for future user-global material; everything project-specific sits under `projects/`. Worktrees are the exception that stays in-project (`.jfdi/worktrees/`, gitignored), following Claude Code's `.claude/worktrees/` precedent.
+
+`.jfdi/` is committed to the repo, with two exclusions. Worktrees are gitignored. So are `board.md` and `tickets/`: they are work-tracking artifacts external to the product — the same information that would live in JIRA or another ticket service (§12's ticket-source seam) — and they are mutated continuously by both the human and the coordinator mid-run, so versioning them would entangle work-tracking churn with product history. What *is* versioned is the project's JFDI setup: config.json, sandbox.md, and the stage prompts. Obsidian visibility is achieved by symlinking `.jfdi/` (or the board/tickets within it) into the vault, or the vault into it. Outside its own state directory under `~/.jfdi/projects/`, the tool never searches or writes beyond the project folder — in particular, tickets and `[[wikilinks]]` resolve only against `.jfdi/tickets/`.
 
 ## 3. The Board and Tickets
 
@@ -170,7 +180,7 @@ Merge target is local git only in this iteration; the merge-target abstraction (
 
 ### State and events
 
-The coordinator appends every significant transition (dispatch, stage change, gate result, round, escalation, merge) to `.jfdi/events.jsonl` and maintains `state.json` as the current snapshot. **The TUI is a pure renderer over this stream.** The future web UI, and the future JIRA-watching daemon mode, are additional renderers/consumers of the same stream — this separation is a hard architectural requirement, not a nicety. Raw harness session output is captured per run under `.jfdi/runs/<ticket-id>/` and viewable via `jfdi logs <ticket>`.
+The coordinator appends every significant transition (dispatch, stage change, gate result, round, escalation, merge) to the project's `events.jsonl` and maintains `state.json` as the current snapshot — both under `~/.jfdi/projects/<project-key>/` (§2). **The TUI is a pure renderer over this stream.** The future web UI, and the future JIRA-watching daemon mode, are additional renderers/consumers of the same stream — this separation is a hard architectural requirement, not a nicety. Raw harness session output is captured per run under that directory's `runs/<ticket-id>/` and viewable via `jfdi logs <ticket>`.
 
 ## 9. Configuration (`.jfdi/config.json`)
 

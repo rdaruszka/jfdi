@@ -32,7 +32,7 @@ JFDI is self-hosting from milestone 1: JFDI's own tickets become its first board
 
 ## Architecture (one paragraph)
 
-The **coordinator** watches `board.md` (Obsidian Kanban format), dispatches each ready card into its own **git worktree** on branch `jfdi/<ticket-id>`, and runs a per-ticket pipeline of fresh `claude -p` sessions: **Implementation → mechanical gate → Code Review → QA**, with feedback rounds (cap: `pipeline.max_rounds`, default 3). **Integration** is coordinator-owned and globally serialized — one merge at a time, rebase onto the target branch, rerun the gate, merge. Every transition appends to `.jfdi/events.jsonl`; `state.json` is a derived snapshot; the TUI is a pure renderer over that stream.
+The **coordinator** watches `board.md` (Obsidian Kanban format), dispatches each ready card into its own **git worktree** on branch `jfdi/<ticket-id>`, and runs a per-ticket pipeline of fresh `claude -p` sessions: **Implementation → mechanical gate → Code Review → QA**, with feedback rounds (cap: `pipeline.max_rounds`, default 3). **Integration** is coordinator-owned and globally serialized — one merge at a time, rebase onto the target branch, rerun the gate, merge. Every transition appends to the project's `events.jsonl` under `~/.jfdi/projects/<project-key>/`; `state.json` is a derived snapshot; the TUI is a pure renderer over that stream.
 
 ## Layout
 
@@ -47,17 +47,21 @@ fixtures/half-app/   — "penny": a half-finished CLI + 7-ticket board for test 
                        (see fixtures/README.md; minted via src/fixture-project.ts)
 fixtures/half-app.grading/ — per-ticket acceptance checks, kept out of the template
 scripts/playground.mjs     — `pnpm playground`: mint a disposable half-app copy
-.jfdi/               — JFDI's own state once self-hosting begins:
+.jfdi/               — JFDI's own setup once self-hosting begins:
   config.json          project config (§9)
   board.md             Kanban board (Obsidian Kanban plugin format)
   tickets/             one markdown note per non-trivial ticket
   sandbox.md           QA sandbox contract (§6)
-  runs/<ticket-id>/    per-run logs/reports (gitignored)
-  events.jsonl         append-only event stream (gitignored)
-  state.json           derived snapshot (gitignored)
+  prompts/             stage prompt templates
+  worktrees/<ticket-id>/ — per-run isolated checkout (gitignored)
+
+~/.jfdi/projects/<project-key>/  — run state, outside the project:
+  runs/<ticket-id>/    per-run logs/reports
+  events.jsonl         append-only event stream
+  state.json           derived snapshot
 ```
 
-`config.json`, `sandbox.md`, and the stage prompt files are versioned. `board.md` and `tickets/` are **not** — they are work-tracking artifacts external to the product (typically symlinked into an Obsidian vault; a JIRA-style service later via the spec §12 seam), mutated mid-run by human and coordinator alike. `runs/`, `events.jsonl`, `state.json`, and `worktrees/` are runtime state; `.jfdi/.gitignore` (owned by the scaffold) covers all of the above.
+`config.json`, `sandbox.md`, and the stage prompt files are versioned. `board.md` and `tickets/` are **not** — they are work-tracking artifacts external to the product (typically symlinked into an Obsidian vault; a JIRA-style service later via the spec §12 seam), mutated mid-run by human and coordinator alike. `worktrees/` is runtime state; `.jfdi/.gitignore` (owned by the scaffold) covers it and the two above. Run state lives in the home directory instead, under a `<project-key>` that dash-flattens the project root's absolute path the way Claude Code keys `~/.claude/projects/`; [src/state-dir.ts](src/state-dir.ts) is the only place that computes it, and `JFDI_HOME` overrides the base so tests never touch the real one.
 
 ## Hard invariants — do not violate
 
@@ -68,7 +72,7 @@ These are architectural requirements from the spec, not preferences:
 3. **Serialized integration.** Exactly one integration at a time, pulled from the merge-ready queue in completion order. Nothing but Integration ever touches the target branch.
 4. **Atomic board writes.** `board.md` is co-edited by Obsidian. Read → check mtime → write via temp-file rename → re-read/retry on mtime change. Edits are surgical (move one card line); never rewrite the file wholesale.
 5. **Sequential reviews, commit-bound sign-offs.** Code Review gates QA (a Code Review fail skips the sandbox run). Both sign-offs bind to a specific commit — any code change re-enters at the gate and repeats both reviews.
-6. **Wikilink scope.** Card `[[wikilinks]]` resolve only against `.jfdi/tickets/`. The tool never reads or writes outside the project folder.
+6. **Wikilink scope.** Card `[[wikilinks]]` resolve only against `.jfdi/tickets/`. Beyond its own state directory under `~/.jfdi/projects/`, the tool never reads or writes outside the project folder.
 7. **Decide, log, proceed.** Agent prompts keep escalation a last resort; escalations must carry a recommended answer. Decisions land in the ticket note's `## Decisions`; the board is the question queue (Blocked column + `## Questions`).
 8. **Target branch is configurable** (`integration.target_branch`) — never assume `main`.
 
@@ -79,7 +83,8 @@ Use these terms exactly; introduce no synonyms. The list grows only by editing t
 - **board** — `.jfdi/board.md`, the Obsidian-Kanban file; its columns hold cards.
 - **card** — one line on the board; a pointer to work.
 - **ticket** — the markdown note in `.jfdi/tickets/` a card wikilinks to; carries `## Decisions` and `## Questions`.
-- **run** — one ticket's trip through the pipeline; logs under `.jfdi/runs/<ticket-id>/`.
+- **run** — one ticket's trip through the pipeline; logs under the state directory's `runs/<ticket-id>/`.
+- **state directory** — `~/.jfdi/projects/<project-key>/`, where one project's run state lives: `runs/`, `events.jsonl`, `state.json`.
 - **stage** — one fresh agent session within a run: Implementation, Code Review, QA.
 - **gate** — the mechanical check (`pnpm build && pnpm test && pnpm lint`); all must exit zero.
 - **round** — one feedback cycle: fix → gate → reviews (cap: `pipeline.max_rounds`).
