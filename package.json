@@ -1,0 +1,26 @@
+{
+  "name": "jfdi",
+  "version": "0.0.1",
+  "description": "Just Fucking Do It — a CLI harness around the Claude Code harness",
+  "type": "module",
+  "bin": {
+    "jfdi": "./dist/index.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.18.0",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check .",
+    "format": "biome check --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.6",
+    "@types/node": "^26.1.2",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}
