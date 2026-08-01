@@ -63,7 +63,7 @@ function withFileLock<T>(filePath: string, job: () => Promise<T>): Promise<T> {
  * rename and retrying on any change. `modify` returns the new content, or
  * null to skip writing.
  */
-export async function readModifyWrite(
+export function readModifyWrite(
   filePath: string,
   modify: (content: string) => string | null,
   opts: { retries?: number; retryDelayMs?: number } = {},

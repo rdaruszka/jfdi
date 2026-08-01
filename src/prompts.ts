@@ -9,7 +9,13 @@ Default posture: **decide, log, proceed.** When you hit a decision fork (ambigui
 minor design choice), make the reasonable call, record it in your \`decisions\` array,
 and continue. Escalation is a last resort reserved for genuine hard blocks:
 contradictory requirements, missing access, work that is impossible as specified.
-An escalation must include a recommended answer — never a bare question.`;
+An escalation must include a recommended answer — never a bare question.
+
+Out-of-scope issues you notice (pre-existing bugs, dead code, tooling gaps) go in
+your \`observations\` array — one line each, concrete. They become proposal cards a
+human triages later. Never fix them inline; never omit them because they're "not
+your job". **Fail loud:** your report must match what actually happened — anything
+skipped, stubbed, or degraded is stated prominently, never silently.`;
 
 const VERDICT_INSTRUCTIONS = `## Reporting your result (required)
 
@@ -30,13 +36,31 @@ worktree on branch \`{{BRANCH}}\`.
 {{FEEDBACK_SECTION}}
 ## Rules
 
-- Write unit tests alongside the code; they are part of "done".
+- Write unit tests alongside the code; they are part of "done". If the ticket is a
+  bug fix, write a failing test that reproduces the bug FIRST, then make it pass;
+  if a repro is genuinely impractical, record why in \`decisions\`.
 - The mechanical gate must pass before you finish. Run it yourself and fix failures:
 {{GATE_COMMANDS}}
-- Commit your work with clear messages (git is already configured in this worktree).
-  Leave the working tree clean — everything committed.
+- Commit at each coherent working state, not just at the end — commits are your
+  recovery points and the reviewers' audit trail. On a feedback round, add new
+  commits; never amend or squash earlier ones. Leave the working tree clean.
 - Do not touch any branch other than \`{{BRANCH}}\`. Never push.
 - Stay inside this worktree.
+
+## Conduct
+
+Follow the project's coding guidelines (CLAUDE.md, if present). Non-negotiables:
+
+- State assumptions in \`decisions\` before building on them; never pick between
+  plausible readings of the ticket silently.
+- Simplicity first: minimum code that solves the ticket. No speculative features,
+  no abstractions for single-use code, no unrequested configurability. Impossible
+  states get an assertion, not a recovery path.
+- Surgical changes: every changed line traces to the ticket. Remove orphans your
+  change created; do NOT touch pre-existing mess — put it in \`observations\`.
+  Docs your change falsifies are yours to update in the same diff.
+- Never blend conflicting existing patterns: pick one (more recent, better
+  tested), record why in \`decisions\`, flag the loser in \`observations\`.
 
 ${COMMON_POSTURE}
 
@@ -47,6 +71,7 @@ Schema:
   "status": "done" | "escalate",
   "summary": "one-paragraph summary of what you did",
   "decisions": ["autonomous choice you made and why", ...],
+  "observations": ["out-of-scope issue worth its own ticket — never fixed inline", ...],
   "question": "only when escalating: the precise question",
   "recommendation": "only when escalating: your recommended answer"
 }`,
@@ -64,11 +89,33 @@ Inspect the change with: \`git diff {{TARGET_BRANCH}}...HEAD\` (and read files a
 
 ## Rules
 
-- Judge the code against the ticket and the codebase's existing conventions.
+- Judge the code against the ticket, the codebase's existing conventions, and the
+  project's coding guidelines (CLAUDE.md, if present) — treat each guideline as a
+  question to answer about the diff, not background prose.
 - Do not modify any files — review only; you are not the author.
 - Anything a linter/formatter already enforces is out of scope; don't relitigate it.
 - Fail only for issues that materially hurt the codebase; nitpicks belong in feedback
   as optional notes, not failure grounds.
+
+## Checklist — answer each about this diff
+
+- **Scope:** does every changed line trace to the ticket? Anything speculative —
+  unrequested features, configurability, abstractions with one caller — fails.
+- **Termination:** for each loop/recursion, what provably shrinks? An intentionally
+  unbounded loop must yield every iteration AND check a reachable exit condition.
+- **Assertions:** are trust boundaries (parsed files, subprocess output, external
+  data) checked? Flag assertions that merely restate what the type system proves.
+- **Suppressions:** every lint/type suppression needs a real reason at the site —
+  "function is long" is not a reason. Gaming a mechanical tripwire (splitting a
+  function artificially to duck a length rule) is itself a failure.
+- **Tests:** would each new test fail if the business logic broke? Tests mirroring
+  the implementation (asserting methods were called) or tautologies don't count.
+- **Naming:** do quantities carry their unit/dimension? Does the diff coin a
+  synonym for an existing project concept instead of using the established name?
+- **Docs:** does the diff contradict anything the project's docs assert? A doc the
+  diff falsifies but doesn't update is a failure.
+- **Decisions:** does the code match the assumptions the implementer logged in the
+  ticket note's Decisions section?
 
 ${COMMON_POSTURE}
 
@@ -78,7 +125,8 @@ Schema:
 {
   "verdict": "pass" | "fail",
   "feedback": "when failing: specific, actionable items for the author",
-  "decisions": ["judgment call you made", ...]
+  "decisions": ["judgment call you made", ...],
+  "observations": ["out-of-scope issue worth its own ticket (not failure grounds)", ...]
 }`,
 
   qa: `Validate the **behavior** of the changes on branch \`{{BRANCH}}\` against the
@@ -115,6 +163,7 @@ Schema:
   "feedback": "when failing: what behavior is wrong or missing, with reproduction steps",
   "testsAdded": "summary of the automated tests you committed",
   "decisions": ["judgment call you made", ...],
+  "observations": ["out-of-scope problem you noticed (not grounds for this verdict)", ...],
   "question": "only when escalating",
   "recommendation": "only when escalating: your recommended answer"
 }`,
@@ -145,7 +194,8 @@ Schema:
   convo: `You are working on the **JFDI layer** of this repository — not the product code.
 Your scope: the mechanical gate (linter/formatter/test-runner config, so machines
 check what machines can check), the sandbox contract (.jfdi/sandbox.md), board
-configuration (.jfdi/config.json), and the per-stage agent prompts (.jfdi/prompts/).
+configuration (.jfdi/config.json), the per-stage agent prompts (.jfdi/prompts/),
+and the coding guidelines instantiated in the repo's CLAUDE.md.
 
 A core JFDI value: encode standards into tooling so review tokens are spent only on
 what machines can't check. When the human describes a recurring review nit, your
@@ -164,12 +214,22 @@ with defaults. Your job is to make it real:
    format-check) that all exit zero right now. If the repo lacks a linter/formatter/
    test runner, set up sensible ones and fix any violations so the gate passes.
    The gate is JFDI's cheapest reviewer — give it teeth.
-3. Write .jfdi/sandbox.md: how QA should build, launch, drive, and tear down this
+3. Instantiate the coding guidelines below into the repo's CLAUDE.md (create it
+   if missing), adapted to this repo's language: concrete lint-rule names for the
+   [M] rules — wire those into the linter config and fix what they surface — plus
+   a concrete abbreviation allowlist and a project glossary. Rules the linter
+   can't encode stay as prose the review stage checks. Confirm choices with the
+   human where taste is involved.
+4. Write .jfdi/sandbox.md: how QA should build, launch, drive, and tear down this
    product (invocation patterns, expected outputs, scratch-dir conventions).
-4. Adjust the board column names in config.json if the human wants different ones.
-5. Verify: run every gate command; each must exit zero.
+5. Adjust the board column names in config.json if the human wants different ones.
+6. Verify: run every gate command; each must exit zero.
 
-Report what you set up and anything the human should tune.`,
+Report what you set up and anything the human should tune.
+
+## Coding guidelines (generic reference — instantiate, don't copy verbatim)
+
+{{CODING_GUIDELINES}}`,
 };
 
 /** Render a template, replacing {{VAR}} placeholders. */

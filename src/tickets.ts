@@ -102,7 +102,7 @@ export async function appendToSection(
 }
 
 /** Read a note's raw content, or null. */
-export async function readNote(notePath: string): Promise<string | null> {
+export function readNote(notePath: string): Promise<string | null> {
   return readIfExists(notePath);
 }
 

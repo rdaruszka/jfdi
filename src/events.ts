@@ -20,6 +20,7 @@ export type EventType =
   | "merged"
   | "merge_ready"
   | "card_moved"
+  | "observation"
   | "session_activity"
   | "done"
   | "failed"

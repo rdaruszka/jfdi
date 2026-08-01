@@ -120,6 +120,30 @@ export async function moveCard(
   });
 }
 
+/**
+ * Append a card to a column unless an identical card already exists anywhere on
+ * the board (re-dispatches must not duplicate proposals). Creates the column if
+ * missing. Same atomic read-modify-write discipline as moveCard.
+ */
+export function addCardIfAbsent(
+  boardPath: string,
+  columnName: string,
+  text: string,
+): Promise<boolean> {
+  return readModifyWrite(boardPath, (content) => {
+    const board = parseBoard(content);
+    if (board.columns.some((c) => c.cards.some((k) => k.text === text.trim()))) return null;
+    const lines = content.split("\n");
+    if (!findColumn(board, columnName)) {
+      if (lines.at(-1) !== "") lines.push("");
+      lines.push(`## ${columnName}`);
+    }
+    const range = columnLineRange(lines, columnName);
+    lines.splice(insertionPoint(lines, range), 0, `- [ ] ${text.trim()}`);
+    return lines.join("\n");
+  });
+}
+
 /** Ensure the named columns exist, appending missing ones at the end of the board. */
 export async function ensureColumns(boardPath: string, names: string[]): Promise<void> {
   await readModifyWrite(boardPath, (content) => {

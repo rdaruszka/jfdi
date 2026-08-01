@@ -31,6 +31,8 @@ export interface FeedbackItem {
 export interface RunReport {
   summary: string;
   decisions: string[];
+  /** Out-of-scope issues stages spotted; the caller proposes them as inbox cards. */
+  observations: string[];
   testsAdded: string;
   rounds: number;
   commit: string;
@@ -217,6 +219,95 @@ export async function runQaStage(
   return { verdict, outcome };
 }
 
+type ImplementationStep =
+  | { kind: "done"; summary: string | undefined; decisions: string[]; observations: string[] }
+  | { kind: "retry"; feedback: string }
+  | { kind: "escalate"; question: string; recommendation: string };
+
+async function runImplementationStage(
+  ctx: PipelineContext,
+  ticket: Ticket,
+  worktree: Worktree,
+  roundDir: string,
+  notePath: string,
+  round: number,
+  history: FeedbackItem[],
+): Promise<ImplementationStep> {
+  const verdictPath = path.join(roundDir, "implementation.verdict.json");
+  const prompt = await stagePrompt(ctx, "implementation", {
+    ...commonVars(ctx, ticket, worktree, verdictPath),
+    FEEDBACK_SECTION: formatFeedbackSection(history, ticket.mode),
+  });
+  const outcome = await runStageSession(ctx, ticket, worktree, "implementation", prompt, roundDir);
+  const verdict = await readImplementationVerdict(outcome.verdictPath);
+  ctx.log.emit("stage_end", ticket.id, {
+    stage: "implementation",
+    verdict: verdict?.status ?? (outcome.ok ? "invalid-verdict" : "session-failed"),
+  });
+  if (!verdict) {
+    return {
+      kind: "retry",
+      feedback: outcome.ok
+        ? "The previous implementation session ended without writing a valid verdict file. Re-verify the work is complete, committed, and gate-passing, then write the verdict file as instructed."
+        : `The previous implementation session failed: ${outcome.resultText.slice(0, 2000)}`,
+    };
+  }
+  const decisions = await recordDecisions(notePath, "implementation", round, verdict.decisions);
+  if (verdict.status === "escalate") {
+    return {
+      kind: "escalate",
+      question: verdict.question ?? "Escalated without a stated question.",
+      recommendation: verdict.recommendation ?? "(no recommendation given)",
+    };
+  }
+  return {
+    kind: "done",
+    summary: verdict.summary,
+    decisions,
+    observations: verdict.observations ?? [],
+  };
+}
+
+type CodeReviewStep =
+  | { kind: "pass"; decisions: string[]; observations: string[] }
+  | { kind: "retry"; feedback: string };
+
+async function runCodeReviewStage(
+  ctx: PipelineContext,
+  ticket: Ticket,
+  worktree: Worktree,
+  roundDir: string,
+  notePath: string,
+  round: number,
+): Promise<CodeReviewStep> {
+  const verdictPath = path.join(roundDir, "code-review.verdict.json");
+  const prompt = await stagePrompt(
+    ctx,
+    "code-review",
+    commonVars(ctx, ticket, worktree, verdictPath),
+  );
+  const outcome = await runStageSession(ctx, ticket, worktree, "code-review", prompt, roundDir);
+  // Reviewers are read-only; discard any stray modifications.
+  await git(worktree.path, "checkout", "--", ".");
+  const verdict = await readReviewVerdict(outcome.verdictPath, { allowEscalate: false });
+  ctx.log.emit("stage_end", ticket.id, {
+    stage: "code-review",
+    verdict: verdict?.verdict ?? (outcome.ok ? "invalid-verdict" : "session-failed"),
+  });
+  if (!verdict || verdict.verdict === "fail") {
+    return {
+      kind: "retry",
+      feedback:
+        verdict?.feedback ??
+        (verdict
+          ? "Code review failed without specific feedback."
+          : `Code review session did not produce a valid verdict${outcome.ok ? "" : `: ${outcome.resultText.slice(0, 1000)}`}.`),
+    };
+  }
+  const decisions = await recordDecisions(notePath, "code-review", round, verdict.decisions);
+  return { kind: "pass", decisions, observations: verdict.observations ?? [] };
+}
+
 /**
  * The per-ticket pipeline: Implementation → mechanical gate → Code Review → QA,
  * with feedback rounds. Reviews are sequential — Code Review gates QA — and both
@@ -232,6 +323,7 @@ export async function runPipeline(ctx: PipelineContext, ticket: Ticket): Promise
 
   const history: FeedbackItem[] = [];
   const allDecisions: string[] = [];
+  const allObservations: string[] = [];
   let summary = "";
   let testsAdded = "";
   const maxRounds = ctx.config.pipeline.max_rounds;
@@ -242,46 +334,34 @@ export async function runPipeline(ctx: PipelineContext, ticket: Ticket): Promise
     await ensureDir(roundDir);
 
     // --- Implementation ---
-    const implVerdictPath = path.join(roundDir, "implementation.verdict.json");
-    const implPrompt = await stagePrompt(ctx, "implementation", {
-      ...commonVars(ctx, ticket, worktree, implVerdictPath),
-      FEEDBACK_SECTION: formatFeedbackSection(history, ticket.mode),
-    });
-    const impl = await runStageSession(
+    const impl = await runImplementationStage(
       ctx,
       ticket,
       worktree,
-      "implementation",
-      implPrompt,
       roundDir,
+      notePath,
+      round,
+      history,
     );
-    const implVerdict = await readImplementationVerdict(impl.verdictPath);
-    ctx.log.emit("stage_end", ticket.id, {
-      stage: "implementation",
-      verdict: implVerdict?.status ?? (impl.ok ? "invalid-verdict" : "session-failed"),
-    });
-
-    if (!implVerdict) {
-      history.push({
-        round,
-        source: "implementation",
-        feedback: impl.ok
-          ? "The previous implementation session ended without writing a valid verdict file. Re-verify the work is complete, committed, and gate-passing, then write the verdict file as instructed."
-          : `The previous implementation session failed: ${impl.resultText.slice(0, 2000)}`,
-      });
+    if (impl.kind === "retry") {
+      history.push({ round, source: "implementation", feedback: impl.feedback });
       continue;
     }
-    allDecisions.push(
-      ...(await recordDecisions(notePath, "implementation", round, implVerdict.decisions)),
-    );
-    if (implVerdict.status === "escalate") {
-      const question = implVerdict.question ?? "Escalated without a stated question.";
-      const recommendation = implVerdict.recommendation ?? "(no recommendation given)";
-      await recordEscalation(ctx, ticket, notePath, "implementation", question, recommendation);
-      ctx.log.emit("blocked", ticket.id, { reason: `escalated: ${question.slice(0, 120)}` });
-      return { status: "blocked", reason: question };
+    if (impl.kind === "escalate") {
+      await recordEscalation(
+        ctx,
+        ticket,
+        notePath,
+        "implementation",
+        impl.question,
+        impl.recommendation,
+      );
+      ctx.log.emit("blocked", ticket.id, { reason: `escalated: ${impl.question.slice(0, 120)}` });
+      return { status: "blocked", reason: impl.question };
     }
-    summary = implVerdict.summary ?? summary;
+    allDecisions.push(...impl.decisions);
+    allObservations.push(...impl.observations);
+    summary = impl.summary ?? summary;
     await commitAllIfDirty(worktree.path, `jfdi(${ticket.id}): checkpoint uncommitted work`);
 
     // --- Mechanical gate: cheapest reviewer, runs first, always ---
@@ -300,33 +380,13 @@ export async function runPipeline(ctx: PipelineContext, ticket: Ticket): Promise
     }
 
     // --- Code Review (gates QA — a fail here skips the expensive sandbox run) ---
-    const crVerdictPath = path.join(roundDir, "code-review.verdict.json");
-    const crPrompt = await stagePrompt(ctx, "code-review", {
-      ...commonVars(ctx, ticket, worktree, crVerdictPath),
-    });
-    const cr = await runStageSession(ctx, ticket, worktree, "code-review", crPrompt, roundDir);
-    // Reviewers are read-only; discard any stray modifications.
-    await git(worktree.path, "checkout", "--", ".");
-    const crVerdict = await readReviewVerdict(cr.verdictPath, { allowEscalate: false });
-    ctx.log.emit("stage_end", ticket.id, {
-      stage: "code-review",
-      verdict: crVerdict?.verdict ?? (cr.ok ? "invalid-verdict" : "session-failed"),
-    });
-    if (!crVerdict || crVerdict.verdict === "fail") {
-      history.push({
-        round,
-        source: "code-review",
-        feedback:
-          crVerdict?.feedback ??
-          (crVerdict
-            ? "Code review failed without specific feedback."
-            : `Code review session did not produce a valid verdict${cr.ok ? "" : `: ${cr.resultText.slice(0, 1000)}`}.`),
-      });
+    const review = await runCodeReviewStage(ctx, ticket, worktree, roundDir, notePath, round);
+    if (review.kind === "retry") {
+      history.push({ round, source: "code-review", feedback: review.feedback });
       continue;
     }
-    allDecisions.push(
-      ...(await recordDecisions(notePath, "code-review", round, crVerdict.decisions)),
-    );
+    allDecisions.push(...review.decisions);
+    allObservations.push(...review.observations);
 
     // --- Quality Assurance ---
     const qa = await runQaStage(ctx, ticket, worktree, roundDir, notePath, round);
@@ -349,17 +409,35 @@ export async function runPipeline(ctx: PipelineContext, ticket: Ticket): Promise
     }
     testsAdded = qa.verdict.testsAdded ?? "";
     allDecisions.push(...(qa.verdict.decisions ?? []));
+    allObservations.push(...(qa.verdict.observations ?? []));
     await commitAllIfDirty(worktree.path, `jfdi(${ticket.id}): QA artifacts`);
 
     const finalCommit = await revParse(worktree.path, "HEAD");
     return {
       status: "passed",
       worktree,
-      report: { summary, decisions: allDecisions, testsAdded, rounds: round, commit: finalCommit },
+      report: {
+        summary,
+        decisions: allDecisions,
+        observations: allObservations,
+        testsAdded,
+        rounds: round,
+        commit: finalCommit,
+      },
     };
   }
 
-  // Rounds exhausted → Blocked with accumulated history in the note.
+  return recordRoundsExhausted(ctx, ticket, notePath, history, maxRounds);
+}
+
+/** Rounds exhausted → Blocked, with the accumulated round history in the note. */
+async function recordRoundsExhausted(
+  ctx: PipelineContext,
+  ticket: Ticket,
+  notePath: string,
+  history: FeedbackItem[],
+  maxRounds: number,
+): Promise<PipelineOutcome> {
   const historyMd = history
     .map((h) => `- **round ${h.round} (${h.source}):** ${h.feedback.split("\n")[0]}`)
     .join("\n");

@@ -30,8 +30,9 @@ export async function startCommand(): Promise<number> {
     const detach = attachInlinePrinter(ctx.log);
     await coordinator.start();
     console.log("watching the board (no TTY — plain streaming; ctrl-c to stop)");
-    // Run until killed.
-    await new Promise(() => {});
+    await new Promise(() => {
+      // Intentionally never resolves — run until killed.
+    });
     detach();
     return 0;
   }

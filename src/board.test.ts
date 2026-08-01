@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  addCardIfAbsent,
   BoardEditError,
   createBoardIfMissing,
   ensureColumns,
@@ -140,5 +141,35 @@ describe("createBoardIfMissing", () => {
   it("does not overwrite an existing board", async () => {
     await createBoardIfMissing(boardPath, ["Other"]);
     expect(await fs.readFile(boardPath, "utf8")).toBe(SAMPLE);
+  });
+});
+
+describe("addCardIfAbsent", () => {
+  it("appends a card after existing cards in the column", async () => {
+    expect(await addCardIfAbsent(boardPath, "Ready", "New proposal *(from t1)*")).toBe(true);
+    const board = parseBoard(await fs.readFile(boardPath, "utf8"));
+    expect(findColumn(board, "Ready")?.cards.map((c) => c.text)).toEqual([
+      "Add a --help flag",
+      "Fix the thing [[fix-thing]]",
+      "New proposal *(from t1)*",
+    ]);
+  });
+
+  it("is idempotent: an identical card anywhere on the board is not duplicated", async () => {
+    await addCardIfAbsent(boardPath, "Ready", "New proposal *(from t1)*");
+    expect(await addCardIfAbsent(boardPath, "Ready", "New proposal *(from t1)*")).toBe(false);
+    // Same text targeted at another column is still a duplicate.
+    expect(await addCardIfAbsent(boardPath, "Done", "New proposal *(from t1)*")).toBe(false);
+    const board = parseBoard(await fs.readFile(boardPath, "utf8"));
+    const all = board.columns.flatMap((c) => c.cards.map((k) => k.text));
+    expect(all.filter((t) => t === "New proposal *(from t1)*")).toHaveLength(1);
+  });
+
+  it("creates the column when it is missing", async () => {
+    await addCardIfAbsent(boardPath, "Inbox", "Spotted dead code *(from t2)*");
+    const board = parseBoard(await fs.readFile(boardPath, "utf8"));
+    expect(findColumn(board, "Inbox")?.cards.map((c) => c.text)).toEqual([
+      "Spotted dead code *(from t2)*",
+    ]);
   });
 });

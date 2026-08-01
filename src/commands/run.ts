@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import { integrateTicket } from "../integrate.js";
 import { runPipeline } from "../pipeline.js";
-import { recordMergeReady } from "../report.js";
+import { recordMergeReady, recordObservations } from "../report.js";
 import { resolveTicket } from "../tickets.js";
 import { attachInlinePrinter, buildContext } from "./context.js";
 
@@ -27,6 +27,7 @@ export async function runCommand(ticketRef: string): Promise<number> {
       return 1;
     }
 
+    await recordObservations(ctx, ticket.id, outcome.report.observations);
     if (ctx.config.integration.mode === "auto") {
       const merged = await integrateTicket(ctx, ticket, outcome.worktree, outcome.report);
       if (merged.status === "blocked") {

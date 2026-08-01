@@ -19,6 +19,7 @@
     "test:watch": "vitest",
     "lint": "biome check .",
     "format": "biome check --write .",
+    "sync:guidelines": "node scripts/sync-guidelines.mjs",
     "playground": "pnpm build && node scripts/playground.mjs"
   },
   "devDependencies": {

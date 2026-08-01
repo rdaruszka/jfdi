@@ -7,6 +7,8 @@ export interface ColumnMap {
   done: string;
   blocked: string;
   readyToMerge: string;
+  /** Agent proposals land here; humans promote or delete. Never dispatched from. */
+  inbox: string;
 }
 
 export interface GateCommand {
@@ -40,6 +42,7 @@ export function defaultConfig(): JfdiConfig {
         done: "Done",
         blocked: "Blocked",
         readyToMerge: "Ready to Merge",
+        inbox: "Inbox",
       },
     },
     ticketsDir: `${JFDI_DIR}/tickets`,
@@ -100,6 +103,7 @@ export function parseConfig(raw: unknown): JfdiConfig {
       d.board.columns.readyToMerge,
       "board.columns.readyToMerge",
     ),
+    inbox: str(cols.inbox, d.board.columns.inbox, "board.columns.inbox"),
   };
 
   let gate: GateCommand[] = d.gate;

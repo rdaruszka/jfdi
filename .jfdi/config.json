@@ -6,7 +6,8 @@
       "inProgress": "In Progress",
       "done": "Done",
       "blocked": "Blocked",
-      "readyToMerge": "Ready to Merge"
+      "readyToMerge": "Ready to Merge",
+      "inbox": "Inbox"
     }
   },
   "ticketsDir": ".jfdi/tickets",

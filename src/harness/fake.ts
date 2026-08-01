@@ -24,7 +24,9 @@ export class FakeHarness implements Harness {
 
   spawn(spec: PromptSpec, opts: SpawnOptions): HarnessSession {
     this.calls.push({ spec, opts });
-    let resolveDone: (r: HarnessResult) => void = () => {};
+    let resolveDone: (r: HarnessResult) => void = () => {
+      // Placeholder; replaced synchronously by the Promise executor below.
+    };
     const done = new Promise<HarnessResult>((r) => {
       resolveDone = r;
     });
@@ -44,7 +46,9 @@ export class FakeHarness implements Harness {
         yield* events;
       })(),
       done,
-      kill: () => {},
+      kill: () => {
+        // Nothing to kill — the fake resolves from an in-process handler.
+      },
     };
   }
 }

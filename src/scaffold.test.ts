@@ -31,6 +31,7 @@ describe("scaffoldJfdi", () => {
       "Done",
       "Blocked",
       "Ready to Merge",
+      "Inbox",
     ]);
     const stats = await fs.stat(path.join(jfdiDir, "tickets"));
     expect(stats.isDirectory()).toBe(true);

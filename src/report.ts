@@ -1,8 +1,9 @@
 import * as path from "node:path";
+import { addCardIfAbsent } from "./board.js";
 import type { PipelineContext, RunReport } from "./pipeline.js";
 import { runsDir } from "./pipeline.js";
 import { appendToSection } from "./tickets.js";
-import { atomicWrite, readIfExists } from "./util/fsx.js";
+import { atomicWrite, fileExists, readIfExists } from "./util/fsx.js";
 
 /** Persist the pipeline report so a later `jfdi merge` / restart can pick it up. */
 export async function saveReport(
@@ -23,6 +24,30 @@ export async function loadReport(jfdiDir: string, ticketId: string): Promise<Run
     return JSON.parse(content) as RunReport;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Materialize stage observations as cards in the board's inbox column — agents
+ * propose, humans promote. Stage agents never touch the board themselves; this
+ * runs coordinator-side through the same atomic-write path as card moves.
+ * Duplicate proposals (retries, re-dispatches) are dropped by addCardIfAbsent.
+ */
+export async function recordObservations(
+  ctx: PipelineContext,
+  ticketId: string,
+  observations: string[],
+): Promise<void> {
+  if (observations.length === 0) return;
+  const boardPath = path.join(ctx.repoRoot, ctx.config.board.path);
+  if (!(await fileExists(boardPath))) return;
+  for (const observation of observations) {
+    const added = await addCardIfAbsent(
+      boardPath,
+      ctx.config.board.columns.inbox,
+      `${observation} *(from ${ticketId})*`,
+    );
+    if (added) ctx.log.emit("observation", ticketId, { text: observation });
   }
 }
 

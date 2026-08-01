@@ -35,15 +35,15 @@ async function gitTry(cwd: string, ...args: string[]): Promise<{ ok: boolean; ou
   }
 }
 
-export async function repoRoot(cwd: string): Promise<string> {
+export function repoRoot(cwd: string): Promise<string> {
   return git(cwd, "rev-parse", "--show-toplevel");
 }
 
-export async function currentBranch(repo: string): Promise<string> {
+export function currentBranch(repo: string): Promise<string> {
   return git(repo, "rev-parse", "--abbrev-ref", "HEAD");
 }
 
-export async function revParse(repo: string, ref: string): Promise<string> {
+export function revParse(repo: string, ref: string): Promise<string> {
   return git(repo, "rev-parse", ref);
 }
 
@@ -180,7 +180,7 @@ export async function fastForward(repo: string, target: string, branch: string):
 }
 
 /** Diff of the branch against its merge-base with target (what the reviews look at). */
-export async function branchDiff(worktree: string, target: string): Promise<string> {
+export function branchDiff(worktree: string, target: string): Promise<string> {
   return git(worktree, "diff", `${target}...HEAD`);
 }
 

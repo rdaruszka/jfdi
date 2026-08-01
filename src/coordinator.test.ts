@@ -78,6 +78,7 @@ describe("Coordinator", () => {
       "Done",
       "Blocked",
       "Ready to Merge",
+      "Inbox",
     ]);
     expect(findColumn(board, "Ready")?.cards).toHaveLength(0);
     const done = findColumn(board, "Done");
@@ -146,6 +147,49 @@ describe("Coordinator", () => {
     const doneCards = findColumn(board, "Done")?.cards ?? [];
     expect(doneCards.some((c) => c.text.includes("alpha"))).toBe(true);
     expect(findColumn(board, "Ready to Merge")?.cards).toHaveLength(1);
+  });
+
+  it("materializes stage observations as inbox cards and never dispatches them", async () => {
+    const ctx = fx.ctx(async (spec, opts) => {
+      const stage = stageOf(spec.prompt);
+      if (stage === "implementation") {
+        const m = /feature (\w+)/.exec(spec.prompt);
+        await commitFile(opts.cwd, `${m?.[1]}.txt`, "x\n", "impl");
+        await writeVerdict(spec.prompt, {
+          status: "done",
+          observations: ["Dead code in legacy module"],
+        });
+      } else if (stage === "integration") {
+        await writeVerdict(spec.prompt, { resolution: "clean" });
+      } else {
+        // QA repeats the same observation — must not produce a duplicate card.
+        await writeVerdict(spec.prompt, {
+          verdict: "pass",
+          observations: ["Dead code in legacy module"],
+        });
+      }
+      return { ok: true, text: "" };
+    });
+    fx.config.integration.mode = "auto";
+    const coordinator = new Coordinator(ctx, { pollMs: 60_000 });
+    await coordinator.start();
+    await coordinator.drain();
+    // Inbox cards trigger a board change; make sure a rescan does not dispatch them.
+    coordinator.requestScan();
+    await coordinator.drain();
+    coordinator.stop();
+
+    const board = await readBoard();
+    const inbox = findColumn(board, "Inbox")?.cards ?? [];
+    // One card per ticket (provenance differs), deduplicated across that ticket's stages.
+    expect(inbox).toHaveLength(2);
+    for (const card of inbox) {
+      expect(card.text).toContain("Dead code in legacy module");
+      expect(card.text).toMatch(/\(from \S+\)/);
+    }
+    // Proposals are inert: nothing ran for them, both real tickets are Done.
+    expect(findColumn(board, "Done")?.cards).toHaveLength(2);
+    expect(coordinator.activeCount()).toBe(0);
   });
 
   it("respects max_concurrent", async () => {

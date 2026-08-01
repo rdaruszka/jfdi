@@ -78,6 +78,7 @@ export async function scaffoldJfdi(
     cols.done,
     cols.blocked,
     cols.readyToMerge,
+    cols.inbox,
   ]);
   await ensurePrompts(jfdiDir);
   const sandboxPath = path.join(jfdiDir, "sandbox.md");

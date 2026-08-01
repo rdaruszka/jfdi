@@ -30,7 +30,7 @@ describe("EventLog", () => {
     expect(state.tickets.t1?.branch).toBe("jfdi/t1");
   });
 
-  it("tracks the integration queue through merge lifecycle", async () => {
+  it("tracks the integration queue through merge lifecycle", () => {
     const log = new EventLog(dir, false);
     log.emit("dispatch", "a", { title: "A" });
     log.emit("dispatch", "b", { title: "B" });

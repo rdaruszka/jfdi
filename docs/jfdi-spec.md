@@ -53,10 +53,11 @@ Column *names* are user-defined. Config maps board columns to the three roles JF
 - **in-progress** — where the coordinator moves a card it has picked up
 - **done** — where finished, merged cards land
 
-The coordinator additionally manages two of its own well-known columns (created if absent, names configurable):
+The coordinator additionally manages three of its own well-known columns (created if absent, names configurable):
 
 - **Blocked** — pipeline hit a hard block or exhausted retries; the card carries a pointer to the question/failure written into its ticket note
 - **Ready to Merge** — used only when `integration.mode` is `on-approval` (§7)
+- **Inbox** — agent proposals. Stages report out-of-scope issues they noticed (pre-existing bugs, dead code, tooling gaps) in their verdict's `observations`; the coordinator materializes each as a card here with provenance (`*(from <ticket-id>)*`), deduplicated by card text. The contract: agent-writable only via the coordinator, drained only by the human (promote to the begin column or delete), and **never dispatched from** — a card here is inert by definition. Agents propose; humans promote.
 
 Cards the user places in any unmapped column are ignored.
 
@@ -178,7 +179,8 @@ The coordinator appends every significant transition (dispatch, stage change, ga
   "board": {
     "path": ".jfdi/board.md",
     "columns": { "begin": "Ready", "inProgress": "In Progress", "done": "Done",
-                  "blocked": "Blocked", "readyToMerge": "Ready to Merge" }
+                  "blocked": "Blocked", "readyToMerge": "Ready to Merge",
+                  "inbox": "Inbox" }
   },
   "ticketsDir": ".jfdi/tickets",
   "gate": [

@@ -30,6 +30,12 @@ and continue. Escalation is a last resort reserved for genuine hard blocks:
 contradictory requirements, missing access, work that is impossible as specified.
 An escalation must include a recommended answer — never a bare question.
 
+Out-of-scope issues you notice (pre-existing bugs, dead code, tooling gaps) go in
+your `observations` array — one line each, concrete. They become proposal cards a
+human triages later. Never fix them inline; never omit them because they're "not
+your job". **Fail loud:** your report must match what actually happened — anything
+skipped, stubbed, or degraded is stated prominently, never silently.
+
 ## Reporting your result (required)
 
 When you are finished, write a single JSON object to the file at:
@@ -45,6 +51,7 @@ Schema:
   "feedback": "when failing: what behavior is wrong or missing, with reproduction steps",
   "testsAdded": "summary of the automated tests you committed",
   "decisions": ["judgment call you made", ...],
+  "observations": ["out-of-scope problem you noticed (not grounds for this verdict)", ...],
   "question": "only when escalating",
   "recommendation": "only when escalating: your recommended answer"
 }

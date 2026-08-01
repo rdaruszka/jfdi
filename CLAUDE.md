@@ -28,7 +28,11 @@ The **coordinator** watches `board.md` (Obsidian Kanban format), dispatches each
 
 ```
 docs/jfdi-spec.md    — the spec (normative)
+docs/coding-guidelines.md  — the generic coding guidelines (authoritative source)
+docs/agent-enforcement.md  — the enforcement design JFDI implements (reference)
 src/                 — TypeScript source
+src/guidelines.ts    — GENERATED from docs/coding-guidelines.md (`pnpm sync:guidelines`);
+                       injected into the init prompt for target projects
 fixtures/half-app/   — "penny": a half-finished CLI + 7-ticket board for test runs
                        (see fixtures/README.md; minted via src/fixture-project.ts)
 fixtures/half-app.grading/ — per-ticket acceptance checks, kept out of the template
@@ -57,6 +61,63 @@ These are architectural requirements from the spec, not preferences:
 6. **Wikilink scope.** Card `[[wikilinks]]` resolve only against `.jfdi/tickets/`. The tool never reads or writes outside the project folder.
 7. **Decide, log, proceed.** Agent prompts keep escalation a last resort; escalations must carry a recommended answer. Decisions land in the ticket note's `## Decisions`; the board is the question queue (Blocked column + `## Questions`).
 8. **Target branch is configurable** (`integration.target_branch`) — never assume `main`.
+
+## Glossary — one name per concept
+
+Use these terms exactly; introduce no synonyms. The list grows only by editing this file.
+
+- **board** — `.jfdi/board.md`, the Obsidian-Kanban file; its columns hold cards.
+- **card** — one line on the board; a pointer to work.
+- **ticket** — the markdown note in `.jfdi/tickets/` a card wikilinks to; carries `## Decisions` and `## Questions`.
+- **run** — one ticket's trip through the pipeline; logs under `.jfdi/runs/<ticket-id>/`.
+- **stage** — one fresh agent session within a run: Implementation, Code Review, QA.
+- **gate** — the mechanical check (`pnpm build && pnpm test && pnpm lint`); all must exit zero.
+- **round** — one feedback cycle: fix → gate → reviews (cap: `pipeline.max_rounds`).
+- **sign-off** — a review stage's approval, bound to a specific commit.
+- **integration** — the coordinator-owned rebase → gate → merge step; globally serialized.
+- **coordinator** — the long-running process that watches the board and dispatches runs.
+- **harness** — the agent-session abstraction (`spawn(promptSpec, cwd) → event stream`); `claude -p` is one implementation.
+- **worktree** — the isolated git checkout (branch `jfdi/<ticket-id>`) a run works in.
+- **observation** — an out-of-scope issue a stage reports in its verdict (`observations` array); never fixed inline.
+- **inbox** — the board column where observations land as proposal cards. Agent-writable via the coordinator only, human-drained, never dispatched from: agents propose, humans promote.
+
+## Code guidelines
+
+The generic rules with rationale and check questions live in [docs/coding-guidelines.md](docs/coding-guidelines.md) (authoritative; [src/guidelines.ts](src/guidelines.ts) is generated from it via `pnpm sync:guidelines` and gate-checked for drift — the compiled copy feeds the init prompt for target projects). The enforcement design behind it all is [docs/agent-enforcement.md](docs/agent-enforcement.md). This section is the TypeScript instantiation JFDI holds itself to — keep it in step when a generic rule changes. Reviewers: treat each rule as a question to answer about the diff, not background prose. Every mechanical rule that biome/tsc can encode should be encoded there; prose is the fallback, not the preference.
+
+**Code**
+
+- Every loop and recursion has a termination measure — something that provably shrinks — or an explicit cap. Unbounded loops are legal only if they yield every iteration (`await`, sleep, backoff) **and** check a reachable exit condition each pass. Infinite-and-hot is a defect anywhere, coordinator included.
+- Long-running processes (coordinator, TUI) bound their in-memory collections; anything that grows per-event needs an eviction story.
+- Functions do one thing at one level of abstraction. Length is a smell, not a violation: past ~100 lines, restructure or justify with an annotated suppression. Splitting mechanically to duck the number is itself a violation.
+- Assert what the type system can't prove: data crossing trust boundaries (`board.md`, ticket notes, anything `JSON.parse`d, harness stream events, subprocess output), cross-call invariants, and exhaustiveness (`never` checks). Impossible states get an assertion, not a recovery path. Asserting what types already guarantee is noise.
+- Every promise is awaited or explicitly handled — no fire-and-forget. No empty catch blocks; catch-and-continue requires the degradation to be deliberate and stated.
+- Zero warnings. `biome-ignore` and `@ts-expect-error` require a real reason at the site; `any` and bare `@ts-ignore` are banned. Suppression reasons are review targets — "function is long" is not a reason.
+- No module-level mutable state. Don't mutate arguments or shared objects; return new values.
+
+**Naming**
+
+- Quantities carry their dimension: `timeoutMs`, `delaySeconds`, `sizeBytes`; fraction vs. percent named explicitly. Convert once at the boundary and name the result — no unlabeled numbers in flight.
+- Single-letter names only as: one-expression lambda parameters, numeric loop indices `i`/`j`, `_` for discards. Everywhere else, whole words; name length scales with scope.
+- No abbreviations except: `id`, `min`, `max`, `args`, `config`, `init`, standard acronyms (`JSON`, `URL`, `HTTP`, `API`, `CLI`, `TUI`, `QA`), and ecosystem-imposed identifiers (`cwd`, `env`, `argv`). This list grows only by editing this file. `err`, `ctx`, `cfg`, `req`, `res`, `tmp` are spelled out.
+- Booleans are positive predicates (`isReady`, `hasMerged`, `shouldRetry`) — never bare nouns, never negated names.
+- Collections plural, elements singular (`tickets` / `ticket`).
+- One name per concept — see the Glossary. Introducing a synonym is a defect.
+
+**Conduct**
+
+- Decide, log, proceed: state assumptions and interpretation choices in the ticket's `## Decisions` *before* implementing. Never pick between plausible readings silently; escalate only when blocked, with a recommended answer.
+- Simplicity first: minimum code that solves the ticket. No speculative features, abstractions for single-use code, unrequested configurability, or handling for impossible states (those get assertions). Review question: what here is not required by the ticket?
+- Surgical changes: every changed line traces to the ticket. Clean up orphans your change created; don't touch pre-existing mess — flag it instead. Docs your change falsified are your mess: fix them in the same diff.
+- Bug tickets start with a failing repro test; the fix makes it pass. Skipping the repro requires a logged reason in `## Decisions`.
+- Never average conflicting patterns: pick one (more recent, better tested), log why, flag the loser. Convention beats taste — follow the codebase's style even where you disagree; surface disagreement, don't silently fork.
+- Tests verify intent: a test that couldn't fail if the business logic broke is wrong. No implementation-mirroring (asserting methods were called), no tautologies.
+- Commit at each coherent working state; never hand off with uncommitted changes. Fix-round commits are new commits — no amend/squash while a review is in flight. Gate-green is required at handoff commits, not every intermediate one.
+- Fail loud: completion claims must match actual gate output. Anything skipped, stubbed, or degraded is stated prominently in the report, not buried.
+
+**Docs**
+
+- Record what the code cannot say — intent, decisions, vocabulary, invariants. Never restate structure the repo can answer itself. If your diff falsifies this file, the glossary, or the spec's assumptions, update the doc in the same diff or flag it.
 
 ## Explicitly out of scope (Iteration 2)
 

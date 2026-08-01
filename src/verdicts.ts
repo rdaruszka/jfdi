@@ -4,6 +4,8 @@ export interface ImplementationVerdict {
   status: "done" | "escalate";
   summary?: string;
   decisions?: string[];
+  /** Out-of-scope issues spotted in passing — proposed as inbox cards, never fixed inline. */
+  observations?: string[];
   question?: string;
   recommendation?: string;
 }
@@ -13,6 +15,8 @@ export interface ReviewVerdict {
   feedback?: string;
   testsAdded?: string;
   decisions?: string[];
+  /** Out-of-scope issues spotted in passing — proposed as inbox cards, never fixed inline. */
+  observations?: string[];
   question?: string;
   recommendation?: string;
 }
@@ -61,6 +65,8 @@ export async function readImplementationVerdict(
   const summary = optStr(raw.summary);
   if (summary) out.summary = summary;
   if (decisions) out.decisions = decisions;
+  const observations = strArray(raw.observations);
+  if (observations) out.observations = observations;
   const question = optStr(raw.question);
   if (question) out.question = question;
   const recommendation = optStr(raw.recommendation);
@@ -84,6 +90,8 @@ export async function readReviewVerdict(
   if (testsAdded) out.testsAdded = testsAdded;
   const decisions = strArray(raw.decisions);
   if (decisions) out.decisions = decisions;
+  const observations = strArray(raw.observations);
+  if (observations) out.observations = observations;
   const question = optStr(raw.question);
   if (question) out.question = question;
   const recommendation = optStr(raw.recommendation);

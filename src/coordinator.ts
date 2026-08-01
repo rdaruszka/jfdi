@@ -6,7 +6,7 @@ import { branchExists, isAncestor, ticketBranch } from "./git.js";
 import { IntegrationQueue, integrateTicket } from "./integrate.js";
 import type { PipelineContext, RunReport } from "./pipeline.js";
 import { runPipeline, worktreesDir } from "./pipeline.js";
-import { loadReport, recordMergeReady, saveReport } from "./report.js";
+import { loadReport, recordMergeReady, recordObservations, saveReport } from "./report.js";
 import { ensureJfdiStateScaffold } from "./scaffold.js";
 import { resolveTicket, type Ticket } from "./tickets.js";
 import { fileExists, readIfExists } from "./util/fsx.js";
@@ -55,7 +55,9 @@ export class Coordinator {
         `board not found at ${this.ctx.config.board.path} — run \`jfdi init\` or create it first`,
       );
     // The coordinator manages its own well-known columns, created if absent.
-    await ensureColumns(this.boardPath, [cols.blocked, cols.readyToMerge]);
+    // Inbox is agent-proposal-only: cards land there via recordObservations and
+    // are never dispatched — only a human moves them out.
+    await ensureColumns(this.boardPath, [cols.blocked, cols.readyToMerge, cols.inbox]);
 
     try {
       this.watcher = watch(this.boardPath, { persistent: false }, () => this.requestScan());
@@ -188,6 +190,7 @@ export class Coordinator {
       }
 
       await saveReport(this.ctx.jfdiDir, id, outcome.report);
+      await recordObservations(this.ctx, id, outcome.report.observations);
       if (this.ctx.config.integration.mode === "on-approval") {
         const notePath = ticket.notePath ?? path.join(ticketsDir, `${ticket.id}.md`);
         await recordMergeReady(this.ctx, id, notePath, outcome.report);
@@ -197,7 +200,9 @@ export class Coordinator {
       await this.integrate(card, ticket, outcome.report);
     } catch (err) {
       this.ctx.log.emit("failed", id, { reason: (err as Error).message });
-      await this.moveCardSafe(card, cols.inProgress, cols.blocked, false).catch(() => {});
+      await this.moveCardSafe(card, cols.inProgress, cols.blocked, false).catch(() => {
+        // Best-effort: the failure above is already logged; the board move is advisory.
+      });
     }
   }
 

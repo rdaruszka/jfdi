@@ -2,7 +2,8 @@ import { spawn } from "node:child_process";
 import * as path from "node:path";
 import { JFDI_DIR, loadConfig } from "../config.js";
 import { repoRoot } from "../git.js";
-import { loadPrompt } from "../prompts.js";
+import { CODING_GUIDELINES } from "../guidelines.js";
+import { loadPrompt, renderPrompt } from "../prompts.js";
 import { scaffoldJfdi } from "../scaffold.js";
 
 /**
@@ -23,7 +24,8 @@ export async function initCommand(opts: { bare?: boolean } = {}): Promise<number
   }
 
   console.log("launching an agent session to set up the mechanical gate…\n");
-  const prompt = await loadPrompt(jfdiDir, "init");
+  const template = await loadPrompt(jfdiDir, "init");
+  const prompt = renderPrompt(template, { CODING_GUIDELINES });
   const child = spawn("claude", [prompt], { cwd: root, stdio: "inherit" });
   return new Promise<number>((resolve) => {
     child.on("error", (err) => {
