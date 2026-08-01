@@ -1,0 +1,46 @@
+# QA Sandbox Contract — JFDI itself
+
+The product under test is JFDI: a CLI that spawns agent sessions and creates git
+worktrees. Exercise the **built artifact**, not the source.
+
+## Build
+
+```
+pnpm install --frozen-lockfile   # if node_modules is missing
+pnpm build                       # emits dist/
+```
+
+## Launch & drive
+
+Invoke the CLI as `node <repo>/dist/index.js <command>` (where `<repo>` is this
+worktree). Useful commands and expectations:
+
+- `... --help` — usage text, exit 0
+- `... init --bare` — scaffolds `.jfdi/` in the *current directory's* repo, exit 0
+- `... run "<ticket text>"` — full pipeline with inline streaming; exit 0 on
+  pass, 2 on blocked, 1 on failure
+- `... status` / `... status --json` — snapshot of `.jfdi/state.json`
+- `... logs <ticket-id>` — raw session logs for the latest run
+- `... merge <ticket-id>` — approve a ready-to-merge ticket
+
+## Isolation rules (critical — self-hosting)
+
+JFDI-under-test spawns its own agent sessions and creates its own worktrees:
+
+1. **Every scenario runs in a scratch git repo under the OS temp dir**
+   (`mktemp -d`), never inside this worktree or any parent git repo — both git
+   and Claude Code walk up the directory tree.
+2. **Never let the inner JFDI call the real `claude`.** Put a stub `claude`
+   executable on PATH that replays canned stream-json lines and writes the
+   verdict file its prompt names (match `/(\/\S+\.verdict\.json)/`). This also
+   guards against runaway nested session spawning.
+3. The inner JFDI gets its own `.jfdi/` state inside the scratch repo (its
+   `init --bare` creates it). Never point it at this repo's `.jfdi/`.
+4. Configure the scratch repo's git user (`git config user.email/name`) or
+   commits will fail.
+
+## Teardown
+
+`rm -rf` the scratch directory. Nothing else is left behind — JFDI-under-test
+keeps all state in the scratch repo. Verify no stray `claude` processes remain
+if a test killed a run mid-flight.

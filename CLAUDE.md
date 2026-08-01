@@ -60,12 +60,14 @@ No PO/orchestrator agent, no PRD building or auto-decomposition, no pre-implemen
 
 ## Build sequence (spec §14)
 
-1. **Single-ticket pipeline** — `jfdi run`: worktree, harness runner, gate, review rounds, integration, ticket-note reporting ← current milestone
-2. **Coordinator** — `jfdi start`: board watch, concurrent dispatch, integration queue, events/state, TUI, `status`/`logs`/`merge`
-3. **Convo mode** — `jfdi convo`
-4. **Init** — `jfdi init`
+All four milestones are implemented and tested:
 
-Each milestone must be independently usable.
+1. **Single-ticket pipeline** — `jfdi run` ([pipeline.ts](src/pipeline.ts), [integrate.ts](src/integrate.ts))
+2. **Coordinator** — `jfdi start` ([coordinator.ts](src/coordinator.ts), TUI in [src/tui/App.tsx](src/tui/App.tsx)), plus `status`/`logs`/`merge`
+3. **Convo mode** — `jfdi convo` ([commands/convo.ts](src/commands/convo.ts))
+4. **Init** — `jfdi init` ([commands/init.ts](src/commands/init.ts), [scaffold.ts](src/scaffold.ts))
+
+Self-hosting is live: this repo's own [.jfdi/](.jfdi/config.json) has the pnpm gate configured (`on-approval` mode), and [.jfdi/board.md](.jfdi/board.md) holds the backlog. Improvements to JFDI should flow through JFDI: add a card to the Ready column and `jfdi start` (or `jfdi run "<ticket>"`).
 
 ## Testing notes
 

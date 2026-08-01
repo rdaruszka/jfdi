@@ -1,0 +1,5 @@
+# JFDI runtime state — never committed
+worktrees/
+runs/
+events.jsonl
+state.json
