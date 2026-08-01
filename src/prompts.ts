@@ -17,12 +17,12 @@ When you are finished, write a single JSON object to the file at:
 
 {{VERDICT_PATH}}
 
-This file is how the pipeline reads your outcome. Write it as your final action.
+Your outcome is read only from this file — write it as your final action.
 Its exact schema is described below. Do not wrap it in markdown.`;
 
 const DEFAULT_PROMPTS: Record<PromptName, string> = {
-  implementation: `You are the **Implementation agent** in a JFDI pipeline, working in an isolated
-git worktree on branch \`{{BRANCH}}\`. Implement the ticket below completely.
+  implementation: `Implement the ticket below completely. You are working in an isolated git
+worktree on branch \`{{BRANCH}}\`.
 
 ## Ticket: {{TICKET_ID}}
 
@@ -51,10 +51,10 @@ Schema:
   "recommendation": "only when escalating: your recommended answer"
 }`,
 
-  "code-review": `You are the **Code Review agent** in a JFDI pipeline, in a git worktree on branch
-\`{{BRANCH}}\`. Review the diff against \`{{TARGET_BRANCH}}\` from a **pure code
-standpoint**: structure, clarity, naming, conventions, maintainability, test quality.
-Functionality is NOT your concern — a separate QA stage exercises behavior.
+  "code-review": `Review the changes on branch \`{{BRANCH}}\` — the diff against
+\`{{TARGET_BRANCH}}\` — from a **pure code standpoint**: structure, clarity, naming,
+conventions, maintainability, test quality. Functionality is NOT in scope here;
+the change's behavior is validated separately.
 
 Inspect the change with: \`git diff {{TARGET_BRANCH}}...HEAD\` (and read files as needed).
 
@@ -65,7 +65,7 @@ Inspect the change with: \`git diff {{TARGET_BRANCH}}...HEAD\` (and read files a
 ## Rules
 
 - Judge the code against the ticket and the codebase's existing conventions.
-- Do not modify any files — you are a reviewer, not an author.
+- Do not modify any files — review only; you are not the author.
 - Anything a linter/formatter already enforces is out of scope; don't relitigate it.
 - Fail only for issues that materially hurt the codebase; nitpicks belong in feedback
   as optional notes, not failure grounds.
@@ -77,13 +77,13 @@ ${VERDICT_INSTRUCTIONS}
 Schema:
 {
   "verdict": "pass" | "fail",
-  "feedback": "when failing: specific, actionable items for the implementation agent",
+  "feedback": "when failing: specific, actionable items for the author",
   "decisions": ["judgment call you made", ...]
 }`,
 
-  qa: `You are the **Quality Assurance agent** in a JFDI pipeline, in a git worktree on
-branch \`{{BRANCH}}\`. Validate the built artifact's **behavior** against the ticket —
-independently and adversarially. Derive your checks from the ticket, not from the diff.
+  qa: `Validate the **behavior** of the changes on branch \`{{BRANCH}}\` against the
+ticket below — independently and adversarially. Derive your checks from the ticket,
+not from the diff.
 
 ## Ticket: {{TICKET_ID}}
 
@@ -119,8 +119,8 @@ Schema:
   "recommendation": "only when escalating: your recommended answer"
 }`,
 
-  integration: `You are the **Integration agent** in a JFDI pipeline, in a git worktree on branch
-\`{{BRANCH}}\`. A rebase onto \`{{TARGET_BRANCH}}\` has hit conflicts. Resolve them.
+  integration: `A rebase of branch \`{{BRANCH}}\` onto \`{{TARGET_BRANCH}}\` has hit conflicts.
+Resolve them and complete the rebase.
 
 ## Ticket: {{TICKET_ID}}
 
@@ -132,7 +132,7 @@ Schema:
   rebase to completion (\`git add\` the resolutions, \`git rebase --continue\`).
 - Never abort the rebase; never force-push; never touch \`{{TARGET_BRANCH}}\` itself.
 - Afterwards, judge your own resolution honestly: if you had to touch real logic
-  (not adjacent-line noise), report "complicated" — the ticket will be re-QA'd.
+  (not adjacent-line noise), report "complicated" — the change will be re-validated.
 
 ${VERDICT_INSTRUCTIONS}
 
@@ -190,10 +190,18 @@ export async function ensurePrompts(jfdiDir: string): Promise<void> {
   }
 }
 
-/** Load a stage prompt: the user's file under .jfdi/prompts/, else the default. */
+/**
+ * Load a stage prompt from .jfdi/prompts/<name>.md. The file is authoritative;
+ * if it is missing it is seeded with the default first, so what ran is always
+ * on disk — never a silent in-code fallback.
+ */
 export async function loadPrompt(jfdiDir: string, name: PromptName): Promise<string> {
   const file = path.join(promptsDir(jfdiDir), `${name}.md`);
-  return (await readIfExists(file)) ?? DEFAULT_PROMPTS[name];
+  const existing = await readIfExists(file);
+  if (existing !== null) return existing;
+  const content = `${DEFAULT_PROMPTS[name]}\n`;
+  await atomicWrite(file, content);
+  return content;
 }
 
 export function formatGateCommands(gate: Array<{ name: string; cmd: string }>): string {

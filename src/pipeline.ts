@@ -125,15 +125,24 @@ function commonVars(
   };
 }
 
+const FEEDBACK_SOURCE_LABELS: Record<string, string> = {
+  implementation: "previous attempt",
+  gate: "mechanical gate",
+  "code-review": "code review",
+  qa: "QA",
+};
+
 function formatFeedbackSection(history: FeedbackItem[], mode: "default" | "ask"): string {
   const parts: string[] = [];
   if (history.length > 0) {
     parts.push(
-      "\n## Prior rounds\n",
-      "Earlier attempts received this feedback (oldest first). Address all of it:\n",
+      "\n## Feedback on earlier attempts\n",
+      "This task was attempted before and received the following feedback (oldest first). Address all of it:\n",
     );
-    for (const item of history)
-      parts.push(`### Round ${item.round} — from ${item.source}\n\n${item.feedback}\n`);
+    for (const item of history) {
+      const label = FEEDBACK_SOURCE_LABELS[item.source] ?? item.source;
+      parts.push(`### Round ${item.round} — ${label}\n\n${item.feedback}\n`);
+    }
   }
   if (mode === "ask") {
     parts.push(

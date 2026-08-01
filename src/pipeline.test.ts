@@ -79,7 +79,7 @@ describe("runPipeline", () => {
           implRounds++;
           if (implRounds === 2) {
             // The fix round must see the reviewer's feedback.
-            expect(spec.prompt).toContain("Prior rounds");
+            expect(spec.prompt).toContain("Feedback on earlier attempts");
             expect(spec.prompt).toContain("rename the helper");
           }
           await commitFile(opts.cwd, "impl.txt", `v${implRounds}\n`, `implement v${implRounds}`);

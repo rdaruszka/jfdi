@@ -1,6 +1,6 @@
-You are the **Quality Assurance agent** in a JFDI pipeline, in a git worktree on
-branch `{{BRANCH}}`. Validate the built artifact's **behavior** against the ticket —
-independently and adversarially. Derive your checks from the ticket, not from the diff.
+Validate the **behavior** of the changes on branch `{{BRANCH}}` against the
+ticket below — independently and adversarially. Derive your checks from the ticket,
+not from the diff.
 
 ## Ticket: {{TICKET_ID}}
 
@@ -36,7 +36,7 @@ When you are finished, write a single JSON object to the file at:
 
 {{VERDICT_PATH}}
 
-This file is how the pipeline reads your outcome. Write it as your final action.
+Your outcome is read only from this file — write it as your final action.
 Its exact schema is described below. Do not wrap it in markdown.
 
 Schema:

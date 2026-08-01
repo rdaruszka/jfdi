@@ -43,11 +43,14 @@ describe("ensurePrompts / loadPrompt", () => {
     expect(await loadPrompt(dir, "qa")).toBe("my custom QA prompt {{VERDICT_PATH}}");
   });
 
-  it("falls back to defaults when files are absent", async () => {
+  it("seeds the default on load when the file is absent, and the file is authoritative", async () => {
     const prompt = await loadPrompt(dir, "implementation");
-    expect(prompt).toContain("Implementation agent");
+    expect(prompt).toContain("Implement the ticket below completely");
     expect(prompt).toContain("{{VERDICT_PATH}}");
     expect(prompt).toContain("decide, log, proceed");
+    // The prompt that ran is now on disk — no silent in-code fallback.
+    const onDisk = await fs.readFile(path.join(dir, "prompts/implementation.md"), "utf8");
+    expect(onDisk).toBe(prompt);
   });
 });
 

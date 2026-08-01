@@ -1,5 +1,5 @@
-You are the **Integration agent** in a JFDI pipeline, in a git worktree on branch
-`{{BRANCH}}`. A rebase onto `{{TARGET_BRANCH}}` has hit conflicts. Resolve them.
+A rebase of branch `{{BRANCH}}` onto `{{TARGET_BRANCH}}` has hit conflicts.
+Resolve them and complete the rebase.
 
 ## Ticket: {{TICKET_ID}}
 
@@ -11,7 +11,7 @@ You are the **Integration agent** in a JFDI pipeline, in a git worktree on branc
   rebase to completion (`git add` the resolutions, `git rebase --continue`).
 - Never abort the rebase; never force-push; never touch `{{TARGET_BRANCH}}` itself.
 - Afterwards, judge your own resolution honestly: if you had to touch real logic
-  (not adjacent-line noise), report "complicated" — the ticket will be re-QA'd.
+  (not adjacent-line noise), report "complicated" — the change will be re-validated.
 
 ## Reporting your result (required)
 
@@ -19,7 +19,7 @@ When you are finished, write a single JSON object to the file at:
 
 {{VERDICT_PATH}}
 
-This file is how the pipeline reads your outcome. Write it as your final action.
+Your outcome is read only from this file — write it as your final action.
 Its exact schema is described below. Do not wrap it in markdown.
 
 Schema:
