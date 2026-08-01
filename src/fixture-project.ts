@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { findColumn, moveCard, parseBoard } from "./board.js";
 import { git } from "./git.js";
 import { ensurePrompts } from "./prompts.js";
-import { ensureJfdiStateScaffold } from "./scaffold.js";
+import { ensureJfdiGitignore } from "./scaffold.js";
 import { extractWikilink } from "./util/ids.js";
 
 /**
@@ -87,7 +87,7 @@ export async function createProjectFixture(
   // .jfdi/.gitignore (a gitignore inside the template would hide the board and
   // tickets from THIS repo too, so scaffold it at mint time instead).
   const jfdiDir = path.join(destDir, ".jfdi");
-  await ensureJfdiStateScaffold(jfdiDir);
+  await ensureJfdiGitignore(jfdiDir);
   await ensurePrompts(jfdiDir);
 
   // A short realistic history, not one blob commit — merges and rebases get a

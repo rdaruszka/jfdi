@@ -34,7 +34,7 @@ export async function mergeCommand(ticketId: string): Promise<number> {
         };
 
     const wtPath = path.join(worktreesDir(ctx.jfdiDir), ticketId);
-    const report = await loadReport(ctx.jfdiDir, ticketId);
+    const report = await loadReport(ctx.stateDir, ticketId);
     const outcome = await integrateTicket(ctx, ticket, { path: wtPath, branch }, report);
     if (outcome.status === "blocked") {
       console.error(`Integration blocked: ${outcome.reason}`);

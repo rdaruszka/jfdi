@@ -7,7 +7,7 @@ import { IntegrationQueue, integrateTicket } from "./integrate.js";
 import type { PipelineContext, RunReport } from "./pipeline.js";
 import { runPipeline, worktreesDir } from "./pipeline.js";
 import { loadReport, recordMergeReady, recordObservations, saveReport } from "./report.js";
-import { ensureJfdiStateScaffold } from "./scaffold.js";
+import { ensureJfdiGitignore } from "./scaffold.js";
 import { resolveTicket, type Ticket } from "./tickets.js";
 import { fileExists, readIfExists } from "./util/fsx.js";
 import { ticketIdFromCard } from "./util/ids.js";
@@ -48,7 +48,7 @@ export class Coordinator {
 
   /** Set up board + watchers and run the initial scan. Resolves once watching. */
   async start(): Promise<void> {
-    await ensureJfdiStateScaffold(this.ctx.jfdiDir);
+    await ensureJfdiGitignore(this.ctx.jfdiDir);
     const cols = this.ctx.config.board.columns;
     if (!(await fileExists(this.boardPath)))
       throw new Error(
@@ -171,7 +171,7 @@ export class Coordinator {
 
       // A begin-column card whose pipeline already passed is an approval:
       // integrate the existing branch instead of rebuilding.
-      const savedReport = await loadReport(this.ctx.jfdiDir, id);
+      const savedReport = await loadReport(this.ctx.stateDir, id);
       const branch = ticketBranch(id);
       if (savedReport && (await branchExists(this.ctx.repoRoot, branch))) {
         await this.integrate(card, ticket, savedReport);
@@ -189,7 +189,7 @@ export class Coordinator {
         return;
       }
 
-      await saveReport(this.ctx.jfdiDir, id, outcome.report);
+      await saveReport(this.ctx.stateDir, id, outcome.report);
       await recordObservations(this.ctx, id, outcome.report.observations);
       if (this.ctx.config.integration.mode === "on-approval") {
         const notePath = ticket.notePath ?? path.join(ticketsDir, `${ticket.id}.md`);

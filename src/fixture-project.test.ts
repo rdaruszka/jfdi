@@ -142,12 +142,14 @@ describe("half-app end-to-end (fake harness)", () => {
       return { ok: true, text: "" };
     });
 
+    const stateDir = path.join(root, "state");
     const ctx: PipelineContext = {
       repoRoot: fx.repo,
       jfdiDir,
+      stateDir,
       config,
       harness,
-      log: new EventLog(jfdiDir, false),
+      log: new EventLog(stateDir, false),
     };
     const ticket = await resolveTicket(
       "Add a category filter to penny list [[filter-by-category]]",

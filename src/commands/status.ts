@@ -4,7 +4,7 @@ import { buildContext } from "./context.js";
 /** `jfdi status` — snapshot of state.json for scripts and quick checks. */
 export async function statusCommand(opts: { json?: boolean } = {}): Promise<number> {
   const ctx = await buildContext();
-  const state = await loadState(ctx.jfdiDir);
+  const state = await loadState(ctx.stateDir);
   if (opts.json) {
     console.log(JSON.stringify(state, null, 2));
     return 0;

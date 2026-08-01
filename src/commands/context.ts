@@ -4,10 +4,12 @@ import { EventLog, type JfdiEvent } from "../events.js";
 import { repoRoot } from "../git.js";
 import { createHarness } from "../harness/index.js";
 import type { PipelineContext } from "../pipeline.js";
+import { projectStateDir } from "../state-dir.js";
 
 export interface CliContext extends PipelineContext {
   repoRoot: string;
   jfdiDir: string;
+  stateDir: string;
 }
 
 export async function buildContext(cwd: string = process.cwd()): Promise<CliContext> {
@@ -21,12 +23,14 @@ export async function buildContext(cwd: string = process.cwd()): Promise<CliCont
   }
   const config = await loadConfig(root);
   const jfdiDir = path.join(root, JFDI_DIR);
+  const stateDir = projectStateDir(root);
   return {
     repoRoot: root,
     jfdiDir,
+    stateDir,
     config,
     harness: createHarness(config),
-    log: new EventLog(jfdiDir),
+    log: new EventLog(stateDir),
   };
 }
 

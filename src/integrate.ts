@@ -76,7 +76,7 @@ export async function integrateTicket(
       return blocked(ctx, ticket, notePath, reason);
     }
     // 2. Conflicts — the Integration agent resolves them in the worktree.
-    const runDir = path.join(runsDir(ctx.jfdiDir, ticket.id), "integration");
+    const runDir = path.join(runsDir(ctx.stateDir, ticket.id), "integration");
     await ensureDir(runDir);
     const verdictPath = path.join(runDir, "integration.verdict.json");
     const template = await loadPrompt(ctx.jfdiDir, "integration");

@@ -68,6 +68,32 @@ describe("runPipeline", () => {
     );
   });
 
+  it("writes run artifacts to the state directory and worktrees to .jfdi/", async () => {
+    const ctx = fx.ctx(async (spec, opts) => {
+      const stage = stageOf(spec.prompt);
+      if (stage === "implementation") {
+        await commitFile(opts.cwd, "impl.txt", "the feature\n", "implement");
+        await writeVerdict(spec.prompt, { status: "done", summary: "done" });
+      } else {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    });
+
+    const ticket = await resolveTicket("Build the feature", fx.ticketsDir);
+    const outcome = await runPipeline(ctx, ticket);
+    expect(outcome.status).toBe("passed");
+    if (outcome.status !== "passed") return;
+
+    // Round artifacts (verdicts, logs) live outside the project checkout…
+    const roundDir = path.join(fx.stateDir, "runs", ticket.id, "run-1", "round-1");
+    expect(await fs.readdir(roundDir)).toContain("implementation.verdict.json");
+    // …and nothing put a runs/ directory back inside .jfdi/.
+    await expect(fs.readdir(path.join(fx.jfdiDir, "runs"))).rejects.toThrow();
+    // Worktrees are unchanged: still in-project, still gitignored.
+    expect(outcome.worktree.path).toBe(path.join(fx.jfdiDir, "worktrees", ticket.id));
+  });
+
   it("code review failure skips QA and feeds back into round 2", async () => {
     const stages: string[] = [];
     let implRounds = 0;

@@ -7,18 +7,18 @@ import { atomicWrite, fileExists, readIfExists } from "./util/fsx.js";
 
 /** Persist the pipeline report so a later `jfdi merge` / restart can pick it up. */
 export async function saveReport(
-  jfdiDir: string,
+  stateDir: string,
   ticketId: string,
   report: RunReport,
 ): Promise<void> {
   await atomicWrite(
-    path.join(runsDir(jfdiDir, ticketId), "report.json"),
+    path.join(runsDir(stateDir, ticketId), "report.json"),
     `${JSON.stringify(report, null, 2)}\n`,
   );
 }
 
-export async function loadReport(jfdiDir: string, ticketId: string): Promise<RunReport | null> {
-  const content = await readIfExists(path.join(runsDir(jfdiDir, ticketId), "report.json"));
+export async function loadReport(stateDir: string, ticketId: string): Promise<RunReport | null> {
+  const content = await readIfExists(path.join(runsDir(stateDir, ticketId), "report.json"));
   if (content === null) return null;
   try {
     return JSON.parse(content) as RunReport;
@@ -58,7 +58,7 @@ export async function recordMergeReady(
   notePath: string,
   report: RunReport,
 ): Promise<void> {
-  await saveReport(ctx.jfdiDir, ticketId, report);
+  await saveReport(ctx.stateDir, ticketId, report);
   const lines = [
     `### ${new Date().toISOString().slice(0, 10)} — ready to merge`,
     "",

@@ -178,15 +178,15 @@ export class EventLog {
   private writeChain: Promise<void> = Promise.resolve();
 
   constructor(
-    private readonly jfdiDir: string,
+    private readonly stateDir: string,
     private readonly persist: boolean = true,
   ) {}
 
   get eventsPath(): string {
-    return path.join(this.jfdiDir, "events.jsonl");
+    return path.join(this.stateDir, "events.jsonl");
   }
   get statePath(): string {
-    return path.join(this.jfdiDir, "state.json");
+    return path.join(this.stateDir, "state.json");
   }
 
   snapshot(): CoordinatorState {
@@ -209,7 +209,7 @@ export class EventLog {
     if (this.persist) {
       const snapshot = this.state;
       this.writeChain = this.writeChain.then(async () => {
-        await ensureDir(this.jfdiDir);
+        await ensureDir(this.stateDir);
         await fs.appendFile(this.eventsPath, `${JSON.stringify(evt)}\n`, "utf8");
         await atomicWrite(this.statePath, `${JSON.stringify(snapshot, null, 2)}\n`);
       });
@@ -224,8 +224,8 @@ export class EventLog {
   }
 
   /** Rebuild state purely from events.jsonl. */
-  static async rebuild(jfdiDir: string): Promise<CoordinatorState> {
-    const content = await readIfExists(path.join(jfdiDir, "events.jsonl"));
+  static async rebuild(stateDir: string): Promise<CoordinatorState> {
+    const content = await readIfExists(path.join(stateDir, "events.jsonl"));
     let state = emptyState();
     if (content === null) return state;
     for (const line of content.split("\n")) {
@@ -237,8 +237,8 @@ export class EventLog {
 }
 
 /** Load the current snapshot from disk (jfdi status). */
-export async function loadState(jfdiDir: string): Promise<CoordinatorState> {
-  const content = await readIfExists(path.join(jfdiDir, "state.json"));
-  if (content === null) return EventLog.rebuild(jfdiDir);
+export async function loadState(stateDir: string): Promise<CoordinatorState> {
+  const content = await readIfExists(path.join(stateDir, "state.json"));
+  if (content === null) return EventLog.rebuild(stateDir);
   return JSON.parse(content) as CoordinatorState;
 }

@@ -6,15 +6,17 @@ import { formatGateFailure, runGate } from "./gate.js";
 import { commitAllIfDirty, createWorktree, git, revParse, type Worktree } from "./git.js";
 import type { Harness } from "./harness/index.js";
 import { formatGateCommands, loadPrompt, type PromptName, renderPrompt } from "./prompts.js";
-import { ensureJfdiStateScaffold } from "./scaffold.js";
+import { ensureJfdiGitignore } from "./scaffold.js";
 import { appendToSection, ensureTicketNote, type Ticket } from "./tickets.js";
 import { ensureDir, readIfExists } from "./util/fsx.js";
 import { type ReviewVerdict, readImplementationVerdict, readReviewVerdict } from "./verdicts.js";
 
 export interface PipelineContext {
   repoRoot: string;
-  /** Absolute path to .jfdi/ */
+  /** Absolute path to .jfdi/ — versioned setup (config, prompts, sandbox) + worktrees. */
   jfdiDir: string;
+  /** Absolute path to ~/.jfdi/projects/<project-key>/ — runs, events, state snapshot. */
+  stateDir: string;
   config: JfdiConfig;
   harness: Harness;
   log: EventLog;
@@ -47,13 +49,13 @@ export function worktreesDir(jfdiDir: string): string {
   return path.join(jfdiDir, "worktrees");
 }
 
-export function runsDir(jfdiDir: string, ticketId: string): string {
-  return path.join(jfdiDir, "runs", ticketId);
+export function runsDir(stateDir: string, ticketId: string): string {
+  return path.join(stateDir, "runs", ticketId);
 }
 
 /** Next run-<k> directory under runs/<ticket>/ (history is kept across dispatches). */
-async function nextRunDir(jfdiDir: string, ticketId: string): Promise<string> {
-  const base = runsDir(jfdiDir, ticketId);
+async function nextRunDir(stateDir: string, ticketId: string): Promise<string> {
+  const base = runsDir(stateDir, ticketId);
   await ensureDir(base);
   const entries = await fs.readdir(base);
   const runs = entries.filter((e) => /^run-\d+$/.test(e)).length;
@@ -315,10 +317,10 @@ async function runCodeReviewStage(
  */
 export async function runPipeline(ctx: PipelineContext, ticket: Ticket): Promise<PipelineOutcome> {
   const target = ctx.config.integration.target_branch;
-  await ensureJfdiStateScaffold(ctx.jfdiDir);
+  await ensureJfdiGitignore(ctx.jfdiDir);
   const notePath = await ensureTicketNote(ticket, path.join(ctx.repoRoot, ctx.config.ticketsDir));
   const worktree = await createWorktree(ctx.repoRoot, worktreesDir(ctx.jfdiDir), ticket.id, target);
-  const runDir = await nextRunDir(ctx.jfdiDir, ticket.id);
+  const runDir = await nextRunDir(ctx.stateDir, ticket.id);
   ctx.log.emit("dispatch", ticket.id, { title: ticket.cardText, branch: worktree.branch });
 
   const history: FeedbackItem[] = [];
@@ -451,7 +453,7 @@ async function recordRoundsExhausted(
       "",
       historyMd,
       "",
-      `_Full logs: .jfdi/runs/${ticket.id}/. Adjust the ticket and move it back to "${ctx.config.board.columns.begin}" to retry._`,
+      `_Full logs: ${runsDir(ctx.stateDir, ticket.id)}/. Adjust the ticket and move it back to "${ctx.config.board.columns.begin}" to retry._`,
     ].join("\n"),
   );
   ctx.log.emit("blocked", ticket.id, { reason: `retries exhausted after ${maxRounds} rounds` });

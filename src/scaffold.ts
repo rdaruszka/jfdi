@@ -5,25 +5,23 @@ import { ensurePrompts } from "./prompts.js";
 import { atomicWrite, ensureDir, fileExists } from "./util/fsx.js";
 
 /**
- * Runtime state under .jfdi/ must never be committed — worktrees would even be
- * picked up as embedded repos by a stray `git add -A`. Neither are the board
- * and tickets: they're work-tracking artifacts external to the product (think
- * JIRA), mutated mid-run by human and coordinator alike (spec §2). JFDI owns a
- * .gitignore inside .jfdi/ so this holds regardless of the repo's root
- * .gitignore. (config.json, sandbox.md, prompts/ remain versioned.)
+ * Worktrees under .jfdi/ must never be committed — a stray `git add -A` would
+ * pick them up as embedded repos. Neither are the board and tickets: they're
+ * work-tracking artifacts external to the product (think JIRA), mutated mid-run
+ * by human and coordinator alike (spec §2). JFDI owns a .gitignore inside
+ * .jfdi/ so this holds regardless of the repo's root .gitignore. (config.json,
+ * sandbox.md, prompts/ remain versioned; runs/, events.jsonl and state.json
+ * live outside the project entirely, under ~/.jfdi/projects/<project-key>/.)
  */
-const JFDI_GITIGNORE = `# JFDI runtime state — never committed
+const JFDI_GITIGNORE = `# JFDI worktrees — never committed
 worktrees/
-runs/
-events.jsonl
-state.json
 
 # Work tracking lives outside product history (often a symlink into a vault)
 board.md
 tickets
 `;
 
-export async function ensureJfdiStateScaffold(jfdiDir: string): Promise<void> {
+export async function ensureJfdiGitignore(jfdiDir: string): Promise<void> {
   await ensureDir(jfdiDir);
   const ignorePath = path.join(jfdiDir, ".gitignore");
   if (!(await fileExists(ignorePath))) await atomicWrite(ignorePath, JFDI_GITIGNORE);
@@ -65,7 +63,7 @@ export async function scaffoldJfdi(
   jfdiDir: string,
   config: JfdiConfig = defaultConfig(),
 ): Promise<void> {
-  await ensureJfdiStateScaffold(jfdiDir);
+  await ensureJfdiGitignore(jfdiDir);
   const configPath = path.join(jfdiDir, "config.json");
   if (!(await fileExists(configPath))) {
     await atomicWrite(configPath, `${JSON.stringify(config, null, 2)}\n`);

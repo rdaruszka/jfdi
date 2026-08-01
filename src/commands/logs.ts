@@ -6,7 +6,7 @@ import { buildContext } from "./context.js";
 /** `jfdi logs <ticket>` — dump the latest run's raw session logs. */
 export async function logsCommand(ticketId: string): Promise<number> {
   const ctx = await buildContext();
-  const base = runsDir(ctx.jfdiDir, ticketId);
+  const base = runsDir(ctx.stateDir, ticketId);
   let entries: string[];
   try {
     entries = await fs.readdir(base);
@@ -33,7 +33,7 @@ export async function logsCommand(ticketId: string): Promise<number> {
     }
     for (const file of files) {
       const full = path.join(dir, file);
-      console.log(`\n===== ${path.relative(ctx.jfdiDir, full)} =====`);
+      console.log(`\n===== ${path.relative(ctx.stateDir, full)} =====`);
       console.log(await fs.readFile(full, "utf8"));
       printed = true;
     }
