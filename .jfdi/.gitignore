@@ -6,4 +6,4 @@ state.json
 
 # Work tracking lives outside product history (often a symlink into a vault)
 board.md
-tickets/
+tickets

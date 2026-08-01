@@ -41,14 +41,15 @@ describe("scaffoldJfdi", () => {
     );
     const ignore = await fs.readFile(path.join(jfdiDir, ".gitignore"), "utf8");
     // Runtime state plus the board and tickets — work tracking stays out of
-    // product history (spec §2).
+    // product history (spec §2). "tickets" has no trailing slash so the
+    // pattern also matches a symlink into a vault.
     for (const entry of [
       "worktrees/",
       "runs/",
       "events.jsonl",
       "state.json",
       "board.md",
-      "tickets/",
+      "tickets",
     ])
       expect(ignore).toContain(entry);
   });

@@ -20,7 +20,7 @@ state.json
 
 # Work tracking lives outside product history (often a symlink into a vault)
 board.md
-tickets/
+tickets
 `;
 
 export async function ensureJfdiStateScaffold(jfdiDir: string): Promise<void> {
