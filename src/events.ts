@@ -463,7 +463,10 @@ async function readAppendedLines(
       // event carrying a whole gate transcript, say. Step over it rather than
       // stall on it forever; its remainder surfaces as an unreadable line.
       const isChunkFull = buffer.length === MAX_TAIL_READ_BYTES;
-      return { lines: [], nextOffsetBytes: isChunkFull ? offsetBytes + buffer.length : offsetBytes };
+      return {
+        lines: [],
+        nextOffsetBytes: isChunkFull ? offsetBytes + buffer.length : offsetBytes,
+      };
     }
     const complete = text.slice(0, lastBreak + 1);
     return {
