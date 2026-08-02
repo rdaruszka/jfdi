@@ -3,6 +3,7 @@ import { addCardIfAbsent } from "./board.js";
 import type { PipelineContext, RunReport } from "./pipeline.js";
 import { runsDir } from "./pipeline.js";
 import { appendToSection } from "./tickets.js";
+import { todayIsoDate } from "./util/dates.js";
 import { atomicWrite, fileExists, readIfExists } from "./util/fsx.js";
 
 /** Persist the pipeline report so a later `jfdi merge` / restart can pick it up. */
@@ -60,7 +61,7 @@ export async function recordMergeReady(
 ): Promise<void> {
   await saveReport(ctx.stateDir, ticketId, report);
   const lines = [
-    `### ${new Date().toISOString().slice(0, 10)} — ready to merge`,
+    `### ${todayIsoDate()} — ready to merge`,
     "",
     `**Summary:** ${report.summary || "(none recorded)"}`,
     "",

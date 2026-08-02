@@ -63,6 +63,106 @@ export function emptyState(): CoordinatorState {
   return { updatedAt: "", tickets: {}, integrationQueue: [] };
 }
 
+function newTicketState(id: string, ts: string): TicketState {
+  return {
+    id,
+    title: id,
+    status: "running",
+    stage: null,
+    round: 0,
+    branch: "",
+    lastActivity: "",
+    lastEventTs: ts,
+  };
+}
+
+/**
+ * Apply one ticket-scoped event. `ticket` is this reduction's private copy —
+ * already installed in `next.tickets` — so mutating it here mutates nothing
+ * the caller shared with us.
+ */
+function applyTicketEvent(
+  next: CoordinatorState,
+  ticket: TicketState,
+  id: string,
+  evt: JfdiEvent,
+): void {
+  switch (evt.type) {
+    case "dispatch":
+      ticket.status = "running";
+      ticket.title = (evt.data?.title as string) ?? id;
+      ticket.branch = (evt.data?.branch as string) ?? "";
+      ticket.lastActivity = "dispatched";
+      break;
+    case "round_start":
+      ticket.round = (evt.data?.round as number) ?? ticket.round + 1;
+      ticket.lastActivity = `round ${ticket.round}`;
+      break;
+    case "stage_start":
+      ticket.stage = (evt.data?.stage as StageName) ?? ticket.stage;
+      ticket.lastActivity = `${ticket.stage} running`;
+      break;
+    case "stage_end":
+      ticket.lastActivity = `${(evt.data?.stage as string) ?? ticket.stage}: ${(evt.data?.verdict as string) ?? "done"}`;
+      break;
+    case "gate_start":
+      ticket.lastActivity = "gate running";
+      break;
+    case "gate_result":
+      ticket.lastActivity = evt.data?.ok ? "gate passed" : `gate failed (${evt.data?.step ?? "?"})`;
+      break;
+    case "session_activity":
+      ticket.lastActivity = (evt.data?.text as string) ?? ticket.lastActivity;
+      break;
+    case "escalation":
+      ticket.lastActivity = "escalated";
+      break;
+    case "blocked":
+      ticket.status = "blocked";
+      ticket.stage = null;
+      ticket.lastActivity = (evt.data?.reason as string) ?? "blocked";
+      next.integrationQueue = next.integrationQueue.filter((queued) => queued !== id);
+      break;
+    case "merge_queued":
+      ticket.status = "merge-queued";
+      ticket.stage = null;
+      if (!next.integrationQueue.includes(id)) next.integrationQueue.push(id);
+      break;
+    case "merge_start":
+      ticket.status = "merging";
+      ticket.stage = "integration";
+      next.integrationQueue = next.integrationQueue.filter((queued) => queued !== id);
+      break;
+    case "complicated_merge":
+      ticket.lastActivity = "complicated merge — back to QA";
+      ticket.status = "running";
+      break;
+    case "merge_ready":
+      ticket.status = "merge-ready";
+      ticket.stage = null;
+      ticket.lastActivity = "awaiting approval";
+      break;
+    case "merged":
+      ticket.status = "done";
+      ticket.stage = null;
+      ticket.lastActivity = "merged";
+      break;
+    case "done":
+      ticket.status = "done";
+      ticket.stage = null;
+      break;
+    case "failed":
+      ticket.status = "failed";
+      ticket.stage = null;
+      ticket.lastActivity = (evt.data?.reason as string) ?? "failed";
+      next.integrationQueue = next.integrationQueue.filter((queued) => queued !== id);
+      break;
+    // card_moved, observation and error carry no ticket-state transition.
+    default:
+      break;
+  }
+}
+
 /** Pure reducer: state.json is always rebuildable by folding events.jsonl. */
 export function reduceEvent(state: CoordinatorState, evt: JfdiEvent): CoordinatorState {
   const next: CoordinatorState = {
@@ -71,100 +171,13 @@ export function reduceEvent(state: CoordinatorState, evt: JfdiEvent): Coordinato
     integrationQueue: [...state.integrationQueue],
   };
   const id = evt.ticketId;
-  const ticket = (): TicketState => {
-    const existing = next.tickets[id as string];
-    if (existing) return existing;
-    const fresh: TicketState = {
-      id: id as string,
-      title: id as string,
-      status: "running",
-      stage: null,
-      round: 0,
-      branch: "",
-      lastActivity: "",
-      lastEventTs: evt.ts,
-    };
-    next.tickets[id as string] = fresh;
-    return fresh;
+  if (!id) return next;
+  const ticket: TicketState = {
+    ...(next.tickets[id] ?? newTicketState(id, evt.ts)),
+    lastEventTs: evt.ts,
   };
-
-  if (id) {
-    const t = { ...ticket(), lastEventTs: evt.ts };
-    next.tickets[id] = t;
-    switch (evt.type) {
-      case "dispatch":
-        t.status = "running";
-        t.title = (evt.data?.title as string) ?? id;
-        t.branch = (evt.data?.branch as string) ?? "";
-        t.lastActivity = "dispatched";
-        break;
-      case "round_start":
-        t.round = (evt.data?.round as number) ?? t.round + 1;
-        t.lastActivity = `round ${t.round}`;
-        break;
-      case "stage_start":
-        t.stage = (evt.data?.stage as StageName) ?? t.stage;
-        t.lastActivity = `${t.stage} running`;
-        break;
-      case "stage_end":
-        t.lastActivity = `${(evt.data?.stage as string) ?? t.stage}: ${(evt.data?.verdict as string) ?? "done"}`;
-        break;
-      case "gate_start":
-        t.lastActivity = "gate running";
-        break;
-      case "gate_result":
-        t.lastActivity = evt.data?.ok ? "gate passed" : `gate failed (${evt.data?.step ?? "?"})`;
-        break;
-      case "session_activity":
-        t.lastActivity = (evt.data?.text as string) ?? t.lastActivity;
-        break;
-      case "escalation":
-        t.lastActivity = "escalated";
-        break;
-      case "blocked":
-        t.status = "blocked";
-        t.stage = null;
-        t.lastActivity = (evt.data?.reason as string) ?? "blocked";
-        next.integrationQueue = next.integrationQueue.filter((q) => q !== id);
-        break;
-      case "merge_queued":
-        t.status = "merge-queued";
-        t.stage = null;
-        if (!next.integrationQueue.includes(id)) next.integrationQueue.push(id);
-        break;
-      case "merge_start":
-        t.status = "merging";
-        t.stage = "integration";
-        next.integrationQueue = next.integrationQueue.filter((q) => q !== id);
-        break;
-      case "complicated_merge":
-        t.lastActivity = "complicated merge — back to QA";
-        t.status = "running";
-        break;
-      case "merge_ready":
-        t.status = "merge-ready";
-        t.stage = null;
-        t.lastActivity = "awaiting approval";
-        break;
-      case "merged":
-        t.status = "done";
-        t.stage = null;
-        t.lastActivity = "merged";
-        break;
-      case "done":
-        t.status = "done";
-        t.stage = null;
-        break;
-      case "failed":
-        t.status = "failed";
-        t.stage = null;
-        t.lastActivity = (evt.data?.reason as string) ?? "failed";
-        next.integrationQueue = next.integrationQueue.filter((q) => q !== id);
-        break;
-      default:
-        break;
-    }
-  }
+  next.tickets[id] = ticket;
+  applyTicketEvent(next, ticket, id, evt);
   return next;
 }
 
@@ -173,7 +186,7 @@ export function reduceEvent(state: CoordinatorState, evt: JfdiEvent): Coordinato
  * renderer) consumes this stream; nothing renders from pipeline internals.
  */
 export class EventLog {
-  private emitter = new EventEmitter();
+  private readonly emitter = new EventEmitter();
   private state: CoordinatorState = emptyState();
   private writeChain: Promise<void> = Promise.resolve();
 

@@ -17,6 +17,9 @@ export interface CoordinatorOptions {
   pollMs?: number;
 }
 
+/** How often the mtime poll runs when `fs.watch` misses (or is unavailable). */
+const DEFAULT_POLL_INTERVAL_MS = 2_000;
+
 /**
  * Multi-ticket mode: watches the board, dispatches cards from the begin column
  * (top first, up to max_concurrent), owns the serialized integration queue,
@@ -38,7 +41,7 @@ export class Coordinator {
     private readonly ctx: PipelineContext,
     opts: CoordinatorOptions = {},
   ) {
-    this.pollMs = opts.pollMs ?? 2000;
+    this.pollMs = opts.pollMs ?? DEFAULT_POLL_INTERVAL_MS;
     ctx.sessions = this.sessions;
   }
 

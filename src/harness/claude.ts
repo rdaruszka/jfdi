@@ -11,6 +11,14 @@ import type {
   SpawnOptions,
 } from "./types.js";
 
+/** Longest tool-input excerpt shown as a progress detail. */
+const MAX_TOOL_DETAIL_CHARS = 80;
+const ELLIPSIS = "...";
+/** How much stderr is kept to explain a non-zero exit. */
+const STDERR_TAIL_CHARS = 4_000;
+/** Grace period between SIGTERM and SIGKILL when a session is killed. */
+const SIGKILL_DELAY_MS = 5_000;
+
 interface ClaudeStreamLine {
   type?: string;
   subtype?: string;
@@ -53,7 +61,10 @@ function summarizeInput(input: unknown): string | undefined {
   const rec = input as Record<string, unknown>;
   for (const key of ["file_path", "command", "path", "pattern", "description"]) {
     const v = rec[key];
-    if (typeof v === "string") return v.length > 80 ? `${v.slice(0, 77)}...` : v;
+    if (typeof v === "string")
+      return v.length > MAX_TOOL_DETAIL_CHARS
+        ? `${v.slice(0, MAX_TOOL_DETAIL_CHARS - ELLIPSIS.length)}${ELLIPSIS}`
+        : v;
   }
   return undefined;
 }
@@ -89,7 +100,7 @@ export class ClaudeHarness implements Harness {
     let stderrTail = "";
     child.stderr?.on("data", (chunk: Buffer) => {
       const s = chunk.toString();
-      stderrTail = (stderrTail + s).slice(-4000);
+      stderrTail = (stderrTail + s).slice(-STDERR_TAIL_CHARS);
       log?.write(s);
     });
 
@@ -166,7 +177,7 @@ export class ClaudeHarness implements Harness {
       done,
       kill: () => {
         child.kill("SIGTERM");
-        setTimeout(() => child.kill("SIGKILL"), 5000).unref();
+        setTimeout(() => child.kill("SIGKILL"), SIGKILL_DELAY_MS).unref();
       },
     };
   }

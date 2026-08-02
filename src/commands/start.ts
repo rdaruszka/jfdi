@@ -5,6 +5,10 @@ import { Coordinator } from "../coordinator.js";
 import { App } from "../tui/App.js";
 import { attachInlinePrinter, buildContext } from "./context.js";
 
+// Shell convention for "killed by signal N": 128 + N.
+const EXIT_SIGINT = 130;
+const EXIT_SIGTERM = 143;
+
 /**
  * `jfdi start` — coordinator multi-mode: watch the board, dispatch concurrently,
  * serialize integration, and present the live TUI (or plain streaming when not
@@ -19,11 +23,11 @@ export async function startCommand(): Promise<number> {
   };
   process.on("SIGINT", () => {
     shutdown();
-    process.exit(130);
+    process.exit(EXIT_SIGINT);
   });
   process.on("SIGTERM", () => {
     shutdown();
-    process.exit(143);
+    process.exit(EXIT_SIGTERM);
   });
 
   if (!process.stdout.isTTY) {

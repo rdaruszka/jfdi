@@ -15,8 +15,12 @@ import type { PipelineContext, RunReport } from "./pipeline.js";
 import { runQaStage, runsDir, worktreesDir } from "./pipeline.js";
 import { formatGateCommands, loadPrompt, renderPrompt } from "./prompts.js";
 import { appendToSection, ensureTicketNote, type Ticket } from "./tickets.js";
+import { todayIsoDate } from "./util/dates.js";
 import { ensureDir } from "./util/fsx.js";
 import { readIntegrationVerdict } from "./verdicts.js";
+
+/** Git output quoted into a blocked reason when a rebase fails outright. */
+const MAX_REBASE_ERROR_CHARS = 500;
 
 export type IntegrateOutcome =
   | { status: "merged" }
@@ -30,7 +34,7 @@ async function appendReport(
   mergeNote: string,
 ): Promise<void> {
   const lines = [
-    `### ${new Date().toISOString().slice(0, 10)}`,
+    `### ${todayIsoDate()}`,
     "",
     report?.summary ? `**Summary:** ${report.summary}` : "**Summary:** (none recorded)",
     "",
@@ -72,7 +76,7 @@ export async function integrateTicket(
   let resolutionNote = "";
   if (!rebase.ok) {
     if (!rebase.conflict) {
-      const reason = `rebase onto ${target} failed: ${rebase.output.slice(0, 500)}`;
+      const reason = `rebase onto ${target} failed: ${rebase.output.slice(0, MAX_REBASE_ERROR_CHARS)}`;
       return blocked(ctx, ticket, notePath, reason);
     }
     // 2. Conflicts — the Integration agent resolves them in the worktree.
@@ -198,7 +202,7 @@ async function blocked(
     notePath,
     "Questions",
     [
-      `### ${new Date().toISOString().slice(0, 10)} — integration`,
+      `### ${todayIsoDate()} — integration`,
       "",
       reason,
       "",

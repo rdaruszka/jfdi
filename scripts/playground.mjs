@@ -18,14 +18,17 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const templateDir = path.join(repoRoot, "fixtures", "half-app");
 
+function parseTicketSelector(value) {
+  if (!value) fail("--tickets expects a comma-separated list, or 'all'/'none'");
+  return value === "all" || value === "none" ? value : value.split(",");
+}
+
 function parseArgs(argv) {
   const opts = { tickets: "all", dest: null, install: true };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--tickets") {
-      const value = argv[++i];
-      if (!value) fail("--tickets expects a comma-separated list, or 'all'/'none'");
-      opts.tickets = value === "all" || value === "none" ? value : value.split(",");
+      opts.tickets = parseTicketSelector(argv[++i]);
     } else if (arg === "--dest") {
       opts.dest = argv[++i] ?? fail("--dest expects a path");
     } else if (arg === "--no-install") {

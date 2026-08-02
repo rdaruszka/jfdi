@@ -8,6 +8,7 @@ import type { Harness } from "./harness/index.js";
 import { formatGateCommands, loadPrompt, type PromptName, renderPrompt } from "./prompts.js";
 import { ensureJfdiGitignore } from "./scaffold.js";
 import { appendToSection, ensureTicketNote, type Ticket } from "./tickets.js";
+import { todayIsoDate } from "./util/dates.js";
 import { ensureDir, readIfExists } from "./util/fsx.js";
 import { type ReviewVerdict, readImplementationVerdict, readReviewVerdict } from "./verdicts.js";
 
@@ -44,6 +45,15 @@ export type PipelineOutcome =
   | { status: "passed"; worktree: Worktree; report: RunReport }
   | { status: "blocked"; reason: string }
   | { status: "failed"; reason: string };
+
+/** One line of live session activity, trimmed to stay readable in the TUI. */
+const MAX_ACTIVITY_CHARS = 120;
+/** Blocked/escalation reasons carried on an event, trimmed for the same reason. */
+const MAX_REASON_CHARS = 120;
+/** Session output quoted back to the next round when a stage crashed outright. */
+const MAX_SESSION_ERROR_CHARS = 2_000;
+/** Session output quoted back when a stage ran but produced no valid verdict. */
+const MAX_VERDICT_ERROR_CHARS = 1_000;
 
 export function worktreesDir(jfdiDir: string): string {
   return path.join(jfdiDir, "worktrees");
@@ -93,7 +103,7 @@ async function runStageSession(
         const line = evt.text.split("\n")[0] ?? "";
         if (line.trim())
           ctx.log.emit("session_activity", ticket.id, {
-            text: `${stage}: ${line.slice(0, 120)}`,
+            text: `${stage}: ${line.slice(0, MAX_ACTIVITY_CHARS)}`,
           });
       }
     }
@@ -182,7 +192,7 @@ async function recordEscalation(
     notePath,
     "Questions",
     [
-      `### ${new Date().toISOString().slice(0, 10)} — ${stage}`,
+      `### ${todayIsoDate()} — ${stage}`,
       "",
       `**Q:** ${question}`,
       "",
@@ -251,7 +261,7 @@ async function runImplementationStage(
       kind: "retry",
       feedback: outcome.ok
         ? "The previous implementation session ended without writing a valid verdict file. Re-verify the work is complete, committed, and gate-passing, then write the verdict file as instructed."
-        : `The previous implementation session failed: ${outcome.resultText.slice(0, 2000)}`,
+        : `The previous implementation session failed: ${outcome.resultText.slice(0, MAX_SESSION_ERROR_CHARS)}`,
     };
   }
   const decisions = await recordDecisions(notePath, "implementation", round, verdict.decisions);
@@ -303,7 +313,7 @@ async function runCodeReviewStage(
         verdict?.feedback ??
         (verdict
           ? "Code review failed without specific feedback."
-          : `Code review session did not produce a valid verdict${outcome.ok ? "" : `: ${outcome.resultText.slice(0, 1000)}`}.`),
+          : `Code review session did not produce a valid verdict${outcome.ok ? "" : `: ${outcome.resultText.slice(0, MAX_VERDICT_ERROR_CHARS)}`}.`),
     };
   }
   const decisions = await recordDecisions(notePath, "code-review", round, verdict.decisions);
@@ -358,7 +368,9 @@ export async function runPipeline(ctx: PipelineContext, ticket: Ticket): Promise
         impl.question,
         impl.recommendation,
       );
-      ctx.log.emit("blocked", ticket.id, { reason: `escalated: ${impl.question.slice(0, 120)}` });
+      ctx.log.emit("blocked", ticket.id, {
+        reason: `escalated: ${impl.question.slice(0, MAX_REASON_CHARS)}`,
+      });
       return { status: "blocked", reason: impl.question };
     }
     allDecisions.push(...impl.decisions);
@@ -396,7 +408,9 @@ export async function runPipeline(ctx: PipelineContext, ticket: Ticket): Promise
       const question = qa.verdict.question ?? "QA escalated without a stated question.";
       const recommendation = qa.verdict.recommendation ?? "(no recommendation given)";
       await recordEscalation(ctx, ticket, notePath, "qa", question, recommendation);
-      ctx.log.emit("blocked", ticket.id, { reason: `QA escalated: ${question.slice(0, 120)}` });
+      ctx.log.emit("blocked", ticket.id, {
+        reason: `QA escalated: ${question.slice(0, MAX_REASON_CHARS)}`,
+      });
       return { status: "blocked", reason: question };
     }
     if (!qa.verdict || qa.verdict.verdict === "fail") {
@@ -405,7 +419,7 @@ export async function runPipeline(ctx: PipelineContext, ticket: Ticket): Promise
         source: "qa",
         feedback:
           qa.verdict?.feedback ??
-          `QA session did not produce a valid verdict${qa.outcome.ok ? "" : `: ${qa.outcome.resultText.slice(0, 1000)}`}.`,
+          `QA session did not produce a valid verdict${qa.outcome.ok ? "" : `: ${qa.outcome.resultText.slice(0, MAX_VERDICT_ERROR_CHARS)}`}.`,
       });
       continue;
     }
@@ -447,7 +461,7 @@ async function recordRoundsExhausted(
     notePath,
     "Questions",
     [
-      `### ${new Date().toISOString().slice(0, 10)} — retries exhausted`,
+      `### ${todayIsoDate()} — retries exhausted`,
       "",
       `All ${maxRounds} rounds failed. Round history:`,
       "",

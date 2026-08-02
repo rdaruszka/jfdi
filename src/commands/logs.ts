@@ -3,6 +3,10 @@ import * as path from "node:path";
 import { runsDir } from "../pipeline.js";
 import { buildContext } from "./context.js";
 
+const RUN_DIR_RE = /^run-\d+$/;
+/** Characters in the `run-` prefix, stripped to compare run directories numerically. */
+const RUN_DIR_PREFIX_LENGTH = "run-".length;
+
 /** `jfdi logs <ticket>` — dump the latest run's raw session logs. */
 export async function logsCommand(ticketId: string): Promise<number> {
   const ctx = await buildContext();
@@ -15,8 +19,10 @@ export async function logsCommand(ticketId: string): Promise<number> {
     return 1;
   }
   const runs = entries
-    .filter((e) => /^run-\d+$/.test(e))
-    .sort((a, b) => Number(a.slice(4)) - Number(b.slice(4)));
+    .filter((entry) => RUN_DIR_RE.test(entry))
+    .sort(
+      (a, b) => Number(a.slice(RUN_DIR_PREFIX_LENGTH)) - Number(b.slice(RUN_DIR_PREFIX_LENGTH)),
+    );
   const latest = runs.at(-1);
   const dirs = [...(latest ? [path.join(base, latest)] : []), path.join(base, "integration")];
   let printed = false;

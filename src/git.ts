@@ -5,6 +5,9 @@ import { promisify } from "node:util";
 
 const execFileP = promisify(execFile);
 
+/** 16 MiB — a full-branch `git diff` for review has to fit in one buffer. */
+const MAX_GIT_OUTPUT_BYTES = 16 * 1_024 * 1_024;
+
 export class GitError extends Error {
   constructor(
     message: string,
@@ -17,7 +20,7 @@ export class GitError extends Error {
 
 export async function git(cwd: string, ...args: string[]): Promise<string> {
   try {
-    const { stdout } = await execFileP("git", args, { cwd, maxBuffer: 16 * 1024 * 1024 });
+    const { stdout } = await execFileP("git", args, { cwd, maxBuffer: MAX_GIT_OUTPUT_BYTES });
     return stdout.trimEnd();
   } catch (err) {
     const e = err as { stderr?: string; message: string };

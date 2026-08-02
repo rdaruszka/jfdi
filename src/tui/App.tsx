@@ -2,6 +2,15 @@ import { Box, Text, useApp, useInput } from "ink";
 import { useEffect, useState } from "react";
 import type { CoordinatorState, EventLog, JfdiEvent, TicketState } from "../events.js";
 
+/**
+ * Cap on the event tail held in memory — the TUI runs for the coordinator's
+ * whole lifetime, so this list must never grow with the event stream.
+ */
+const MAX_RECENT_EVENTS = 8;
+/** Offsets of `HH:MM:SS` within an ISO-8601 timestamp. */
+const ISO_TIME_START = 11;
+const ISO_TIME_END = 19;
+
 const STATUS_COLOR: Record<TicketState["status"], string> = {
   running: "cyan",
   blocked: "red",
@@ -59,7 +68,7 @@ export function App({ log, boardName, targetBranch, onQuit }: AppProps) {
       if (evt.type === "session_activity" || evt.type === "card_moved") return;
       seq += 1;
       const entry = { seq, evt };
-      setRecent((prev) => [...prev.slice(-7), entry]);
+      setRecent((prev) => [...prev.slice(-(MAX_RECENT_EVENTS - 1)), entry]);
     });
   }, [log]);
 
@@ -134,7 +143,7 @@ export function App({ log, boardName, targetBranch, onQuit }: AppProps) {
         </Text>
         {recent.map(({ seq, evt }) => (
           <Text key={seq} dimColor wrap="truncate">
-            {evt.ts.slice(11, 19)} {evt.ticketId ? `[${evt.ticketId}] ` : ""}
+            {evt.ts.slice(ISO_TIME_START, ISO_TIME_END)} {evt.ticketId ? `[${evt.ticketId}] ` : ""}
             {evt.type}
             {evt.data?.stage ? ` ${String(evt.data.stage)}` : ""}
             {evt.data?.verdict ? ` → ${String(evt.data.verdict)}` : ""}

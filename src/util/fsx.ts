@@ -2,6 +2,13 @@ import { randomBytes } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
+/** Randomness in a temp-file name — enough to make a collision a non-event. */
+const TEMP_SUFFIX_BYTES = 4;
+/** Re-read/retry budget when an external writer changes the file mid-update. */
+const DEFAULT_RETRIES = 5;
+/** Base backoff between retries; the wait grows linearly with the attempt. */
+const DEFAULT_RETRY_DELAY_MS = 50;
+
 export async function ensureDir(dir: string): Promise<void> {
   await fs.mkdir(dir, { recursive: true });
 }
@@ -18,7 +25,10 @@ export async function atomicWrite(filePath: string, content: string): Promise<vo
   const target = await realWriteTarget(filePath);
   const dir = path.dirname(target);
   await ensureDir(dir);
-  const tmp = path.join(dir, `.${path.basename(target)}.${randomBytes(4).toString("hex")}.tmp`);
+  const tmp = path.join(
+    dir,
+    `.${path.basename(target)}.${randomBytes(TEMP_SUFFIX_BYTES).toString("hex")}.tmp`,
+  );
   await fs.writeFile(tmp, content, "utf8");
   await fs.rename(tmp, target);
 }
@@ -106,8 +116,8 @@ export function readModifyWrite(
   modify: (content: string) => string | null,
   opts: { retries?: number; retryDelayMs?: number } = {},
 ): Promise<boolean> {
-  const retries = opts.retries ?? 5;
-  const retryDelayMs = opts.retryDelayMs ?? 50;
+  const retries = opts.retries ?? DEFAULT_RETRIES;
+  const retryDelayMs = opts.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
   return withFileLock(filePath, async () => {
     for (let attempt = 0; ; attempt++) {
       const content = await fs.readFile(filePath, "utf8");
