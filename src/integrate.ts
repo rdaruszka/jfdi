@@ -17,7 +17,7 @@ import { formatGateCommands, loadPrompt, renderPrompt } from "./prompts.js";
 import { appendToSection, ensureTicketNote, type Ticket } from "./tickets.js";
 import { todayIsoDate } from "./util/dates.js";
 import { ensureDir } from "./util/fsx.js";
-import { readIntegrationVerdict } from "./verdicts.js";
+import { type IntegrationVerdict, readIntegrationVerdict } from "./verdicts.js";
 
 /** Git output quoted into a blocked reason when a rebase fails outright. */
 const MAX_REBASE_ERROR_CHARS = 500;
@@ -45,6 +45,106 @@ async function appendReport(
     lines.push("", "**Decisions made autonomously:**", ...report.decisions.map((d) => `- ${d}`));
   lines.push("", mergeNote);
   await appendToSection(notePath, "Report", lines.join("\n"));
+}
+
+type ConflictOutcome =
+  | { status: "resolved"; notes: string }
+  | { status: "blocked"; reason: string };
+
+/** Drive the Integration agent over the conflicted worktree and read its verdict. */
+async function runIntegrationAgent(
+  ctx: PipelineContext,
+  ticket: Ticket,
+  worktree: Worktree,
+  runDir: string,
+): Promise<IntegrationVerdict | null> {
+  const verdictPath = path.join(runDir, "integration.verdict.json");
+  const template = await loadPrompt(ctx.jfdiDir, "integration");
+  const prompt = renderPrompt(template, {
+    TICKET_ID: ticket.id,
+    SPEC: ticket.spec,
+    BRANCH: worktree.branch,
+    TARGET_BRANCH: ctx.config.integration.target_branch,
+    GATE_COMMANDS: formatGateCommands(ctx.config.gate),
+    VERDICT_PATH: verdictPath,
+  });
+  const stage: StageName = "integration";
+  ctx.log.emit("stage_start", ticket.id, { stage });
+  const session = ctx.harness.spawn(
+    { prompt },
+    { cwd: worktree.path, logPath: path.join(runDir, "integration.log.jsonl") },
+  );
+  for await (const evt of session.events) {
+    if (evt.type === "tool")
+      ctx.log.emit("session_activity", ticket.id, { text: `integration: ${evt.name}` });
+  }
+  const result = await session.done;
+  const verdict = await readIntegrationVerdict(verdictPath);
+  ctx.log.emit("stage_end", ticket.id, {
+    stage,
+    verdict: verdict?.resolution ?? (result.ok ? "invalid-verdict" : "session-failed"),
+  });
+  return verdict;
+}
+
+/**
+ * A resolution the agent itself called "complicated" touched real logic, so the
+ * sign-off no longer binds to what is about to land: re-run QA and the gate.
+ */
+async function requalifyAfterMerge(
+  ctx: PipelineContext,
+  ticket: Ticket,
+  worktree: Worktree,
+  notePath: string,
+  runDir: string,
+  notes: string,
+): Promise<ConflictOutcome> {
+  ctx.log.emit("complicated_merge", ticket.id, { notes });
+  const qaDir = path.join(runDir, "requalify");
+  await ensureDir(qaDir);
+  const qa = await runQaStage(ctx, ticket, worktree, qaDir, notePath, 0);
+  if (qa.verdict?.verdict !== "pass") {
+    const detail = qa.verdict?.feedback ?? qa.verdict?.question ?? "no valid verdict";
+    return { status: "blocked", reason: `post-merge QA did not pass: ${detail}` };
+  }
+  const gate = await runGate(ctx.config.gate, worktree.path);
+  if (!gate.ok)
+    return { status: "blocked", reason: `gate failed after re-QA:\n\n${formatGateFailure(gate)}` };
+  return { status: "resolved", notes };
+}
+
+/**
+ * A conflicted rebase, from conflict to landable branch: the Integration agent
+ * resolves in the worktree, the gate reruns on the result, and a complicated
+ * resolution goes back through QA before it is allowed near the target.
+ */
+async function resolveConflictedRebase(
+  ctx: PipelineContext,
+  ticket: Ticket,
+  worktree: Worktree,
+  notePath: string,
+): Promise<ConflictOutcome> {
+  const runDir = path.join(runsDir(ctx.stateDir, ticket.id), "integration");
+  await ensureDir(runDir);
+  const verdict = await runIntegrationAgent(ctx, ticket, worktree, runDir);
+  if (await rebaseInProgress(worktree.path))
+    return {
+      status: "blocked",
+      reason: "integration agent left the rebase unfinished — resolve manually in the worktree",
+    };
+  if (!verdict) return { status: "blocked", reason: "integration agent produced no valid verdict" };
+  const notes = verdict.notes ?? "";
+
+  const gate = await runGate(ctx.config.gate, worktree.path);
+  ctx.log.emit("gate_result", ticket.id, { ok: gate.ok });
+  if (!gate.ok)
+    return {
+      status: "blocked",
+      reason: `gate failed after conflict resolution:\n\n${formatGateFailure(gate)}`,
+    };
+
+  if (verdict.resolution !== "complicated") return { status: "resolved", notes };
+  return requalifyAfterMerge(ctx, ticket, worktree, notePath, runDir, notes);
 }
 
 /**
@@ -79,83 +179,10 @@ export async function integrateTicket(
       const reason = `rebase onto ${target} failed: ${rebase.output.slice(0, MAX_REBASE_ERROR_CHARS)}`;
       return blocked(ctx, ticket, notePath, reason);
     }
-    // 2. Conflicts — the Integration agent resolves them in the worktree.
-    const runDir = path.join(runsDir(ctx.stateDir, ticket.id), "integration");
-    await ensureDir(runDir);
-    const verdictPath = path.join(runDir, "integration.verdict.json");
-    const template = await loadPrompt(ctx.jfdiDir, "integration");
-    const prompt = renderPrompt(template, {
-      TICKET_ID: ticket.id,
-      SPEC: ticket.spec,
-      BRANCH: worktree.branch,
-      TARGET_BRANCH: target,
-      GATE_COMMANDS: formatGateCommands(ctx.config.gate),
-      VERDICT_PATH: verdictPath,
-    });
-    const stage: StageName = "integration";
-    ctx.log.emit("stage_start", ticket.id, { stage });
-    const session = ctx.harness.spawn(
-      { prompt },
-      { cwd: worktree.path, logPath: path.join(runDir, "integration.log.jsonl") },
-    );
-    for await (const evt of session.events) {
-      if (evt.type === "tool")
-        ctx.log.emit("session_activity", ticket.id, { text: `integration: ${evt.name}` });
-    }
-    const result = await session.done;
-    const verdict = await readIntegrationVerdict(verdictPath);
-    ctx.log.emit("stage_end", ticket.id, {
-      stage,
-      verdict: verdict?.resolution ?? (result.ok ? "invalid-verdict" : "session-failed"),
-    });
-    if (await rebaseInProgress(worktree.path)) {
-      return blocked(
-        ctx,
-        ticket,
-        notePath,
-        "integration agent left the rebase unfinished — resolve manually in the worktree",
-      );
-    }
-    if (!verdict) {
-      return blocked(ctx, ticket, notePath, "integration agent produced no valid verdict");
-    }
-    resolutionNote = verdict.notes ?? "";
-
-    // 3. Rerun the gate on the rebased result.
-    const gate1 = await runGate(ctx.config.gate, worktree.path);
-    ctx.log.emit("gate_result", ticket.id, { ok: gate1.ok });
-    if (!gate1.ok) {
-      return blocked(
-        ctx,
-        ticket,
-        notePath,
-        `gate failed after conflict resolution:\n\n${formatGateFailure(gate1)}`,
-      );
-    }
-
-    // 4. Complicated merge → the card goes back through QA before landing.
-    if (verdict.resolution === "complicated") {
-      ctx.log.emit("complicated_merge", ticket.id, { notes: resolutionNote });
-      const qaDir = path.join(runDir, "requalify");
-      await ensureDir(qaDir);
-      const qa = await runQaStage(ctx, ticket, worktree, qaDir, notePath, 0);
-      if (qa.verdict?.verdict !== "pass") {
-        return blocked(
-          ctx,
-          ticket,
-          notePath,
-          `post-merge QA did not pass: ${qa.verdict?.feedback ?? qa.verdict?.question ?? "no valid verdict"}`,
-        );
-      }
-      const gate2 = await runGate(ctx.config.gate, worktree.path);
-      if (!gate2.ok)
-        return blocked(
-          ctx,
-          ticket,
-          notePath,
-          `gate failed after re-QA:\n\n${formatGateFailure(gate2)}`,
-        );
-    }
+    // 2–4. Conflicts — agent resolution, gate, and re-QA if it got complicated.
+    const resolution = await resolveConflictedRebase(ctx, ticket, worktree, notePath);
+    if (resolution.status === "blocked") return blocked(ctx, ticket, notePath, resolution.reason);
+    resolutionNote = resolution.notes;
   } else {
     // Clean rebase still reruns the gate pre-merge.
     const gate = await runGate(ctx.config.gate, worktree.path);

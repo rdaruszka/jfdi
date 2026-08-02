@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 const execFileP = promisify(execFile);
 
 /** 16 MiB — a full-branch `git diff` for review has to fit in one buffer. */
-const MAX_GIT_OUTPUT_BYTES = 16 * 1_024 * 1_024;
+const MAX_GIT_OUTPUT_BYTES = 16_777_216;
 
 export class GitError extends Error {
   constructor(

@@ -29,31 +29,45 @@ interface ClaudeStreamLine {
   };
 }
 
+type ClaudeContentBlock = NonNullable<NonNullable<ClaudeStreamLine["message"]>["content"]>[number];
+
+/** Whatever the subprocess wrote, it is untrusted text — a bad line is simply not an event. */
+function parseStreamLine(line: string): ClaudeStreamLine | null {
+  try {
+    const parsed: unknown = JSON.parse(line);
+    return typeof parsed === "object" && parsed !== null ? (parsed as ClaudeStreamLine) : null;
+  } catch {
+    // Partial or non-JSON output (progress noise, a truncated final line).
+    return null;
+  }
+}
+
+function mapAssistantBlock(block: ClaudeContentBlock): HarnessEvent[] {
+  if (block.type === "text" && block.text) return [{ type: "text", text: block.text }];
+  if (block.type === "tool_use" && block.name) {
+    const detail = summarizeInput(block.input);
+    return [{ type: "tool", name: block.name, ...(detail ? { detail } : {}) }];
+  }
+  return [];
+}
+
 /** Map one stream-json line to harness events. */
 export function mapClaudeLine(line: string): HarnessEvent[] {
-  let parsed: ClaudeStreamLine;
-  try {
-    parsed = JSON.parse(line) as ClaudeStreamLine;
-  } catch {
-    return [];
-  }
-  const events: HarnessEvent[] = [];
+  const parsed = parseStreamLine(line);
+  if (parsed === null) return [];
   if (parsed.type === "assistant") {
-    for (const block of parsed.message?.content ?? []) {
-      if (block.type === "text" && block.text) events.push({ type: "text", text: block.text });
-      if (block.type === "tool_use" && block.name) {
-        const detail = summarizeInput(block.input);
-        events.push({ type: "tool", name: block.name, ...(detail ? { detail } : {}) });
-      }
-    }
-  } else if (parsed.type === "result") {
-    events.push({
-      type: "result",
-      ok: parsed.subtype === "success" && !parsed.is_error,
-      text: parsed.result ?? "",
-    });
+    return (parsed.message?.content ?? []).flatMap(mapAssistantBlock);
   }
-  return events;
+  if (parsed.type === "result") {
+    return [
+      {
+        type: "result",
+        ok: parsed.subtype === "success" && !parsed.is_error,
+        text: parsed.result ?? "",
+      },
+    ];
+  }
+  return [];
 }
 
 function summarizeInput(input: unknown): string | undefined {

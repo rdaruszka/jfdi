@@ -320,6 +320,137 @@ async function runCodeReviewStage(
   return { kind: "pass", decisions, observations: verdict.observations ?? [] };
 }
 
+type RoundStep =
+  | { kind: "retry"; source: FeedbackItem["source"]; feedback: string }
+  | { kind: "blocked"; reason: string }
+  | { kind: "passed"; testsAdded: string };
+
+interface RoundResult {
+  step: RoundStep;
+  /** Decisions and observations earned before the round's outcome was known — kept either way. */
+  decisions: string[];
+  observations: string[];
+  summary: string | undefined;
+}
+
+/** The mechanical gate, with its start/result events. Cheapest reviewer, runs first, always. */
+async function runGateStage(ctx: PipelineContext, ticket: Ticket, worktree: Worktree) {
+  ctx.log.emit("gate_start", ticket.id);
+  const gate = await runGate(ctx.config.gate, worktree.path, (name) =>
+    ctx.log.emit("session_activity", ticket.id, { text: `gate: ${name}` }),
+  );
+  const failedStep = gate.results.at(-1)?.name;
+  ctx.log.emit("gate_result", ticket.id, {
+    ok: gate.ok,
+    ...(gate.ok ? {} : { step: failedStep }),
+  });
+  return gate;
+}
+
+/**
+ * One round: Implementation → gate → Code Review → QA, stopping at the first
+ * step that wants another round. Reviews are sequential — Code Review gates QA,
+ * so a code-review failure never pays for a sandbox run.
+ */
+async function runRound(
+  ctx: PipelineContext,
+  ticket: Ticket,
+  worktree: Worktree,
+  roundDir: string,
+  notePath: string,
+  round: number,
+  history: FeedbackItem[],
+): Promise<RoundResult> {
+  const decisions: string[] = [];
+  const observations: string[] = [];
+  const soFar = { decisions, observations, summary: undefined };
+
+  const implementation = await runImplementationStage(
+    ctx,
+    ticket,
+    worktree,
+    roundDir,
+    notePath,
+    round,
+    history,
+  );
+  if (implementation.kind === "retry") {
+    const { feedback } = implementation;
+    return { ...soFar, step: { kind: "retry", source: "implementation", feedback } };
+  }
+  if (implementation.kind === "escalate") {
+    const { question, recommendation } = implementation;
+    await recordEscalation(ctx, ticket, notePath, "implementation", question, recommendation);
+    ctx.log.emit("blocked", ticket.id, {
+      reason: `escalated: ${question.slice(0, MAX_REASON_CHARS)}`,
+    });
+    return { ...soFar, step: { kind: "blocked", reason: question } };
+  }
+  decisions.push(...implementation.decisions);
+  observations.push(...implementation.observations);
+  const summary = implementation.summary;
+  await commitAllIfDirty(worktree.path, `jfdi(${ticket.id}): checkpoint uncommitted work`);
+
+  const gate = await runGateStage(ctx, ticket, worktree);
+  if (!gate.ok)
+    return {
+      decisions,
+      observations,
+      summary,
+      step: { kind: "retry", source: "gate", feedback: formatGateFailure(gate) },
+    };
+
+  const review = await runCodeReviewStage(ctx, ticket, worktree, roundDir, notePath, round);
+  if (review.kind === "retry") {
+    const { feedback } = review;
+    return {
+      decisions,
+      observations,
+      summary,
+      step: { kind: "retry", source: "code-review", feedback },
+    };
+  }
+  decisions.push(...review.decisions);
+  observations.push(...review.observations);
+
+  const qa = await runQaStage(ctx, ticket, worktree, roundDir, notePath, round);
+  const qaStep = await judgeQa(ctx, ticket, notePath, qa);
+  if (qaStep.kind === "passed") {
+    decisions.push(...(qa.verdict?.decisions ?? []));
+    observations.push(...(qa.verdict?.observations ?? []));
+    await commitAllIfDirty(worktree.path, `jfdi(${ticket.id}): QA artifacts`);
+  }
+  return { decisions, observations, summary, step: qaStep };
+}
+
+/** Turn a QA outcome into the round's verdict, recording an escalation if that's what it is. */
+async function judgeQa(
+  ctx: PipelineContext,
+  ticket: Ticket,
+  notePath: string,
+  qa: { verdict: ReviewVerdict | null; outcome: StageOutcome },
+): Promise<RoundStep> {
+  if (qa.verdict?.verdict === "escalate") {
+    const question = qa.verdict.question ?? "QA escalated without a stated question.";
+    const recommendation = qa.verdict.recommendation ?? "(no recommendation given)";
+    await recordEscalation(ctx, ticket, notePath, "qa", question, recommendation);
+    ctx.log.emit("blocked", ticket.id, {
+      reason: `QA escalated: ${question.slice(0, MAX_REASON_CHARS)}`,
+    });
+    return { kind: "blocked", reason: question };
+  }
+  if (!qa.verdict || qa.verdict.verdict === "fail") {
+    return {
+      kind: "retry",
+      source: "qa",
+      feedback:
+        qa.verdict?.feedback ??
+        `QA session did not produce a valid verdict${qa.outcome.ok ? "" : `: ${qa.outcome.resultText.slice(0, MAX_VERDICT_ERROR_CHARS)}`}.`,
+    };
+  }
+  return { kind: "passed", testsAdded: qa.verdict.testsAdded ?? "" };
+}
+
 /**
  * The per-ticket pipeline: Implementation → mechanical gate → Code Review → QA,
  * with feedback rounds. Reviews are sequential — Code Review gates QA — and both
@@ -337,7 +468,6 @@ export async function runPipeline(ctx: PipelineContext, ticket: Ticket): Promise
   const allDecisions: string[] = [];
   const allObservations: string[] = [];
   let summary = "";
-  let testsAdded = "";
   const maxRounds = ctx.config.pipeline.max_rounds;
 
   for (let round = 1; round <= maxRounds; round++) {
@@ -345,88 +475,16 @@ export async function runPipeline(ctx: PipelineContext, ticket: Ticket): Promise
     const roundDir = path.join(runDir, `round-${round}`);
     await ensureDir(roundDir);
 
-    // --- Implementation ---
-    const impl = await runImplementationStage(
-      ctx,
-      ticket,
-      worktree,
-      roundDir,
-      notePath,
-      round,
-      history,
-    );
-    if (impl.kind === "retry") {
-      history.push({ round, source: "implementation", feedback: impl.feedback });
-      continue;
-    }
-    if (impl.kind === "escalate") {
-      await recordEscalation(
-        ctx,
-        ticket,
-        notePath,
-        "implementation",
-        impl.question,
-        impl.recommendation,
-      );
-      ctx.log.emit("blocked", ticket.id, {
-        reason: `escalated: ${impl.question.slice(0, MAX_REASON_CHARS)}`,
-      });
-      return { status: "blocked", reason: impl.question };
-    }
-    allDecisions.push(...impl.decisions);
-    allObservations.push(...impl.observations);
-    summary = impl.summary ?? summary;
-    await commitAllIfDirty(worktree.path, `jfdi(${ticket.id}): checkpoint uncommitted work`);
+    const result = await runRound(ctx, ticket, worktree, roundDir, notePath, round, history);
+    allDecisions.push(...result.decisions);
+    allObservations.push(...result.observations);
+    summary = result.summary ?? summary;
 
-    // --- Mechanical gate: cheapest reviewer, runs first, always ---
-    ctx.log.emit("gate_start", ticket.id);
-    const gate = await runGate(ctx.config.gate, worktree.path, (name) =>
-      ctx.log.emit("session_activity", ticket.id, { text: `gate: ${name}` }),
-    );
-    const failedStep = gate.results.at(-1)?.name;
-    ctx.log.emit("gate_result", ticket.id, {
-      ok: gate.ok,
-      ...(gate.ok ? {} : { step: failedStep }),
-    });
-    if (!gate.ok) {
-      history.push({ round, source: "gate", feedback: formatGateFailure(gate) });
+    if (result.step.kind === "retry") {
+      history.push({ round, source: result.step.source, feedback: result.step.feedback });
       continue;
     }
-
-    // --- Code Review (gates QA — a fail here skips the expensive sandbox run) ---
-    const review = await runCodeReviewStage(ctx, ticket, worktree, roundDir, notePath, round);
-    if (review.kind === "retry") {
-      history.push({ round, source: "code-review", feedback: review.feedback });
-      continue;
-    }
-    allDecisions.push(...review.decisions);
-    allObservations.push(...review.observations);
-
-    // --- Quality Assurance ---
-    const qa = await runQaStage(ctx, ticket, worktree, roundDir, notePath, round);
-    if (qa.verdict?.verdict === "escalate") {
-      const question = qa.verdict.question ?? "QA escalated without a stated question.";
-      const recommendation = qa.verdict.recommendation ?? "(no recommendation given)";
-      await recordEscalation(ctx, ticket, notePath, "qa", question, recommendation);
-      ctx.log.emit("blocked", ticket.id, {
-        reason: `QA escalated: ${question.slice(0, MAX_REASON_CHARS)}`,
-      });
-      return { status: "blocked", reason: question };
-    }
-    if (!qa.verdict || qa.verdict.verdict === "fail") {
-      history.push({
-        round,
-        source: "qa",
-        feedback:
-          qa.verdict?.feedback ??
-          `QA session did not produce a valid verdict${qa.outcome.ok ? "" : `: ${qa.outcome.resultText.slice(0, MAX_VERDICT_ERROR_CHARS)}`}.`,
-      });
-      continue;
-    }
-    testsAdded = qa.verdict.testsAdded ?? "";
-    allDecisions.push(...(qa.verdict.decisions ?? []));
-    allObservations.push(...(qa.verdict.observations ?? []));
-    await commitAllIfDirty(worktree.path, `jfdi(${ticket.id}): QA artifacts`);
+    if (result.step.kind === "blocked") return { status: "blocked", reason: result.step.reason };
 
     const finalCommit = await revParse(worktree.path, "HEAD");
     return {
@@ -436,7 +494,7 @@ export async function runPipeline(ctx: PipelineContext, ticket: Ticket): Promise
         summary,
         decisions: allDecisions,
         observations: allObservations,
-        testsAdded,
+        testsAdded: result.step.testsAdded,
         rounds: round,
         commit: finalCommit,
       },

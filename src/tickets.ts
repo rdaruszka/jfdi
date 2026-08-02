@@ -66,6 +66,25 @@ export async function ensureTicketNote(ticket: Ticket, ticketsDir: string): Prom
   return notePath;
 }
 
+const HEADING_RE = /^##\s/;
+
+/**
+ * Line index the block belongs at: just past the section's last non-blank
+ * line, which is either the line before the next `## ` heading or the end of
+ * the file. Shrinks monotonically from that bound, so it terminates.
+ */
+function sectionInsertionPoint(lines: string[], headingIndex: number): number {
+  let insertAt = lines.length;
+  for (let i = headingIndex + 1; i < lines.length; i++) {
+    if (HEADING_RE.test(lines[i] ?? "")) {
+      insertAt = i;
+      break;
+    }
+  }
+  while (insertAt > headingIndex + 1 && (lines[insertAt - 1] ?? "").trim() === "") insertAt--;
+  return insertAt;
+}
+
 /**
  * Append content under a `## Heading` section of a note, creating the section
  * at the end of the file if absent.
@@ -77,28 +96,16 @@ export async function appendToSection(
 ): Promise<void> {
   const existing = (await readIfExists(notePath)) ?? "";
   const lines = existing.split("\n");
-  const headingIdx = lines.findIndex((l) => l.trim() === `## ${heading}`);
+  const headingIndex = lines.findIndex((line) => line.trim() === `## ${heading}`);
   const block = content.trimEnd();
-  let next: string;
-  if (headingIdx === -1) {
+  if (headingIndex === -1) {
     const base = existing.length > 0 && !existing.endsWith("\n") ? `${existing}\n` : existing;
-    next = `${base}\n## ${heading}\n\n${block}\n`;
-  } else {
-    // Insert before the next `## ` heading (or end of file).
-    let insertAt = lines.length;
-    for (let i = headingIdx + 1; i < lines.length; i++) {
-      if (/^##\s/.test(lines[i] as string)) {
-        insertAt = i;
-        break;
-      }
-    }
-    // Trim trailing blank lines within the section, then append with spacing.
-    while (insertAt > headingIdx + 1 && (lines[insertAt - 1] as string).trim() === "") insertAt--;
-    lines.splice(insertAt, 0, "", block);
-    next = lines.join("\n");
-    if (!next.endsWith("\n")) next += "\n";
+    await atomicWrite(notePath, `${base}\n## ${heading}\n\n${block}\n`);
+    return;
   }
-  await atomicWrite(notePath, next);
+  lines.splice(sectionInsertionPoint(lines, headingIndex), 0, "", block);
+  const next = lines.join("\n");
+  await atomicWrite(notePath, next.endsWith("\n") ? next : `${next}\n`);
 }
 
 /** Read a note's raw content, or null. */
