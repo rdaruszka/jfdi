@@ -415,7 +415,7 @@ export async function mergedTicketIds(stateDir: string): Promise<Set<string>> {
  * A live tail reads a file other processes are appending to, so it meets
  * shapes the offline reader never does: a half-written line, or a hand edit.
  * Returning null lets the caller report the line and keep following, where
- * `readEventFile` refuses the whole stream.
+ * `rebuild` refuses the whole stream.
  */
 function parseEventLine(line: string): JfdiEvent | null {
   try {
@@ -458,7 +458,13 @@ async function readAppendedLines(
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, offsetBytes);
     const text = buffer.subarray(0, bytesRead).toString("utf8");
     const lastBreak = text.lastIndexOf("\n");
-    if (lastBreak === -1) return { lines: [], nextOffsetBytes: offsetBytes };
+    if (lastBreak === -1) {
+      // No line end in a full chunk means one line longer than the chunk — an
+      // event carrying a whole gate transcript, say. Step over it rather than
+      // stall on it forever; its remainder surfaces as an unreadable line.
+      const isChunkFull = buffer.length === MAX_TAIL_READ_BYTES;
+      return { lines: [], nextOffsetBytes: isChunkFull ? offsetBytes + buffer.length : offsetBytes };
+    }
     const complete = text.slice(0, lastBreak + 1);
     return {
       lines: complete.split("\n").filter((line) => line.trim() !== ""),

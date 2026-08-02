@@ -210,7 +210,7 @@ export class Coordinator {
     const columns = this.context.config.board.columns;
     const cards = findColumn(board, columns.readyToMerge)?.cards ?? [];
     // Read the event stream at most once per scan, and only if a branch is missing.
-    let merged: Set<string> | null = null;
+    let mergedIds: Set<string> | null = null;
     for (const card of cards) {
       const id = ticketIdFromCard(card.text);
       if (this.active.has(id)) continue;
@@ -223,8 +223,8 @@ export class Coordinator {
           this.context.config.integration.target_branch,
         );
       } else {
-        if (merged === null) merged = await mergedTicketIds(this.context.stateDir);
-        hasMerged = merged.has(id);
+        if (mergedIds === null) mergedIds = await mergedTicketIds(this.context.stateDir);
+        hasMerged = mergedIds.has(id);
       }
       if (!hasMerged) continue;
       await this.moveCardSafe(card, columns.readyToMerge, columns.done, true);
