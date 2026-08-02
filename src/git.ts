@@ -137,7 +137,7 @@ export interface RebaseResult {
   output: string;
 }
 
-/** Rebase the worktree's branch onto `target`. On hasConflict the rebase is left in progress. */
+/** Rebase the worktree's branch onto `target`. On conflict the rebase is left in progress. */
 export async function rebaseOnto(worktree: string, target: string): Promise<RebaseResult> {
   const result = await gitTry(worktree, "rebase", target);
   if (result.ok) return { ok: true, hasConflict: false, output: result.output };
@@ -149,9 +149,9 @@ export async function rebaseOnto(worktree: string, target: string): Promise<Reba
 export async function isRebaseInProgress(worktree: string): Promise<boolean> {
   const gitDir = await git(worktree, "rev-parse", "--git-dir");
   const gitDirPath = path.isAbsolute(gitDir) ? gitDir : path.join(worktree, gitDir);
-  for (const d of ["rebase-merge", "rebase-apply"]) {
+  for (const marker of ["rebase-merge", "rebase-apply"]) {
     try {
-      await fs.access(path.join(gitDirPath, d));
+      await fs.access(path.join(gitDirPath, marker));
       return true;
     } catch {
       // not present

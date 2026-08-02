@@ -72,9 +72,9 @@ export function stageOf(prompt: string): "implementation" | "code-review" | "qa"
 
 /** Pull the verdict file path out of a rendered prompt. */
 export function verdictPathOf(prompt: string): string {
-  const m = /(\/\S+\.verdict\.json)/.exec(prompt);
-  if (!m?.[1]) throw new Error("no verdict path in prompt");
-  return m[1];
+  const match = /(\/\S+\.verdict\.json)/.exec(prompt);
+  if (!match?.[1]) throw new Error("no verdict path in prompt");
+  return match[1];
 }
 
 export async function writeVerdict(prompt: string, verdict: object): Promise<void> {

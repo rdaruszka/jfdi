@@ -27,14 +27,14 @@ describe("ticketIdFromCard", () => {
     expect(ticketIdFromCard("Do stuff [[My Ticket]]")).toBe("my-ticket");
   });
   it("derives slug+hash for bare cards, stable across calls", () => {
-    const a = ticketIdFromCard("Add a --help flag to the CLI");
-    const b = ticketIdFromCard("Add a --help flag to the CLI");
-    expect(a).toBe(b);
-    expect(a).toMatch(/^add-a-help-flag-to-the-[0-9a-f]{6}$/);
+    const firstId = ticketIdFromCard("Add a --help flag to the CLI");
+    const secondId = ticketIdFromCard("Add a --help flag to the CLI");
+    expect(firstId).toBe(secondId);
+    expect(firstId).toMatch(/^add-a-help-flag-to-the-[0-9a-f]{6}$/);
   });
   it("distinct bare cards with same prefix get distinct ids", () => {
-    const a = ticketIdFromCard("Add a flag to the CLI for verbose output");
-    const b = ticketIdFromCard("Add a flag to the CLI for quiet output");
-    expect(a).not.toBe(b);
+    const firstId = ticketIdFromCard("Add a flag to the CLI for verbose output");
+    const secondId = ticketIdFromCard("Add a flag to the CLI for quiet output");
+    expect(firstId).not.toBe(secondId);
   });
 });

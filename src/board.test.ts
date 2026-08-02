@@ -149,9 +149,9 @@ describe("ensureColumns", () => {
 
 describe("createBoardIfMissing", () => {
   it("creates a kanban-plugin board with columns", async () => {
-    const p = path.join(dir, "new-board.md");
-    await createBoardIfMissing(p, ["Ready", "Done"]);
-    const content = await fs.readFile(p, "utf8");
+    const boardPath = path.join(dir, "new-board.md");
+    await createBoardIfMissing(boardPath, ["Ready", "Done"]);
+    const content = await fs.readFile(boardPath, "utf8");
     expect(content).toContain("kanban-plugin: board");
     const board = parseBoard(content);
     expect(board.columns.map((c) => c.name)).toEqual(["Ready", "Done"]);

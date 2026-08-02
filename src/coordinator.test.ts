@@ -44,8 +44,8 @@ function autoHandler() {
   return async (spec: { prompt: string }, options: { cwd: string }) => {
     const stage = stageOf(spec.prompt);
     if (stage === "implementation") {
-      const m = /feature (\w+)/.exec(spec.prompt);
-      const name = m?.[1] ?? "unknown";
+      const match = /feature (\w+)/.exec(spec.prompt);
+      const name = match?.[1] ?? "unknown";
       await commitFile(options.cwd, `${name}.txt`, `${name}\n`, `implement ${name}`);
       await writeVerdict(spec.prompt, { status: "done", summary: `built ${name}` });
     } else if (stage === "integration") {
@@ -153,8 +153,8 @@ describe("Coordinator", () => {
     const context = fx.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       if (stage === "implementation") {
-        const m = /feature (\w+)/.exec(spec.prompt);
-        await commitFile(options.cwd, `${m?.[1]}.txt`, "x\n", "impl");
+        const match = /feature (\w+)/.exec(spec.prompt);
+        await commitFile(options.cwd, `${match?.[1]}.txt`, "x\n", "impl");
         await writeVerdict(spec.prompt, {
           status: "done",
           observations: ["Dead code in legacy module"],
@@ -202,8 +202,8 @@ describe("Coordinator", () => {
         peak = Math.max(peak, current);
         await new Promise((r) => setTimeout(r, 50));
         current--;
-        const m = /feature (\w+)/.exec(spec.prompt);
-        await commitFile(options.cwd, `${m?.[1]}.txt`, "x\n", "impl");
+        const match = /feature (\w+)/.exec(spec.prompt);
+        await commitFile(options.cwd, `${match?.[1]}.txt`, "x\n", "impl");
         await writeVerdict(spec.prompt, { status: "done" });
       } else if (stage === "integration") {
         await writeVerdict(spec.prompt, { resolution: "clean" });

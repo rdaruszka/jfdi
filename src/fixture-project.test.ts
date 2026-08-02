@@ -43,9 +43,9 @@ describe("createProjectFixture", () => {
     expect(await git(fx.repo, "status", "--porcelain")).toBe("");
     expect(await git(fx.repo, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
 
-    const b = await board(fx.repo);
-    expect(findColumn(b, "Ready")?.cards).toHaveLength(BACKLOG_SIZE);
-    expect(findColumn(b, "Backlog")?.cards).toHaveLength(0);
+    const parsedBoard = await board(fx.repo);
+    expect(findColumn(parsedBoard, "Ready")?.cards).toHaveLength(BACKLOG_SIZE);
+    expect(findColumn(parsedBoard, "Backlog")?.cards).toHaveLength(0);
     expect(fx.readyCards).toHaveLength(BACKLOG_SIZE);
 
     // Prompts were seeded pre-commit, so the copy versions the canonical set;
@@ -69,13 +69,13 @@ describe("createProjectFixture", () => {
     });
     expect(fx.readyCards).toHaveLength(2);
 
-    const b = await board(fx.repo);
-    const ready = findColumn(b, "Ready")?.cards ?? [];
+    const parsedBoard = await board(fx.repo);
+    const ready = findColumn(parsedBoard, "Ready")?.cards ?? [];
     expect(ready.map((c) => c.text)).toEqual([
       "Add a category filter to penny list [[filter-by-category]]",
       "Add a --version flag that prints the version from package.json",
     ]);
-    expect(findColumn(b, "Backlog")?.cards).toHaveLength(BACKLOG_SIZE - 2);
+    expect(findColumn(parsedBoard, "Backlog")?.cards).toHaveLength(BACKLOG_SIZE - 2);
   });
 
   it("leaves everything in Backlog with ready: none, and rejects bad selectors", async () => {
