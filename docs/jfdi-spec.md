@@ -96,6 +96,10 @@ Four agents, run per ticket, each a fresh harness session (see §10) in the tick
 
 Every ticket runs in its own **git worktree** on its own branch (e.g. `jfdi/<ticket-id>`), created from the integration target branch at dispatch time and removed after merge (or kept on Blocked for inspection). Multiple tickets build concurrently in separate worktrees; nothing but Integration ever touches the target branch.
 
+### Resuming an interrupted run
+
+A run can die mid-pipeline (escalation, retries exhausted, a killed session, a coordinator crash), leaving partial commits and possibly a dirty or mid-rebase worktree. Re-dispatching the card reuses that branch and **resumes deliberately, not by luck**: before the first session, any in-progress rebase is aborted and any uncommitted state is checkpoint-committed ("recovered from interrupted run"), so the agent starts from a clean, committed tree. The Implementation prompt then carries a resume section — how many commits the branch already holds, a short log, and what was recovered — telling the agent to continue the work rather than start over, plus the previous run's unanswered round feedback (persisted as `history.json` under the run directory, so it survives the process that produced it).
+
 ### Mechanical gate
 
 A configured list of shell commands (build, test, lint, format-check) that must all exit zero. It runs:
@@ -176,6 +180,7 @@ Merge target is local git only in this iteration; the merge-target abstraction (
 ### Concurrency
 
 - `max_concurrent` pipelines (config). Dispatch order = board order, top of the begin column first.
+- **Startup sweep.** A card sitting in the in-progress column when `jfdi start` runs was stranded there by a coordinator that died: nothing drives it and no scan looks at that column. Those cards move to **Blocked** with an event, so the human sees them; their branches keep their partial work and a re-dispatch resumes from it (§4).
 - **No dependency graph.** Cards in the begin column are treated as independent; ordering is expressed by what the human chooses to ready, and serialized Integration plus the complicated-merge → re-QA valve absorb collisions.
 
 ### State and events

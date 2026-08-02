@@ -49,6 +49,11 @@ export function attachInlinePrinter(log: EventLog): () => void {
       case "dispatch":
         console.log(`${id}${BOLD}dispatched${RESET} on ${event.data?.branch}`);
         break;
+      case "resumed":
+        console.log(
+          `${id}${YELLOW}resuming${RESET} ${event.data?.commitCount} commits of prior work`,
+        );
+        break;
       case "round_start":
         console.log(`${id}${BOLD}— round ${event.data?.round} —${RESET}`);
         break;

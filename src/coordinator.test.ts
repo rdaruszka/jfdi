@@ -289,6 +289,32 @@ describe("Coordinator", () => {
     expect(findColumn(await readBoard(), "Ready to Merge")?.cards).toHaveLength(1);
   });
 
+  it("sweeps crash-orphaned In Progress cards to Blocked at startup", async () => {
+    // Only the orphan on the board: a coordinator died with this card in flight.
+    await fs.writeFile(
+      path.join(fixture.jfdiDir, "board.md"),
+      BOARD.replace(/- \[ \] Add feature \w+\n/g, "").replace(
+        "## In Progress\n",
+        "## In Progress\n\n- [ ] Add feature gamma\n",
+      ),
+    );
+    const context = fixture.context(autoHandler());
+    const reasons: string[] = [];
+    context.log.on((event) => {
+      if (event.type === "blocked") reasons.push(String(event.data?.reason));
+    });
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+    await coordinator.start();
+    await coordinator.drain();
+    coordinator.stop();
+
+    const board = await readBoard();
+    expect(findColumn(board, "Blocked")?.cards.map((c) => c.text)).toEqual(["Add feature gamma"]);
+    expect(reasons).toEqual(["orphaned by a coordinator restart — no run was active"]);
+    // Blocked, not re-run behind the human's back: no session was ever spawned.
+    expect(context.harness.calls).toHaveLength(0);
+  });
+
   it("respects max_concurrent", async () => {
     let peak = 0;
     let current = 0;

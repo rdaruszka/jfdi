@@ -72,7 +72,29 @@ export class Coordinator {
     }, this.pollMs);
     this.pollTimer.unref();
 
+    await this.sweepCrashOrphans();
     await this.scan();
+  }
+
+  /**
+   * A card sitting in the in-progress column at startup was left there by a
+   * coordinator that died mid-run: nothing is driving it, and no later scan
+   * would ever look at that column. Move it to Blocked so the human sees it —
+   * the branch keeps its partial work, and a re-dispatch resumes from it.
+   */
+  private async sweepCrashOrphans(): Promise<void> {
+    // start() runs once on a fresh instance; anything in-progress predates us.
+    if (this.active.size > 0)
+      throw new Error("coordinator started with active pipelines — start() must run once");
+    const columns = this.context.config.board.columns;
+    const content = await readIfExists(this.boardPath);
+    if (content === null) return;
+    for (const card of findColumn(parseBoard(content), columns.inProgress)?.cards ?? []) {
+      await this.moveCardSafe(card, columns.inProgress, columns.blocked, false);
+      this.context.log.emit("blocked", ticketIdFromCard(card.text), {
+        reason: "orphaned by a coordinator restart — no run was active",
+      });
+    }
   }
 
   /** Stop watching, kill live sessions. In-flight pipelines settle in the background. */

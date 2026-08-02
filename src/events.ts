@@ -7,6 +7,7 @@ export type StageName = "implementation" | "code-review" | "qa" | "integration";
 
 export type EventType =
   | "dispatch"
+  | "resumed"
   | "stage_start"
   | "stage_end"
   | "gate_start"
@@ -115,6 +116,31 @@ function newTicketState(id: string, ts: string): TicketState {
 }
 
 /**
+ * The activity line for events that only narrate — they move no status, stage
+ * or queue. Kept apart from the transitions so the wording lives in one place.
+ */
+function narrate(event: JfdiEvent, ticket: TicketState): string {
+  switch (event.type) {
+    case "resumed":
+      return `resuming ${numberField(event.data, "commitCount") ?? 0} commits of prior work`;
+    case "stage_start":
+      return `${ticket.stage} running`;
+    case "stage_end":
+      return `${stringField(event.data, "stage") ?? ticket.stage}: ${stringField(event.data, "verdict") ?? "done"}`;
+    case "gate_start":
+      return "gate running";
+    case "gate_result":
+      return event.data?.ok ? "gate passed" : `gate failed (${event.data?.step ?? "?"})`;
+    case "session_activity":
+      return stringField(event.data, "text") ?? ticket.lastActivity;
+    case "escalation":
+      return "escalated";
+    default:
+      return ticket.lastActivity;
+  }
+}
+
+/**
  * Apply one ticket-scoped event. `ticket` is this reduction's private copy —
  * already installed in `next.tickets` — so mutating it here mutates nothing
  * the caller shared with us.
@@ -138,24 +164,16 @@ function applyTicketEvent(
       break;
     case "stage_start":
       ticket.stage = stageField(event.data) ?? ticket.stage;
-      ticket.lastActivity = `${ticket.stage} running`;
+      ticket.lastActivity = narrate(event, ticket);
       break;
+    // Narration only — see narrate() for what each one says.
+    case "resumed":
     case "stage_end":
-      ticket.lastActivity = `${stringField(event.data, "stage") ?? ticket.stage}: ${stringField(event.data, "verdict") ?? "done"}`;
-      break;
     case "gate_start":
-      ticket.lastActivity = "gate running";
-      break;
     case "gate_result":
-      ticket.lastActivity = event.data?.ok
-        ? "gate passed"
-        : `gate failed (${event.data?.step ?? "?"})`;
-      break;
     case "session_activity":
-      ticket.lastActivity = stringField(event.data, "text") ?? ticket.lastActivity;
-      break;
     case "escalation":
-      ticket.lastActivity = "escalated";
+      ticket.lastActivity = narrate(event, ticket);
       break;
     case "blocked":
       ticket.status = "blocked";

@@ -6,6 +6,14 @@ import { formatGateFailure, type GateResult, runGate } from "./gate.js";
 import { commitAllIfDirty, createWorktree, git, revParse, type Worktree } from "./git.js";
 import type { Harness } from "./harness/index.js";
 import { formatGateCommands, loadPrompt, type PromptName, renderPrompt } from "./prompts.js";
+import {
+  type FeedbackItem,
+  formatResumeSection,
+  loadFeedbackHistory,
+  prepareResume,
+  type ResumeState,
+  saveFeedbackHistory,
+} from "./resume.js";
 import { ensureJfdiGitignore } from "./scaffold.js";
 import { appendToSection, ensureTicketNote, type Ticket } from "./tickets.js";
 import { todayIsoDate } from "./util/dates.js";
@@ -23,12 +31,6 @@ export interface PipelineContext {
   log: EventLog;
   /** Live sessions register here so a shutdown can kill stray subprocesses. */
   sessions?: Set<{ kill(): void }>;
-}
-
-export interface FeedbackItem {
-  round: number;
-  source: "implementation" | "gate" | "code-review" | "qa";
-  feedback: string;
 }
 
 export interface RunReport {
@@ -63,15 +65,27 @@ export function runsDir(stateDir: string, ticketId: string): string {
   return path.join(stateDir, "runs", ticketId);
 }
 
+interface RunDirs {
+  /** This dispatch's run-<k> directory. */
+  dir: string;
+  runNumber: number;
+  /** The previous dispatch's directory, or null if this is the ticket's first run. */
+  previousDir: string | null;
+}
+
 /** Next run-<k> directory under runs/<ticket>/ (history is kept across dispatches). */
-async function nextRunDir(stateDir: string, ticketId: string): Promise<string> {
+async function nextRunDir(stateDir: string, ticketId: string): Promise<RunDirs> {
   const base = runsDir(stateDir, ticketId);
   await ensureDir(base);
   const entries = await fs.readdir(base);
   const runCount = entries.filter((e) => /^run-\d+$/.test(e)).length;
   const dir = path.join(base, `run-${runCount + 1}`);
   await ensureDir(dir);
-  return dir;
+  return {
+    dir,
+    runNumber: runCount + 1,
+    previousDir: runCount > 0 ? path.join(base, `run-${runCount}`) : null,
+  };
 }
 
 interface StageOutcome {
@@ -155,7 +169,7 @@ function formatFeedbackSection(history: FeedbackItem[], mode: "default" | "ask")
     );
     for (const item of history) {
       const label = FEEDBACK_SOURCE_LABELS[item.source] ?? item.source;
-      parts.push(`### Round ${item.round} — ${label}\n\n${item.feedback}\n`);
+      parts.push(`### Run ${item.run}, round ${item.round} — ${label}\n\n${item.feedback}\n`);
     }
   }
   if (mode === "ask") {
@@ -244,10 +258,16 @@ async function runImplementationStage(
   notePath: string,
   round: number,
   history: FeedbackItem[],
+  resume: ResumeState | null,
 ): Promise<ImplementationStep> {
   const verdictPath = path.join(roundDir, "implementation.verdict.json");
   const prompt = await stagePrompt(context, "implementation", {
     ...commonVars(context, ticket, worktree, verdictPath),
+    RESUME_SECTION: formatResumeSection(
+      resume,
+      worktree.branch,
+      context.config.integration.target_branch,
+    ),
     FEEDBACK_SECTION: formatFeedbackSection(history, ticket.mode),
   });
   const outcome = await runStageSession(
@@ -371,6 +391,7 @@ async function runRound(
   notePath: string,
   round: number,
   history: FeedbackItem[],
+  resume: ResumeState | null,
 ): Promise<RoundResult> {
   const decisions: string[] = [];
   const observations: string[] = [];
@@ -391,6 +412,7 @@ async function runRound(
     notePath,
     round,
     history,
+    resume,
   );
   if (implementation.kind === "retry") {
     const { feedback } = implementation;
@@ -493,6 +515,18 @@ export async function runPipeline(
   const runDir = await nextRunDir(context.stateDir, ticket.id);
   context.log.emit("dispatch", ticket.id, { title: ticket.cardText, branch: worktree.branch });
 
+  // A re-dispatched ticket may carry partial work and a half-finished git
+  // state from a run that died; sanitize both before any session sees them.
+  const resume = await prepareResume(worktree, target, ticket.id);
+  if (resume)
+    context.log.emit("resumed", ticket.id, {
+      commitCount: resume.commitCount,
+      hasCheckpointedChanges: resume.hasCheckpointedChanges,
+      hasAbortedRebase: resume.hasAbortedRebase,
+    });
+
+  // Why the previous run failed, recovered from disk; `history` is this run's own.
+  const priorHistory = runDir.previousDir ? await loadFeedbackHistory(runDir.previousDir) : [];
   const history: FeedbackItem[] = [];
   const allDecisions: string[] = [];
   const allObservations: string[] = [];
@@ -501,20 +535,40 @@ export async function runPipeline(
 
   for (let round = 1; round <= maxRounds; round++) {
     context.log.emit("round_start", ticket.id, { round });
-    const roundDir = path.join(runDir, `round-${round}`);
+    const roundDir = path.join(runDir.dir, `round-${round}`);
     await ensureDir(roundDir);
 
-    const result = await runRound(context, ticket, worktree, roundDir, notePath, round, history);
+    const result = await runRound(
+      context,
+      ticket,
+      worktree,
+      roundDir,
+      notePath,
+      round,
+      [...priorHistory, ...history],
+      // Only the first session of the run inherits an interrupted state; later
+      // rounds work on top of commits this run made itself.
+      round === 1 ? resume : null,
+    );
     allDecisions.push(...result.decisions);
     allObservations.push(...result.observations);
     summary = result.summary ?? summary;
 
     if (result.step.kind === "retry") {
-      history.push({ round, source: result.step.source, feedback: result.step.feedback });
+      history.push({
+        run: runDir.runNumber,
+        round,
+        source: result.step.source,
+        feedback: result.step.feedback,
+      });
+      await saveFeedbackHistory(runDir.dir, history);
       continue;
     }
     if (result.step.kind === "blocked") return { status: "blocked", reason: result.step.reason };
 
+    // The run finished: earlier rounds' feedback was addressed, so it is no
+    // longer unfinished business for a later dispatch to inherit.
+    await saveFeedbackHistory(runDir.dir, []);
     const finalCommit = await revParse(worktree.path, "HEAD");
     return {
       status: "passed",

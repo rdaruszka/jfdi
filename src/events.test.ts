@@ -44,6 +44,15 @@ describe("EventLog", () => {
     expect(log.snapshot().tickets.a?.status).toBe("done");
   });
 
+  it("shows a resumed ticket's prior work in the activity line", () => {
+    const log = new EventLog(dir, false);
+    log.emit("dispatch", "t1", { title: "Ticket One" });
+    log.emit("resumed", "t1", { commitCount: 4, hasCheckpointedChanges: true });
+    const ticket = log.snapshot().tickets.t1;
+    expect(ticket?.lastActivity).toBe("resuming 4 commits of prior work");
+    expect(ticket?.status).toBe("running");
+  });
+
   it("blocked removes from queue and sets status", () => {
     const log = new EventLog(dir, false);
     log.emit("merge_queued", "x");

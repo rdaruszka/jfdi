@@ -1,6 +1,8 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { JfdiEvent } from "./events.js";
+import { createWorktree, git, isRebaseInProgress, rebaseOnto } from "./git.js";
 import { runPipeline } from "./pipeline.js";
 import { commitFile, type Fixture, makeFixture, stageOf, writeVerdict } from "./test-helpers.js";
 import { resolveTicket } from "./tickets.js";
@@ -242,6 +244,109 @@ describe("runPipeline", () => {
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     expect(sawOverride).toBe(true);
+  });
+
+  it("a fresh ticket's implementation prompt says nothing about resuming", async () => {
+    let prompt = "";
+    const context = fixture.context(async (spec, options) => {
+      const stage = stageOf(spec.prompt);
+      if (stage === "implementation") {
+        prompt = spec.prompt;
+        await commitFile(options.cwd, "impl.txt", "x\n", "implement");
+        await writeVerdict(spec.prompt, { status: "done" });
+      } else {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    });
+    const ticket = await resolveTicket("Brand new work", fixture.ticketsDir);
+    expect((await runPipeline(context, ticket)).status).toBe("passed");
+    expect(prompt).not.toContain("Resuming an interrupted attempt");
+    expect(prompt).not.toContain("Feedback on earlier attempts");
+  });
+
+  it("re-dispatch resumes: prior commits summarized, prior feedback carried over", async () => {
+    // Run 1: every round commits, code review never approves → retries exhausted.
+    const failing = fixture.context(async (spec, options) => {
+      const stage = stageOf(spec.prompt);
+      if (stage === "implementation") {
+        await commitFile(options.cwd, "impl.txt", `${Date.now()}\n`, "partial attempt");
+        await writeVerdict(spec.prompt, { status: "done" });
+      } else if (stage === "code-review") {
+        await writeVerdict(spec.prompt, { verdict: "fail", feedback: "the parser is wrong" });
+      }
+      return { ok: true, text: "" };
+    });
+    const ticket = await resolveTicket("Long haul", fixture.ticketsDir);
+    expect((await runPipeline(failing, ticket)).status).toBe("blocked");
+
+    // Run 2: the same card dispatched again.
+    let prompt = "";
+    const resumed = fixture.context(async (spec, options) => {
+      const stage = stageOf(spec.prompt);
+      if (stage === "implementation") {
+        prompt = prompt || spec.prompt;
+        await commitFile(options.cwd, "impl.txt", "final\n", "finish it");
+        await writeVerdict(spec.prompt, { status: "done" });
+      } else {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    });
+    expect((await runPipeline(resumed, ticket)).status).toBe("passed");
+
+    expect(prompt).toContain("Resuming an interrupted attempt");
+    expect(prompt).toContain("3 commits of partial work");
+    expect(prompt).toContain("partial attempt");
+    // …and why the interrupted run failed, attributed to its run.
+    expect(prompt).toContain("the parser is wrong");
+    expect(prompt).toContain("Run 1, round 3 — code review");
+  });
+
+  it("sanitizes a worktree a killed session left dirty and mid-rebase", async () => {
+    const ticket = await resolveTicket("Interrupted mid-flight", fixture.ticketsDir);
+    const worktree = await createWorktree(
+      fixture.repo,
+      path.join(fixture.jfdiDir, "worktrees"),
+      ticket.id,
+      "main",
+    );
+    // A killed run's leavings: a conflicted rebase and uncommitted edits.
+    await commitFile(worktree.path, "shared.txt", "branch\n", "branch edit");
+    await commitFile(fixture.repo, "shared.txt", "main\n", "main edit");
+    await rebaseOnto(worktree.path, "main");
+    await fs.writeFile(path.join(worktree.path, "impl.txt"), "salvaged\n");
+
+    let statusAtStart = "unknown";
+    let prompt = "";
+    const context = fixture.context(async (spec, options) => {
+      const stage = stageOf(spec.prompt);
+      if (stage === "implementation") {
+        statusAtStart = await git(options.cwd, "status", "--porcelain");
+        prompt = spec.prompt;
+        await writeVerdict(spec.prompt, { status: "done" });
+      } else {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    });
+    const events: JfdiEvent[] = [];
+    context.log.on((event) => events.push(event));
+
+    expect((await runPipeline(context, ticket)).status).toBe("passed");
+    // The agent started from a clean, committed tree with the rebase undone.
+    expect(statusAtStart).toBe("");
+    expect(await isRebaseInProgress(worktree.path)).toBe(false);
+    expect(await git(worktree.path, "log", "-1", "--format=%s")).toBe(
+      `jfdi(${ticket.id}): recovered from interrupted run`,
+    );
+    expect(prompt).toContain("recovered from interrupted run");
+    expect(prompt).toContain("rebase onto `main` was aborted");
+    const resumedEvent = events.find((event) => event.type === "resumed");
+    expect(resumedEvent?.data).toMatchObject({
+      hasCheckpointedChanges: true,
+      hasAbortedRebase: true,
+    });
   });
 
   it("a session that never writes a verdict burns a round with feedback", async () => {

@@ -33,7 +33,7 @@ worktree on branch \`{{BRANCH}}\`.
 ## Ticket: {{TICKET_ID}}
 
 {{SPEC}}
-{{FEEDBACK_SECTION}}
+{{RESUME_SECTION}}{{FEEDBACK_SECTION}}
 ## Rules
 
 - Write unit tests alongside the code; they are part of "done". If the ticket is a
