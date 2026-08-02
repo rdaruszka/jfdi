@@ -44,9 +44,12 @@ async function tolerantMove(
   to: string,
   shouldCheckOff: boolean,
 ): Promise<MoveResult> {
-  // Already where it belongs: a rewrite would be a needless write to a file the
-  // human has open.
-  if (from === to) return "skipped";
+  const rewrittenLine = shouldCheckOff ? cardRaw.replace("- [ ]", "- [x]") : cardRaw;
+  // Already where it belongs with nothing left to check off: a rewrite would be
+  // a needless write to a file the human has open. An unchecked card in the
+  // destination still needs its in-place check-off.
+  const isSettled = (column: string) => column === to && rewrittenLine === cardRaw;
+  if (isSettled(from)) return "skipped";
   const rewrite = shouldCheckOff
     ? { rewriteLine: (line: string) => line.replace("- [ ]", "- [x]") }
     : {};
@@ -59,7 +62,7 @@ async function tolerantMove(
     if (content === null) return "skipped";
     const board = parseBoard(content);
     const actual = board.columns.find((column) => column.cards.some((c) => c.raw === cardRaw));
-    if (!actual || actual.name === to) return "skipped";
+    if (!actual || isSettled(actual.name)) return "skipped";
     try {
       await moveCard(targetBoardPath, cardRaw, actual.name, to, rewrite);
       return "moved";

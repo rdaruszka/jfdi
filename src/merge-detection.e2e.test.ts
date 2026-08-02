@@ -331,7 +331,9 @@ describe("a running coordinator and merges it did not perform", () => {
       expect(merge.code, merge.stderr).toBe(0);
       expect(await runCli(sandbox, ["merge", alphaId])).toMatchObject({ code: 1 });
 
-      // No restart, no board edit: the running coordinator has to notice.
+      // The merge command is a board writer too: it closes its own card, and
+      // the running coordinator — which can also notice merges it did not
+      // perform — must converge on the same board without duplicating anything.
       await waitFor(
         async () => (await columnCards(sandbox, "Done")).some((c) => c.includes("alpha")),
         async () => `alpha never reached Done; board:\n${await readBoard(sandbox)}`,
@@ -342,15 +344,12 @@ describe("a running coordinator and merges it did not perform", () => {
       expect(await columnCards(sandbox, "Ready to Merge")).toEqual([]);
       expect((await statusTickets(sandbox))[alphaId]?.status).toBe("done");
 
-      // Two processes on one stream: the merge is recorded by the one that did
-      // it, the close by the one that noticed — in that order.
+      // Two processes on one stream: the merge and the close are both the
+      // merger's; the coordinator, seeing the card already settled, adds nothing.
       const events = await readEvents(sandbox);
       const merged = events.filter((e) => e.type === "merged" && e.ticketId === alphaId);
-      expect(merged).toHaveLength(2);
-      const [byMerger, byCoordinator] = merged;
-      expect(byMerger?.data?.note).toBeUndefined();
-      expect(byCoordinator?.data?.note).toContain("merged outside the pipeline");
-      expect(byCoordinator?.origin).not.toBe(byMerger?.origin);
+      expect(merged).toHaveLength(1);
+      expect(merged[0]?.data?.note).toBeUndefined();
       expect(events.some((e) => e.type === "card_moved" && e.ticketId === alphaId)).toBe(true);
 
       stopCoordinator(coordinator);

@@ -28,8 +28,8 @@ async function moveTicketCard(
 /**
  * `jfdi merge <ticket>` — approve a Ready-to-Merge ticket (on-approval mode).
  * Detects a branch the human already merged by hand and closes without
- * double-merging, then moves the ticket's card itself: nothing else does, and a
- * running coordinator cannot tell the merge happened.
+ * double-merging, then moves the ticket's card itself rather than leaving it
+ * for a running coordinator's sweep to notice later.
  */
 export async function mergeCommand(ticketId: string): Promise<number> {
   const context = await buildContext();
