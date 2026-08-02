@@ -140,7 +140,7 @@ async function resolveConflictedRebase(
   if (!gate.ok)
     return {
       status: "blocked",
-      reason: `gate failed after hasConflict resolution:\n\n${formatGateFailure(gate)}`,
+      reason: `gate failed after conflict resolution:\n\n${formatGateFailure(gate)}`,
     };
 
   if (verdict.resolution !== "complicated") return { status: "resolved", notes };
