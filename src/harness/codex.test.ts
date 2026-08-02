@@ -36,7 +36,7 @@ describe("CodexHarness subprocess", () => {
   let dir: string;
 
   beforeEach(async () => {
-    dir = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-codex-harness-"));
+    dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-codex-harness-")));
   });
 
   afterEach(async () => {
@@ -50,6 +50,8 @@ describe("CodexHarness subprocess", () => {
       '[ "$1" = "exec" ] || exit 91',
       '[ "$2" = "--json" ] || exit 92',
       '[ "$3" = "--dangerously-bypass-approvals-and-sandbox" ] || exit 93',
+      '[ "$4" = "first line\nsecond line with spaces" ] || exit 94',
+      `[ "$(pwd)" = "${dir}" ] || exit 95`,
       ...lines.map((line) => `echo '${JSON.stringify(line)}'`),
       `exit ${exitCode}`,
     ].join("\n");
@@ -63,7 +65,10 @@ describe("CodexHarness subprocess", () => {
       { type: "item.completed", item: { type: "agent_message", text: "all done" } },
       { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 2 } },
     ]);
-    const session = new CodexHarness(executable).spawn({ prompt: "do it" }, { cwd: dir });
+    const session = new CodexHarness(executable).spawn(
+      { prompt: "first line\nsecond line with spaces" },
+      { cwd: dir },
+    );
     const events: HarnessEvent[] = [];
     for await (const event of session.events) events.push(event);
 
@@ -77,14 +82,20 @@ describe("CodexHarness subprocess", () => {
       { type: "item.completed", item: { type: "agent_message", text: "done" } },
     ]);
     const logPath = path.join(dir, "logs/session.jsonl");
-    const session = new CodexHarness(executable).spawn({ prompt: "do it" }, { cwd: dir, logPath });
+    const session = new CodexHarness(executable).spawn(
+      { prompt: "first line\nsecond line with spaces" },
+      { cwd: dir, logPath },
+    );
     await session.done;
     expect(await fs.readFile(logPath, "utf8")).toContain("item.completed");
   });
 
   it("reports a nonzero exit", async () => {
     const executable = await stubCodex([], 2);
-    const result = await new CodexHarness(executable).spawn({ prompt: "do it" }, { cwd: dir }).done;
+    const result = await new CodexHarness(executable).spawn(
+      { prompt: "first line\nsecond line with spaces" },
+      { cwd: dir },
+    ).done;
     expect(result.ok).toBe(false);
     expect(result.exitCode).toBe(2);
   });
