@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { findColumn, moveCard, parseBoard } from "./board.js";
 import { Coordinator } from "./coordinator.js";
-import { EventLog } from "./events.js";
+import { EventLog, loadState } from "./events.js";
 import { branchExists, deleteBranch, git, revParse } from "./git.js";
 import { worktreesDir } from "./pipeline.js";
 import { saveReport } from "./report.js";
@@ -45,6 +45,27 @@ kanban-plugin: board
 ## Ready to Merge
 
 - [ ] Add feature alpha
+
+`;
+
+/** Three cards waiting for approval: enough for one sweep to close more than one. */
+const STRANDED_TRIO_BOARD = `---
+
+kanban-plugin: board
+
+---
+
+## Ready
+
+## In Progress
+
+## Done
+
+## Ready to Merge
+
+- [ ] Add feature alpha
+- [ ] Add feature beta
+- [ ] Add feature gamma
 
 `;
 
@@ -101,11 +122,13 @@ async function strandCard(): Promise<string> {
 /**
  * Merge a ticket branch into the target and delete it — how both approval
  * paths end. Returns the tip that was merged, the sha a run signs off on.
+ * The commit touches a file named for the ticket so several tickets can be
+ * landed in one test without the second finding nothing to commit.
  */
 async function landAndDeleteBranch(ticketId: string): Promise<string> {
   const branch = `jfdi/${ticketId}`;
   await git(fixture.repo, "checkout", "-b", branch);
-  await commitFile(fixture.repo, "alpha.txt", "alpha\n", "implement alpha");
+  await commitFile(fixture.repo, `${ticketId}.txt`, "work\n", `implement ${ticketId}`);
   const tip = await revParse(fixture.repo, "HEAD");
   await git(fixture.repo, "checkout", "main");
   await git(fixture.repo, "merge", "--no-ff", "-m", `merge ${branch}`, branch);
@@ -394,6 +417,89 @@ describe("Coordinator", () => {
     // Only the dragged card was acknowledged; the other still awaits approval.
     const betaId = ticketIdFromCard("Add feature beta");
     expect(context.log.snapshot().tickets[betaId]?.status).toBe("merge-ready");
+  });
+
+  it("closes every hand-merged card in one sweep and leaves the rest of the board alone", async () => {
+    // A human who merges a batch and tidies up leaves several cards stranded
+    // at once. Each close rewrites board.md, so the sweep is editing the file
+    // underneath the card list it is iterating — the cards it has not reached
+    // yet must survive that, and the one with no evidence must stay put.
+    await fs.writeFile(boardPath(), STRANDED_TRIO_BOARD);
+    const alphaId = ticketIdFromCard("Add feature alpha");
+    const betaId = ticketIdFromCard("Add feature beta");
+    const gammaId = ticketIdFromCard("Add feature gamma");
+    await recordSignOff(alphaId, await landAndDeleteBranch(alphaId));
+    await recordSignOff(betaId, await landAndDeleteBranch(betaId));
+
+    const context = fixture.context(autoHandler());
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+    await coordinator.start();
+    coordinator.stop();
+
+    const board = await readBoard();
+    expect(findColumn(board, "Done")?.cards.map((c) => [c.text, c.checked])).toEqual([
+      ["Add feature alpha", true],
+      ["Add feature beta", true],
+    ]);
+    expect(findColumn(board, "Ready to Merge")?.cards.map((c) => c.text)).toEqual([
+      "Add feature gamma",
+    ]);
+    expect(context.log.snapshot().tickets[alphaId]?.status).toBe("done");
+    expect(context.log.snapshot().tickets[betaId]?.status).toBe("done");
+    expect(context.log.snapshot().tickets[gammaId]).toBeUndefined();
+  });
+
+  it("acknowledges a Ready-to-Merge card the human deletes from the board", async () => {
+    // "Done or elsewhere" includes nowhere: deleting the card answers the
+    // approval question too. Asserted against state.json rather than the live
+    // snapshot, because that file is what `jfdi status` and a later renderer
+    // read — an in-memory-only acknowledgment would not converge them.
+    const context = fixture.context(autoHandler(), { shouldPersistEvents: true });
+    fixture.config.integration.mode = "on-approval";
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+    await coordinator.start();
+    await coordinator.drain();
+
+    const alphaId = ticketIdFromCard("Add feature alpha");
+    const betaId = ticketIdFromCard("Add feature beta");
+    expect((await loadState(fixture.stateDir)).tickets[alphaId]?.status).toBe("merge-ready");
+
+    const before = await fs.readFile(boardPath(), "utf8");
+    const after = before.replace("- [ ] Add feature alpha\n", "");
+    expect(after).not.toBe(before);
+    await fs.writeFile(boardPath(), after);
+
+    await rescan(coordinator);
+    coordinator.stop();
+    await context.log.flush();
+
+    const persisted = await loadState(fixture.stateDir);
+    expect(persisted.tickets[alphaId]?.status).toBe("done");
+    expect(persisted.tickets[alphaId]?.lastActivity).toBe("done");
+    // Only the deleted card was acknowledged; the other still awaits approval.
+    expect(persisted.tickets[betaId]?.status).toBe("merge-ready");
+  });
+
+  it("acknowledges a card the human drags from Ready to Merge to Blocked as blocked", async () => {
+    // Blocked is the one destination where "done" would be a lie, but the
+    // ticket must still stop advertising an approval question either way.
+    const context = fixture.context(autoHandler());
+    fixture.config.integration.mode = "on-approval";
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+    await coordinator.start();
+    await coordinator.drain();
+
+    const alphaId = ticketIdFromCard("Add feature alpha");
+    const card = findColumn(await readBoard(), "Ready to Merge")?.cards.find((c) =>
+      c.text.includes("alpha"),
+    );
+    if (!card) throw new Error("alpha card is not in Ready to Merge");
+    await moveCard(boardPath(), card.raw, "Ready to Merge", "Blocked");
+
+    await rescan(coordinator);
+    coordinator.stop();
+
+    expect(context.log.snapshot().tickets[alphaId]?.status).toBe("blocked");
   });
 
   it("reflects a merge another process performed while it is running", async () => {
