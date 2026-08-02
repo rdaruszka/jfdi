@@ -1,7 +1,8 @@
 import { watch } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { type Board, type Card, ensureColumns, findColumn, moveCard, parseBoard } from "./board.js";
+import { type Board, type Card, ensureColumns, findColumn, parseBoard } from "./board.js";
+import { moveCardSafe } from "./card-moves.js";
 import { mergedTicketIds } from "./events.js";
 import { branchExists, isAncestor, revParse, ticketBranch } from "./git.js";
 import { IntegrationQueue, integrateTicket } from "./integrate.js";
@@ -102,7 +103,7 @@ export class Coordinator {
     const content = await readIfExists(this.boardPath);
     if (content === null) return;
     for (const card of findColumn(parseBoard(content), columns.inProgress)?.cards ?? []) {
-      await this.moveCardSafe(card, columns.inProgress, columns.blocked, false);
+      await moveCardSafe(this.context, card, columns.inProgress, columns.blocked, false);
       this.context.log.emit("blocked", ticketIdFromCard(card.text), {
         reason: "orphaned by a coordinator restart — no run was active",
       });
@@ -224,7 +225,7 @@ export class Coordinator {
         hasMerged = mergedIds.has(id) || (await this.isSignedOffCommitInTarget(id));
       }
       if (!hasMerged) continue;
-      await this.moveCardSafe(card, columns.readyToMerge, columns.done, true);
+      await moveCardSafe(this.context, card, columns.readyToMerge, columns.done, true);
       this.context.log.emit("merged", id, { note: "merged outside the pipeline — card closed" });
     }
   }
@@ -303,7 +304,7 @@ export class Coordinator {
     try {
       const ticketsDir = path.join(this.context.repoRoot, this.context.config.ticketsDir);
       const ticket = await resolveTicket(card.text, ticketsDir);
-      await this.moveCardSafe(card, columns.begin, columns.inProgress, false);
+      await moveCardSafe(this.context, card, columns.begin, columns.inProgress, false);
 
       // A begin-column card whose pipeline already passed is an approval:
       // integrate the existing branch instead of rebuilding. Sign-offs bind to
@@ -323,12 +324,12 @@ export class Coordinator {
 
       const outcome = await runPipeline(this.context, ticket);
       if (outcome.status === "blocked") {
-        await this.moveCardSafe(card, columns.inProgress, columns.blocked, false);
+        await moveCardSafe(this.context, card, columns.inProgress, columns.blocked, false);
         return;
       }
       if (outcome.status === "failed") {
         this.context.log.emit("failed", id, { reason: outcome.reason });
-        await this.moveCardSafe(card, columns.inProgress, columns.blocked, false);
+        await moveCardSafe(this.context, card, columns.inProgress, columns.blocked, false);
         return;
       }
 
@@ -337,15 +338,17 @@ export class Coordinator {
       if (this.context.config.integration.mode === "on-approval") {
         const notePath = ticket.notePath ?? path.join(ticketsDir, `${ticket.id}.md`);
         await recordMergeReady(this.context, id, notePath, outcome.report);
-        await this.moveCardSafe(card, columns.inProgress, columns.readyToMerge, false);
+        await moveCardSafe(this.context, card, columns.inProgress, columns.readyToMerge, false);
         return;
       }
       await this.integrate(card, ticket, outcome.report);
     } catch (error) {
       this.context.log.emit("failed", id, { reason: (error as Error).message });
-      await this.moveCardSafe(card, columns.inProgress, columns.blocked, false).catch(() => {
-        // Best-effort: the failure above is already logged; the board move is advisory.
-      });
+      await moveCardSafe(this.context, card, columns.inProgress, columns.blocked, false).catch(
+        () => {
+          // Best-effort: the failure above is already logged; the board move is advisory.
+        },
+      );
     }
   }
 
@@ -365,44 +368,9 @@ export class Coordinator {
       ),
     );
     if (outcome.status === "blocked") {
-      await this.moveCardSafe(card, columns.inProgress, columns.blocked, false);
+      await moveCardSafe(this.context, card, columns.inProgress, columns.blocked, false);
       return;
     }
-    await this.moveCardSafe(card, columns.inProgress, columns.done, true);
-  }
-
-  /**
-   * Move a card, tolerating a human having already moved it: if the raw line
-   * isn't in the expected source column, find it wherever it is; if it's gone
-   * entirely, log and continue (the board is the human's document).
-   */
-  private async moveCardSafe(
-    card: Card,
-    from: string,
-    to: string,
-    shouldCheckOff: boolean,
-  ): Promise<void> {
-    const rewrite = shouldCheckOff
-      ? { rewriteLine: (l: string) => l.replace("- [ ]", "- [x]") }
-      : {};
-    try {
-      await moveCard(this.boardPath, card.raw, from, to, rewrite);
-    } catch {
-      // Not in `from` — locate it.
-      const content = await readIfExists(this.boardPath);
-      if (content === null) return;
-      const board = parseBoard(content);
-      const actual = board.columns.find((c) => c.cards.some((k) => k.raw === card.raw));
-      if (!actual || actual.name === to) return;
-      try {
-        await moveCard(this.boardPath, card.raw, actual.name, to, rewrite);
-      } catch {
-        this.context.log.emit("error", ticketIdFromCard(card.text), {
-          message: `could not move card to "${to}" — leaving board as-is`,
-        });
-        return;
-      }
-    }
-    this.context.log.emit("card_moved", ticketIdFromCard(card.text), { from, to });
+    await moveCardSafe(this.context, card, columns.inProgress, columns.done, true);
   }
 }

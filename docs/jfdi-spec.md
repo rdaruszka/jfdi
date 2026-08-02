@@ -176,7 +176,7 @@ Merge target is local git only in this iteration; the merge-target abstraction (
 
 ### Modes
 
-- **`jfdi run <ticket>`** — single-ticket mode. Runs one ticket (card reference or inline description) through the full pipeline, streaming progress inline like any CLI tool. No board required.
+- **`jfdi run <ticket>`** — single-ticket mode. Runs one ticket (card reference or inline description) through the full pipeline, streaming progress inline like any CLI tool. No board required; when a board exists and holds a card for that ticket, the run moves it through the same columns the coordinator would.
 - **`jfdi start`** — multi-mode. Watches the board, dispatches cards from the begin column, runs pipelines concurrently, owns the Integration queue, and **always presents a live view**: a full-screen terminal UI showing the board state, each active ticket's pipeline stage, session activity, and the integration queue. The board is watched live (file-watch with polling fallback) so cards added while running are picked up.
 
 ### Concurrency

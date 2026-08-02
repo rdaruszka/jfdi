@@ -1,0 +1,69 @@
+import * as path from "node:path";
+import { type Card, moveCard, parseBoard } from "./board.js";
+import type { PipelineContext } from "./pipeline.js";
+import { readIfExists } from "./util/fsx.js";
+import { ticketIdFromCard } from "./util/ids.js";
+
+type MoveResult = "moved" | "skipped" | "failed";
+
+/**
+ * Move a card, tolerating a human having already moved it: if the raw line
+ * isn't in the expected source column, find it wherever it is; if it is gone
+ * entirely — or already sits in the destination — leave the board alone (the
+ * board is the human's document).
+ */
+async function tolerantMove(
+  boardPath: string,
+  cardRaw: string,
+  from: string,
+  to: string,
+  shouldCheckOff: boolean,
+): Promise<MoveResult> {
+  // Already where it belongs: a rewrite would be a needless write to a file the
+  // human has open.
+  if (from === to) return "skipped";
+  const rewrite = shouldCheckOff
+    ? { rewriteLine: (line: string) => line.replace("- [ ]", "- [x]") }
+    : {};
+  try {
+    await moveCard(boardPath, cardRaw, from, to, rewrite);
+    return "moved";
+  } catch {
+    // Not in `from` — locate it.
+    const content = await readIfExists(boardPath);
+    if (content === null) return "skipped";
+    const board = parseBoard(content);
+    const actual = board.columns.find((column) => column.cards.some((c) => c.raw === cardRaw));
+    if (!actual || actual.name === to) return "skipped";
+    try {
+      await moveCard(boardPath, cardRaw, actual.name, to, rewrite);
+      return "moved";
+    } catch {
+      return "failed";
+    }
+  }
+}
+
+/**
+ * Advance one card to the column its ticket's progress calls for, and record
+ * the move on the event stream. Every mover goes through here — the
+ * coordinator and `jfdi run` alike — so a card travels the same way whichever
+ * one is driving.
+ */
+export async function moveCardSafe(
+  context: PipelineContext,
+  card: Card,
+  from: string,
+  to: string,
+  shouldCheckOff: boolean,
+): Promise<void> {
+  const boardPath = path.join(context.repoRoot, context.config.board.path);
+  const result = await tolerantMove(boardPath, card.raw, from, to, shouldCheckOff);
+  if (result === "failed") {
+    context.log.emit("error", ticketIdFromCard(card.text), {
+      message: `could not move card to "${to}" — leaving board as-is`,
+    });
+    return;
+  }
+  if (result === "moved") context.log.emit("card_moved", ticketIdFromCard(card.text), { from, to });
+}
