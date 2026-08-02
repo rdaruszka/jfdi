@@ -168,7 +168,7 @@ Per merge, the Integration agent:
 `integration.mode`:
 
 - **`auto`** — pipeline pass flows straight through Integration to done.
-- **`on-approval`** — finished cards land in **Ready to Merge** with the final report (summary, decision log, review verdicts) appended to the ticket note. The human either tells JFDI to merge (`jfdi merge <ticket>` / moving the card) or merges by hand — the coordinator detects a branch already contained in the target and closes the card without double-merging.
+- **`on-approval`** — finished cards land in **Ready to Merge** with the final report (summary, decision log, review verdicts) appended to the ticket note. The human either tells JFDI to merge (`jfdi merge <ticket>` / moving the card) or merges by hand — the coordinator closes the card without double-merging, on either evidence: a branch already contained in the target, or, once the branch has been deleted (how every merge ends), a merge already on record in `events.jsonl`. A card the human drags out of Ready to Merge is acknowledged with a closing event too, so derived state never keeps advertising an approval question the board has already answered.
 
 Merge target is local git only in this iteration; the merge-target abstraction (§12) carries GitHub/Bitbucket PR flows later.
 
@@ -188,6 +188,8 @@ Merge target is local git only in this iteration; the merge-target abstraction (
 ### State and events
 
 The coordinator appends every significant transition (dispatch, stage change, gate result, round, escalation, merge) to the project's `events.jsonl` and maintains `state.json` as the current snapshot — both under `~/.jfdi/projects/<project-key>/` (§2). **The TUI is a pure renderer over this stream.** The future web UI, and the future JIRA-watching daemon mode, are additional renderers/consumers of the same stream — this separation is a hard architectural requirement, not a nicety. Raw harness session output is captured per run under that directory's `runs/<ticket-id>/` and viewable via `jfdi logs <ticket>`.
+
+One project's stream is shared by every JFDI process working on it: `jfdi merge` in a second terminal appends to the same `events.jsonl` a running `jfdi start` is writing. A live coordinator therefore follows that file from where it started and folds in the lines other processes wrote, so work done elsewhere reaches its renderers without a restart. Each line carries the id of the log instance that wrote it, so no process folds its own events back in twice.
 
 ## 9. Configuration (`.jfdi/config.json`)
 

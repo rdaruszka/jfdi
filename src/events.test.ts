@@ -149,6 +149,9 @@ describe("EventLog", () => {
     log.emit("merged", "a");
     log.emit("merge_ready", "b");
     await log.flush();
+    // A corrupt line costs its own evidence, not the whole answer — the
+    // coordinator's scan asks this question and cannot afford to abort.
+    await fs.appendFile(path.join(dir, "events.jsonl"), "{ half a line\n", "utf8");
     expect([...(await mergedTicketIds(dir))]).toEqual(["a"]);
   });
 

@@ -372,9 +372,18 @@ export class EventLog {
 
   /** Rebuild state purely from events.jsonl. */
   static async rebuild(stateDir: string): Promise<CoordinatorState> {
+    const eventsPath = path.join(stateDir, "events.jsonl");
+    const content = await readIfExists(eventsPath);
     let state = emptyState();
-    for (const event of await readEventFile(path.join(stateDir, "events.jsonl"))) {
-      state = reduceEvent(state, event);
+    if (content === null) return state;
+    for (const line of content.split("\n")) {
+      if (!line.trim()) continue;
+      const parsed: unknown = JSON.parse(line);
+      if (!isJfdiEvent(parsed))
+        throw new Error(
+          `${eventsPath} contains a line that is not a JFDI event: ${line.slice(0, MAX_BAD_LINE_CHARS)}`,
+        );
+      state = reduceEvent(state, parsed);
     }
     return state;
   }
@@ -385,30 +394,21 @@ export class EventLog {
  * that outlives the branch: `jfdi merge` deletes the branch as its last step,
  * and a human tidying up after a hand-merge does the same, so branch absence
  * says nothing about whether the work landed.
+ *
+ * A line this cannot read is skipped, not fatal — it is answered during the
+ * coordinator's board scan, where refusing the whole stream would stop
+ * dispatch too. Rebuilding the snapshot stays strict; see `rebuild`.
  */
 export async function mergedTicketIds(stateDir: string): Promise<Set<string>> {
+  const content = await readIfExists(path.join(stateDir, "events.jsonl"));
   const ids = new Set<string>();
-  for (const event of await readEventFile(path.join(stateDir, "events.jsonl"))) {
-    if (event.type === "merged" && event.ticketId) ids.add(event.ticketId);
-  }
-  return ids;
-}
-
-/** Every event in an events.jsonl file. Strict: an unrecognizable line is a corrupt log. */
-async function readEventFile(eventsPath: string): Promise<JfdiEvent[]> {
-  const content = await readIfExists(eventsPath);
-  if (content === null) return [];
-  const events: JfdiEvent[] = [];
+  if (content === null) return ids;
   for (const line of content.split("\n")) {
     if (!line.trim()) continue;
-    const parsed: unknown = JSON.parse(line);
-    if (!isJfdiEvent(parsed))
-      throw new Error(
-        `${eventsPath} contains a line that is not a JFDI event: ${line.slice(0, MAX_BAD_LINE_CHARS)}`,
-      );
-    events.push(parsed);
+    const event = parseEventLine(line);
+    if (event?.type === "merged" && event.ticketId) ids.add(event.ticketId);
   }
-  return events;
+  return ids;
 }
 
 /**
