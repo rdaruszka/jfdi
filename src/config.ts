@@ -17,6 +17,7 @@ export interface GateCommand {
 }
 
 export type IntegrationMode = "auto" | "on-approval";
+export type HarnessName = "claude" | "codex";
 
 export interface JfdiConfig {
   board: { path: string; columns: ColumnMap };
@@ -25,9 +26,7 @@ export interface JfdiConfig {
   pipeline: { max_rounds: number };
   integration: { target_branch: string; mode: IntegrationMode };
   max_concurrent: number;
-  harness: string;
-  /** Extra CLI args passed to the harness subprocess (e.g. permission mode). */
-  harnessArgs: string[];
+  harness: HarnessName;
 }
 
 export const JFDI_DIR = ".jfdi";
@@ -51,7 +50,6 @@ export function defaultConfig(): JfdiConfig {
     integration: { target_branch: "main", mode: "on-approval" },
     max_concurrent: 2,
     harness: "claude",
-    harnessArgs: ["--permission-mode", "bypassPermissions"],
   };
 }
 
@@ -89,6 +87,10 @@ function positiveInteger(value: unknown, fallback: number, where: string): numbe
 /** Parse and validate raw config JSON, filling defaults for absent fields. */
 export function parseConfig(raw: unknown): JfdiConfig {
   if (!isRecord(raw)) throw new ConfigError("config root must be an object");
+  if (raw.harnessArgs !== undefined)
+    throw new ConfigError(
+      "harnessArgs is no longer supported; harness permissions are managed by JFDI",
+    );
   const defaults = defaultConfig();
 
   const board = isRecord(raw.board) ? raw.board : {};
@@ -132,12 +134,9 @@ export function parseConfig(raw: unknown): JfdiConfig {
   if (mode !== "auto" && mode !== "on-approval")
     throw new ConfigError(`integration.mode must be "auto" or "on-approval", got "${mode}"`);
 
-  let harnessArgs = defaults.harnessArgs;
-  if (raw.harnessArgs !== undefined) {
-    if (!Array.isArray(raw.harnessArgs) || raw.harnessArgs.some((a) => typeof a !== "string"))
-      throw new ConfigError("harnessArgs must be an array of strings");
-    harnessArgs = raw.harnessArgs as string[];
-  }
+  const harness = stringOrDefault(raw.harness, defaults.harness, "harness");
+  if (harness !== "claude" && harness !== "codex")
+    throw new ConfigError(`harness must be "claude" or "codex", got "${harness}"`);
 
   return {
     board: { path: stringOrDefault(board.path, defaults.board.path, "board.path"), columns },
@@ -159,8 +158,7 @@ export function parseConfig(raw: unknown): JfdiConfig {
       mode,
     },
     max_concurrent: positiveInteger(raw.max_concurrent, defaults.max_concurrent, "max_concurrent"),
-    harness: stringOrDefault(raw.harness, defaults.harness, "harness"),
-    harnessArgs,
+    harness,
   };
 }
 

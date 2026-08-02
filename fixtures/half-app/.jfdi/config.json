@@ -19,6 +19,5 @@
   "pipeline": { "max_rounds": 3 },
   "integration": { "target_branch": "main", "mode": "on-approval" },
   "max_concurrent": 2,
-  "harness": "claude",
-  "harnessArgs": ["--permission-mode", "bypassPermissions"]
+  "harness": "claude"
 }

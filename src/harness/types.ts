@@ -1,6 +1,6 @@
 /**
  * The harness abstraction. Pipeline logic never touches harness specifics —
- * `claude -p` is the sole implementation today; Codex etc. slot in later.
+ * Provider-specific CLI details stay behind this interface.
  */
 
 export interface PromptSpec {
@@ -33,7 +33,14 @@ export interface SpawnOptions {
   logPath?: string;
 }
 
+export interface InteractiveSpawnOptions {
+  cwd: string;
+  /** Providers may support a true system prompt or approximate it as initial instructions. */
+  isSystemPrompt?: boolean;
+}
+
 export interface Harness {
   readonly name: string;
   spawn(promptSpec: PromptSpec, options: SpawnOptions): HarnessSession;
+  spawnInteractive(promptSpec: PromptSpec, options: InteractiveSpawnOptions): Promise<number>;
 }

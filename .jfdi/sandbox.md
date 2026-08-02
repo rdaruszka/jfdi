@@ -31,8 +31,8 @@ JFDI-under-test spawns its own agent sessions and creates its own worktrees:
 1. **Every scenario runs in a scratch git repo under the OS temp dir**
    (`mktemp -d`), never inside this worktree or any parent git repo — both git
    and Claude Code walk up the directory tree.
-2. **Never let the inner JFDI call the real `claude`.** Put a stub `claude`
-   executable on PATH that replays canned stream-json lines and writes the
+2. **Never let the inner JFDI call a real agent CLI.** Put stub `claude` and
+   `codex` executables on PATH that replay canned JSON event lines and write the
    verdict file its prompt names (match `/(\/\S+\.verdict\.json)/`). This also
    guards against runaway nested session spawning.
 3. The inner JFDI gets its own `.jfdi/` setup inside the scratch repo (its
@@ -46,5 +46,5 @@ JFDI-under-test spawns its own agent sessions and creates its own worktrees:
 ## Teardown
 
 `rm -rf` the scratch directory and the `JFDI_HOME` directory — between them they
-hold everything JFDI-under-test wrote. Verify no stray `claude` processes remain
+hold everything JFDI-under-test wrote. Verify no stray `claude` or `codex` processes remain
 if a test killed a run mid-flight.

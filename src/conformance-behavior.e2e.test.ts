@@ -289,7 +289,6 @@ describe("CLI surface", () => {
           "board",
           "gate",
           "harness",
-          "harnessArgs",
           "integration",
           "max_concurrent",
           "pipeline",

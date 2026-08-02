@@ -51,4 +51,8 @@ export class FakeHarness implements Harness {
       },
     };
   }
+
+  spawnInteractive(): Promise<number> {
+    return Promise.resolve(0);
+  }
 }

@@ -1,6 +1,6 @@
 # JFDI — Just F'ing Do It
 
-A CLI harness around the Claude Code harness. Hand it a ticket; it runs implement → review → QA in an isolated git worktree, then merges. Point it at a Kanban board and it does that continuously, several tickets at a time.
+A CLI harness around coding-agent CLIs. Hand it a ticket; it runs implement → review → QA in an isolated git worktree, then merges. Point it at a Kanban board and it does that continuously, several tickets at a time.
 
 **The spec is the source of truth: [docs/jfdi-spec.md](docs/jfdi-spec.md) (Iteration 2).** This file summarizes conventions and invariants for working in this repo; when in doubt, the spec wins. Anything under `Iteration 1/` is historical, not normative.
 
@@ -32,7 +32,7 @@ JFDI is self-hosting from milestone 1: JFDI's own tickets become its first board
 
 ## Architecture (one paragraph)
 
-The **coordinator** watches `board.md` (Obsidian Kanban format), dispatches each ready card into its own **git worktree** on branch `jfdi/<ticket-id>`, and runs a per-ticket pipeline of fresh `claude -p` sessions: **Implementation → mechanical gate → Code Review → QA**, with feedback rounds (cap: `pipeline.max_rounds`, default 3). **Integration** is coordinator-owned and globally serialized — one merge at a time, rebase onto the target branch, rerun the gate, merge. Every transition appends to the project's `events.jsonl` under `~/.jfdi/projects/<project-key>/`; `state.json` is a derived snapshot; the TUI is a pure renderer over that stream.
+The **coordinator** watches `board.md` (Obsidian Kanban format), dispatches each ready card into its own **git worktree** on branch `jfdi/<ticket-id>`, and runs a per-ticket pipeline of fresh Claude Code or Codex sessions: **Implementation → mechanical gate → Code Review → QA**, with feedback rounds (cap: `pipeline.max_rounds`, default 3). **Integration** is coordinator-owned and globally serialized — one merge at a time, rebase onto the target branch, rerun the gate, merge. Every transition appends to the project's `events.jsonl` under `~/.jfdi/projects/<project-key>/`; `state.json` is a derived snapshot; the TUI is a pure renderer over that stream.
 
 ## Layout
 
@@ -68,7 +68,7 @@ scripts/playground.mjs     — `pnpm playground`: mint a disposable half-app cop
 These are architectural requirements from the spec, not preferences:
 
 1. **Renderer separation.** All UI (TUI now, web later) renders `events.jsonl`/`state.json` only. Pipeline/coordinator logic never talks to a UI directly, and no state exists only in the UI.
-2. **Harness abstraction.** Pipeline logic never touches `claude`-specific details. Everything goes through the harness interface (`spawn(promptSpec, cwd) → event stream`, plus kill/cleanup); `claude -p --output-format stream-json` is just the first implementation.
+2. **Harness abstraction.** Pipeline logic never touches provider-specific details. Everything goes through the harness interface (`spawn(promptSpec, cwd) → event stream`, plus interactive launch and kill/cleanup); Claude Code and Codex are implementations.
 3. **Serialized integration.** Exactly one integration at a time, pulled from the merge-ready queue in completion order. Nothing but Integration ever touches the target branch.
 4. **Atomic board writes.** `board.md` is co-edited by Obsidian. Read → check mtime → write via temp-file rename → re-read/retry on mtime change. Edits are surgical (move one card line); never rewrite the file wholesale. Writes follow symlinks: the rename targets the link's real path — renaming onto the link itself would replace it with a private copy and silently split the board from the file the human edits.
 5. **Sequential reviews, commit-bound sign-offs.** Code Review gates QA (a Code Review fail skips the sandbox run). Both sign-offs bind to a specific commit — any code change re-enters at the gate and repeats both reviews.
@@ -91,7 +91,7 @@ Use these terms exactly; introduce no synonyms. The list grows only by editing t
 - **sign-off** — a review stage's approval, bound to a specific commit.
 - **integration** — the coordinator-owned rebase → gate → merge step; globally serialized.
 - **coordinator** — the long-running process that watches the board and dispatches runs.
-- **harness** — the agent-session abstraction (`spawn(promptSpec, cwd) → event stream`); `claude -p` is one implementation.
+- **harness** — the agent-session abstraction (`spawn(promptSpec, cwd) → event stream`, plus interactive launch); Claude Code and Codex are implementations.
 - **worktree** — the isolated git checkout (branch `jfdi/<ticket-id>`) a run works in.
 - **observation** — an out-of-scope issue a stage reports in its verdict (`observations` array); never fixed inline.
 - **inbox** — the board column where observations land as proposal cards. Agent-writable via the coordinator only, human-drained, never dispatched from: agents propose, humans promote.

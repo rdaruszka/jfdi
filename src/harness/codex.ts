@@ -13,103 +13,87 @@ import type {
   SpawnOptions,
 } from "./types.js";
 
-/** Longest tool-input excerpt shown as a progress detail. */
+const STDERR_TAIL_CHARS = 4_000;
+const SIGKILL_DELAY_MS = 5_000;
 const MAX_TOOL_DETAIL_CHARS = 80;
 const ELLIPSIS = "...";
-/** How much stderr is kept to explain a non-zero exit. */
-const STDERR_TAIL_CHARS = 4_000;
-/** Grace period between SIGTERM and SIGKILL when a session is killed. */
-const SIGKILL_DELAY_MS = 5_000;
 
-interface ClaudeStreamLine {
+interface CodexStreamLine {
   type?: string;
-  subtype?: string;
-  result?: string;
-  is_error?: boolean;
-  message?: {
-    content?: Array<{ type?: string; text?: string; name?: string; input?: unknown }>;
+  message?: string;
+  error?: { message?: string };
+  item?: {
+    type?: string;
+    text?: string;
+    command?: string;
+    server?: string;
+    tool?: string;
+    query?: string;
   };
 }
 
-type ClaudeContentBlock = NonNullable<NonNullable<ClaudeStreamLine["message"]>["content"]>[number];
-
-/** Whatever the subprocess wrote, it is untrusted text — a bad line is simply not an event. */
-function parseStreamLine(line: string): ClaudeStreamLine | null {
+function parseStreamLine(line: string): CodexStreamLine | null {
   try {
     const parsed: unknown = JSON.parse(line);
-    return typeof parsed === "object" && parsed !== null ? (parsed as ClaudeStreamLine) : null;
+    return typeof parsed === "object" && parsed !== null ? (parsed as CodexStreamLine) : null;
   } catch {
-    // Partial or non-JSON output (progress noise, a truncated final line).
     return null;
   }
 }
 
-function mapAssistantBlock(block: ClaudeContentBlock): HarnessEvent[] {
-  if (block.type === "text" && block.text) return [{ type: "text", text: block.text }];
-  if (block.type === "tool_use" && block.name) {
-    const detail = summarizeInput(block.input);
-    return [{ type: "tool", name: block.name, ...(detail ? { detail } : {}) }];
-  }
-  return [];
+function truncateDetail(detail: string): string {
+  return detail.length > MAX_TOOL_DETAIL_CHARS
+    ? `${detail.slice(0, MAX_TOOL_DETAIL_CHARS - ELLIPSIS.length)}${ELLIPSIS}`
+    : detail;
 }
 
-/** Map one stream-json line to harness events. */
-export function mapClaudeLine(line: string): HarnessEvent[] {
+/** Map one `codex exec --json` line to provider-neutral progress events. */
+export function mapCodexLine(line: string): HarnessEvent[] {
   const parsed = parseStreamLine(line);
   if (parsed === null) return [];
-  if (parsed.type === "assistant") {
-    return (parsed.message?.content ?? []).flatMap(mapAssistantBlock);
+  if (parsed.type === "item.completed" && parsed.item?.type === "agent_message") {
+    return parsed.item.text ? [{ type: "text", text: parsed.item.text }] : [];
   }
-  if (parsed.type === "result") {
-    return [
-      {
-        type: "result",
-        ok: parsed.subtype === "success" && !parsed.is_error,
-        text: parsed.result ?? "",
-      },
-    ];
+  if (parsed.type === "item.started" || parsed.type === "item.completed") {
+    return mapToolItem(parsed.item);
+  }
+  if (parsed.type === "turn.failed" || parsed.type === "error") {
+    const text = parsed.error?.message ?? parsed.message ?? "Codex session failed";
+    return [{ type: "result", ok: false, text }];
   }
   return [];
 }
 
-function summarizeInput(input: unknown): string | undefined {
-  if (typeof input !== "object" || input === null) return undefined;
-  const fields = input as Record<string, unknown>;
-  for (const key of ["file_path", "command", "path", "pattern", "description"]) {
-    const value = fields[key];
-    if (typeof value === "string")
-      return value.length > MAX_TOOL_DETAIL_CHARS
-        ? `${value.slice(0, MAX_TOOL_DETAIL_CHARS - ELLIPSIS.length)}${ELLIPSIS}`
-        : value;
+function mapToolItem(item: CodexStreamLine["item"]): HarnessEvent[] {
+  if (item?.type === "command_execution" && item.command) {
+    return [{ type: "tool", name: "command", detail: truncateDetail(item.command) }];
   }
-  return undefined;
+  if (item?.type === "mcp_tool_call" && item.tool) {
+    const name = item.server ? `${item.server}.${item.tool}` : item.tool;
+    return [{ type: "tool", name }];
+  }
+  if (item?.type === "web_search" && item.query) {
+    return [{ type: "tool", name: "web_search", detail: truncateDetail(item.query) }];
+  }
+  return [];
 }
 
-/**
- * Harness implementation running `claude -p` headless with stream-json output,
- * spawned in the ticket's worktree.
- */
-export class ClaudeHarness implements Harness {
-  readonly name = "claude";
+/** Harness implementation running `codex exec --json` in the ticket worktree. */
+export class CodexHarness implements Harness {
+  readonly name = "codex";
 
-  constructor(private readonly executable: string = "claude") {}
+  constructor(private readonly executable: string = "codex") {}
 
   spawn(promptSpec: PromptSpec, options: SpawnOptions): HarnessSession {
-    const args = [
-      "-p",
-      promptSpec.prompt,
-      "--output-format",
-      "stream-json",
-      "--verbose",
-      "--permission-mode",
-      "bypassPermissions",
-    ];
-    const child: ChildProcess = spawn(this.executable, args, {
-      cwd: options.cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
-    });
-
+    const child: ChildProcess = spawn(
+      this.executable,
+      ["exec", "--json", "--dangerously-bypass-approvals-and-sandbox", promptSpec.prompt],
+      {
+        cwd: options.cwd,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: process.env,
+      },
+    );
     const log = options.logPath ? openLog(options.logPath) : null;
     let stderrTail = "";
     child.stderr?.on("data", (chunk: Buffer) => {
@@ -121,8 +105,8 @@ export class ClaudeHarness implements Harness {
     const queue: HarnessEvent[] = [];
     let notify: (() => void) | null = null;
     let hasEnded = false;
-    let result: HarnessResult | null = null;
-
+    let finalText = "";
+    let failureText: string | null = null;
     const push = (event: HarnessEvent) => {
       queue.push(event);
       notify?.();
@@ -133,8 +117,9 @@ export class ClaudeHarness implements Harness {
       : null;
     stdoutLines?.on("line", (line) => {
       log?.write(`${line}\n`);
-      for (const event of mapClaudeLine(line)) {
-        if (event.type === "result") result = { ok: event.ok, text: event.text, exitCode: 0 };
+      for (const event of mapCodexLine(line)) {
+        if (event.type === "text") finalText = event.text;
+        if (event.type === "result" && !event.ok) failureText = event.text;
         push(event);
       }
     });
@@ -153,13 +138,14 @@ export class ClaudeHarness implements Harness {
       child.on("close", (code) => {
         hasEnded = true;
         log?.end();
-        if (result && code === 0) {
-          resolve({ ...result, exitCode: 0 });
+        if (code === 0 && finalText && failureText === null) {
+          push({ type: "result", ok: true, text: finalText });
+          resolve({ ok: true, text: finalText, exitCode: 0 });
         } else {
           resolve({
             ok: false,
             text:
-              result?.text ??
+              failureText ??
               `harness exited with code ${code ?? "?"}${stderrTail ? `\nstderr: ${stderrTail.trim()}` : ""}`,
             exitCode: code ?? 1,
           });
@@ -172,9 +158,6 @@ export class ClaudeHarness implements Harness {
       [Symbol.asyncIterator]() {
         return {
           async next(): Promise<IteratorResult<HarnessEvent>> {
-            // Unbounded but never hot: each pass either takes a queued event,
-            // reports the stream closed, or awaits the next `notify` — and the
-            // subprocess's close/error handler always sets hasEnded.
             for (;;) {
               const event = queue.shift();
               if (event) return { value: event, done: false };
@@ -200,10 +183,11 @@ export class ClaudeHarness implements Harness {
   }
 
   spawnInteractive(promptSpec: PromptSpec, options: InteractiveSpawnOptions): Promise<number> {
-    const args = options.isSystemPrompt
-      ? ["--append-system-prompt", promptSpec.prompt]
-      : [promptSpec.prompt];
-    const child = spawn(this.executable, args, { cwd: options.cwd, stdio: "inherit" });
+    const child = spawn(
+      this.executable,
+      ["--dangerously-bypass-approvals-and-sandbox", promptSpec.prompt],
+      { cwd: options.cwd, stdio: "inherit" },
+    );
     return interactiveResult(child, this.executable);
   }
 }

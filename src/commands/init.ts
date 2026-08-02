@@ -1,8 +1,8 @@
-import { spawn } from "node:child_process";
 import * as path from "node:path";
 import { JFDI_DIR, loadConfig } from "../config.js";
 import { repoRoot } from "../git.js";
 import { CODING_GUIDELINES } from "../guidelines.js";
+import { createHarness } from "../harness/index.js";
 import { loadPrompt, renderPrompt } from "../prompts.js";
 import { scaffoldJfdi } from "../scaffold.js";
 
@@ -18,7 +18,7 @@ export async function initCommand(options: { isBare?: boolean } = {}): Promise<n
   console.log(`scaffolded ${JFDI_DIR}/ (config, board, tickets, prompts, sandbox contract)`);
 
   const config = await loadConfig(root);
-  if (options.isBare || config.harness !== "claude") {
+  if (options.isBare) {
     console.log("next: fill in the gate commands in .jfdi/config.json and .jfdi/sandbox.md");
     return 0;
   }
@@ -26,13 +26,8 @@ export async function initCommand(options: { isBare?: boolean } = {}): Promise<n
   console.log("launching an agent session to set up the mechanical gate…\n");
   const template = await loadPrompt(jfdiDir, "init");
   const prompt = renderPrompt(template, { CODING_GUIDELINES });
-  const child = spawn("claude", [prompt], { cwd: root, stdio: "inherit" });
-  return new Promise<number>((resolve) => {
-    child.on("error", (error) => {
-      console.error(`failed to launch claude: ${error.message}`);
-      console.error("scaffold is in place — fill in .jfdi/config.json's gate by hand");
-      resolve(0);
-    });
-    child.on("close", (code) => resolve(code ?? 0));
-  });
+  const exitCode = await createHarness(config).spawnInteractive({ prompt }, { cwd: root });
+  if (exitCode !== 0)
+    console.error("scaffold is in place — fill in .jfdi/config.json's gate by hand");
+  return exitCode;
 }

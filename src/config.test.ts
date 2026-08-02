@@ -42,6 +42,15 @@ describe("parseConfig", () => {
   it("rejects non-integer max_concurrent", () => {
     expect(() => parseConfig({ max_concurrent: 0 })).toThrow(ConfigError);
   });
+
+  it("accepts Codex and rejects unknown harnesses", () => {
+    expect(parseConfig({ harness: "codex" }).harness).toBe("codex");
+    expect(() => parseConfig({ harness: "other" })).toThrow('harness must be "claude" or "codex"');
+  });
+
+  it("rejects the removed harnessArgs setting", () => {
+    expect(() => parseConfig({ harnessArgs: [] })).toThrow("harnessArgs is no longer supported");
+  });
 });
 
 describe("loadConfig", () => {

@@ -2,7 +2,7 @@
 
 > **JFDI** — *Just F'ing Do It.*
 >
-> A command-line harness around the Claude Code harness. Hand it a ticket; it runs the ticket through an implement → review → QA loop in an isolated git worktree, then merges. Point it at a Kanban board and it does that continuously, several tickets at a time.
+> A command-line harness around coding-agent CLIs. Hand it a ticket; it runs the ticket through an implement → review → QA loop in an isolated git worktree, then merges. Point it at a Kanban board and it does that continuously, several tickets at a time.
 
 This spec is the build handoff document. It defines the full system; the build sequence at the end defines what to build first. Iteration 1 documents live in `Iteration 1/` and are historical context only — nothing in them is normative.
 
@@ -10,7 +10,7 @@ This spec is the build handoff document. It defines the full system; the build s
 
 JFDI automates the supervision loop of AI-assisted development. The human writes tickets; JFDI dispatches agent sessions to implement them, reviews the work from two independent angles (code quality and functional behavior), and integrates finished work into the target branch — escalating to the human only at configured gates or on genuine hard blocks.
 
-It is **CLI-first**: a harness *around* the Claude Code harness, not a user interface. A terminal UI ships with the coordinator; a web front end is a future renderer over the same event stream, never a prerequisite.
+It is **CLI-first**: a harness *around* a coding-agent CLI, not a user interface. A terminal UI ships with the coordinator; a web front end is a future renderer over the same event stream, never a prerequisite.
 
 ### Lessons from Iteration 1 (design constraints)
 
@@ -201,7 +201,7 @@ The coordinator appends every significant transition (dispatch, stage change, ga
   "pipeline": { "max_rounds": 3 },
   "integration": { "target_branch": "main", "mode": "on-approval" },
   "max_concurrent": 2,
-  "harness": "claude"          // future: "codex", ...
+  "harness": "claude"          // "claude" or "codex"
 }
 ```
 
@@ -209,9 +209,9 @@ Exact schema is the builder's to refine; the settled decisions are: user-named c
 
 ## 10. Harness Abstraction
 
-Agents run as **`claude -p` (headless) subprocesses** with `--output-format stream-json`, spawned in the ticket's worktree with the stage's prompt and context. JFDI parses the event stream for progress, output, and completion.
+Agents run as headless Claude Code or OpenAI Codex subprocesses, spawned in the ticket's worktree with the stage's prompt and context. JFDI parses each provider's JSON event stream for progress, output, and completion. JFDI supplies the provider-specific arguments required for autonomous operation; they are not project configuration.
 
-The runner sits behind a **harness interface** — roughly `spawn(promptSpec, cwd) → event stream`, plus kill/cleanup — with `claude` as the sole implementation now and Codex (and others) as future implementations. Pipeline logic never touches harness specifics.
+The runner sits behind a **harness interface** — roughly `spawn(promptSpec, cwd) → event stream`, plus interactive launch and kill/cleanup — with Claude Code and Codex implementations. Additional providers slot in behind the same interface. Pipeline logic never touches harness specifics.
 
 Per-stage prompts (Implementation, Code Review, QA, Integration) are files under `.jfdi/` (seeded by `jfdi init`, tunable via `jfdi convo`), so agent behavior is user-adjustable without code changes.
 
@@ -233,7 +233,7 @@ All future work slots behind interfaces that exist from day one:
 
 - **Ticket sources** — markdown board now; JIRA later (daemon mode watching a filter and auto-grabbing qualifying tickets)
 - **Merge targets** — local git now; GitHub / Bitbucket PR flows later
-- **Harnesses** — `claude -p` now; Codex etc. later
+- **Harnesses** — Claude Code and Codex now; additional providers later
 - **Renderers** — TUI now; web UI later, over the same event stream
 - **Dependency checking** between cards — explicitly out now, possible later
 - **User-impersonate + PM agents** — an agent attempting a defined user's job and filing feature tickets, paired with a PM agent to shape them. Idea parked from the original discussion; nothing in this iteration should preclude it (it is just another ticket source)
@@ -243,7 +243,7 @@ All future work slots behind interfaces that exist from day one:
 | Component | Choice | Rationale |
 |---|---|---|
 | Language | Node.js / TypeScript | Self-hosting exercises the node toolchain from ticket one; shares a language with the future web renderer |
-| Agent runtime | `claude -p` subprocess, stream-json | Inherits the full Claude Code toolchain; JFDI stays a thin orchestrator |
+| Agent runtime | Provider subprocess with JSON event output | Inherits the selected agent CLI's toolchain; JFDI stays a thin orchestrator |
 | TUI | Ink (or equivalent React-for-terminal) | Same component model as the future web UI |
 | State | Flat files (`events.jsonl`, `state.json`) | Rebuildable, greppable, no DB dependency |
 | VCS | git worktrees, local only | Isolation for concurrent builds; no forge dependency |

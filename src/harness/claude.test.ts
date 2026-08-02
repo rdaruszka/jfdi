@@ -58,6 +58,9 @@ describe("ClaudeHarness subprocess", () => {
     const script = path.join(dir, "fake-claude");
     const body = [
       "#!/bin/sh",
+      '[ "$1" = "-p" ] || exit 91',
+      '[ "$6" = "--permission-mode" ] || exit 92',
+      '[ "$7" = "bypassPermissions" ] || exit 93',
       ...lines.map((l) => `echo '${JSON.stringify(l)}'`),
       `exit ${exitCode}`,
     ].join("\n");
@@ -70,7 +73,7 @@ describe("ClaudeHarness subprocess", () => {
       { type: "assistant", message: { content: [{ type: "text", text: "hi" }] } },
       { type: "result", subtype: "success", result: "finished the work" },
     ]);
-    const harness = new ClaudeHarness([], exe);
+    const harness = new ClaudeHarness(exe);
     const session = harness.spawn({ prompt: "do it" }, { cwd: dir });
     const seen: HarnessEvent[] = [];
     for await (const event of session.events) seen.push(event);
@@ -83,7 +86,7 @@ describe("ClaudeHarness subprocess", () => {
   it("captures raw output to the log path", async () => {
     const exe = await stubClaude([{ type: "result", subtype: "success", result: "ok" }]);
     const logPath = path.join(dir, "logs/session.jsonl");
-    const harness = new ClaudeHarness([], exe);
+    const harness = new ClaudeHarness(exe);
     const session = harness.spawn({ prompt: "p" }, { cwd: dir, logPath });
     await session.done;
     const log = await fs.readFile(logPath, "utf8");
@@ -92,7 +95,7 @@ describe("ClaudeHarness subprocess", () => {
 
   it("reports failure when the process exits non-zero", async () => {
     const exe = await stubClaude([], 2);
-    const harness = new ClaudeHarness([], exe);
+    const harness = new ClaudeHarness(exe);
     const session = harness.spawn({ prompt: "p" }, { cwd: dir });
     const result = await session.done;
     expect(result.ok).toBe(false);
@@ -100,7 +103,7 @@ describe("ClaudeHarness subprocess", () => {
   });
 
   it("reports failure when the executable is missing", async () => {
-    const harness = new ClaudeHarness([], path.join(dir, "does-not-exist"));
+    const harness = new ClaudeHarness(path.join(dir, "does-not-exist"));
     const session = harness.spawn({ prompt: "p" }, { cwd: dir });
     const result = await session.done;
     expect(result.ok).toBe(false);
