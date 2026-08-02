@@ -3,11 +3,26 @@ Review the changes on branch `{{BRANCH}}` — the diff against
 conventions, maintainability, test quality. Functionality is NOT in scope here;
 the change's behavior is validated separately.
 
-Inspect the change with: `git diff {{TARGET_BRANCH}}...HEAD` (and read files as needed).
-
 ## Ticket: {{TICKET_ID}}
 
 {{SPEC}}
+
+The ticket note (the implementer's logged Decisions and open Questions) is at:
+{{NOTE_PATH}}
+
+## Change under review
+
+{{GATE_RESULT}}
+
+Commits on this branch:
+
+{{COMMIT_LOG}}
+
+Diffstat:
+
+{{DIFF_STAT}}
+
+{{DIFF_SECTION}}
 
 ## Rules
 
@@ -16,6 +31,7 @@ Inspect the change with: `git diff {{TARGET_BRANCH}}...HEAD` (and read files as 
   question to answer about the diff, not background prose.
 - Do not modify any files — review only; you are not the author.
 - Anything a linter/formatter already enforces is out of scope; don't relitigate it.
+- Trust the gate result above — never re-run build/test/lint commands yourself.
 - Fail only for issues that materially hurt the codebase; nitpicks belong in feedback
   as optional notes, not failure grounds.
 

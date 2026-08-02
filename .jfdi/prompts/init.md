@@ -15,8 +15,12 @@ with defaults. Your job is to make it real:
    human where taste is involved.
 4. Write .jfdi/sandbox.md: how QA should build, launch, drive, and tear down this
    product (invocation patterns, expected outputs, scratch-dir conventions).
-5. Adjust the board column names in config.json if the human wants different ones.
-6. Verify: run every gate command; each must exit zero.
+5. Wire .jfdi/hooks/format.sh to this project's formatter: replace the placeholder
+   with the real single-file format command (the hook runs after every agent file
+   edit, so agents never burn turns on lint-fix loops). If the project has no
+   formatter, leave the placeholder no-op in place.
+6. Adjust the board column names in config.json if the human wants different ones.
+7. Verify: run every gate command; each must exit zero.
 
 Report what you set up and anything the human should tune.
 

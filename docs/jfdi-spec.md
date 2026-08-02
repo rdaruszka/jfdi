@@ -83,7 +83,7 @@ Obsidian and the coordinator both write `board.md`. The coordinator must do atom
 
 ## 4. The Agent Pipeline
 
-Four agents, run per ticket, each a fresh harness session (see §10) in the ticket's worktree:
+Four agents, run per ticket, in the ticket's worktree. Each stage's **first** round is a fresh harness session (see §10) — the independence of fresh eyes is the point of the review stages. Rounds after the first **continue** the stage's own session (the same conversation, re-entered with a short brief) instead of paying a fresh session to re-derive context it already had:
 
 | Agent                 | Role                                                                                                                                                                                                             |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -124,7 +124,9 @@ Implementation
 
 Reviews are sequential with Code Review gating QA: every round where Code Review fails skips the expensive sandbox run entirely. Both reviews' sign-offs bind to a specific commit — any code change invalidates both, so a fix round re-enters at the gate and repeats both reviews on the new commit.
 
-**Feedback rounds:** review feedback goes to a fresh Implementation session with the branch state plus a summary of prior rounds (what was asked, what was tried). Retry cap is configurable (`pipeline.max_rounds`, default 3); on exhaustion the card moves to Blocked with the accumulated round history in the ticket note.
+**Feedback rounds:** review feedback re-enters the Implementation session as a continuation carrying just the failure (gate output, or the reviewer's items); the session already holds the ticket and its own work. Continued reviewers get the delta since their last look — new commits, files touched — plus provenance: a reviewer who passed last round is told the change answers QA (with QA's feedback), not its own sign-off. If the provider has forgotten a session, the stage falls back to one fresh session with the full prompt and accumulated round feedback. Retry cap is configurable (`pipeline.max_rounds`, default 3); on exhaustion the card moves to Blocked with the accumulated round history in the ticket note.
+
+**Mechanical work stays out of sessions:** fresh reviewer/QA prompts arrive carrying the commit log, diffstat, the diff itself (Code Review, when it fits), the ticket note path, and the gate's passing output — reviewers are told to trust it, never re-run it. QA runs only the tests it adds; after QA commits tests, the coordinator re-runs the full gate mechanically, and a failure costs a round, not a blocked merge.
 
 ### Test ownership
 
@@ -216,7 +218,9 @@ Exact schema is the builder's to refine; the settled decisions are: user-named c
 
 Agents run as headless Claude Code or OpenAI Codex subprocesses, spawned in the ticket's worktree with the stage's prompt and context. JFDI parses each provider's JSON event stream for progress, output, and completion. JFDI supplies the provider-specific arguments required for autonomous operation; they are not project configuration.
 
-The runner sits behind a **harness interface** — roughly `spawn(promptSpec, cwd) → event stream`, plus interactive launch and kill/cleanup — with Claude Code and Codex implementations. Additional providers slot in behind the same interface. Pipeline logic never touches harness specifics.
+The runner sits behind a **harness interface** — roughly `spawn(promptSpec, cwd) → event stream`, plus interactive launch and kill/cleanup — with Claude Code and Codex implementations. Sessions report a provider id the pipeline can pass back to continue the conversation in a later round (`claude -p --resume`, `codex exec resume`); a provider that has forgotten the session simply fails the continuation and the pipeline falls back to a fresh spawn. Additional providers slot in behind the same interface. Pipeline logic never touches harness specifics.
+
+Provider-specific accelerations live inside the matching harness, never in pipeline logic: the Claude harness passes `.jfdi/claude-settings.json` (when present) via `--settings`, wiring a PostToolUse hook that formats each edited file so sessions never burn turns on lint-fix loops. Codex has no hook system; its sessions run without the acceleration — degraded, not broken.
 
 Per-stage prompts (Implementation, Code Review, QA, Integration) are files under `.jfdi/` (seeded by `jfdi init`, tunable via `jfdi convo`), so agent behavior is user-adjustable without code changes.
 

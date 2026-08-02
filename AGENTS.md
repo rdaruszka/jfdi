@@ -68,7 +68,7 @@ scripts/playground.mjs     — `pnpm playground`: mint a disposable half-app cop
 These are architectural requirements from the spec, not preferences:
 
 1. **Renderer separation.** All UI (TUI now, web later) renders `events.jsonl`/`state.json` only. Pipeline/coordinator logic never talks to a UI directly, and no state exists only in the UI.
-2. **Harness abstraction.** Pipeline logic never touches provider-specific details. Everything goes through the harness interface (`spawn(promptSpec, cwd) → event stream`, plus interactive launch and kill/cleanup); Claude Code and Codex are implementations.
+2. **Harness abstraction.** Pipeline logic never touches provider-specific details. Everything goes through the harness interface (`spawn(promptSpec, cwd) → event stream` — with session continuation via a spawn option — plus interactive launch and kill/cleanup); Claude Code and Codex are implementations. Provider-specific accelerations (e.g. the Claude PostToolUse format hook) live inside the matching harness implementation, and their absence elsewhere degrades gracefully.
 3. **Serialized integration.** Exactly one integration at a time, pulled from the merge-ready queue in completion order. Nothing but Integration ever touches the target branch.
 4. **Atomic board writes.** `board.md` is co-edited by Obsidian. Read → check mtime → write via temp-file rename → re-read/retry on mtime change. Edits are surgical (move one card line); never rewrite the file wholesale. Writes follow symlinks: the rename targets the link's real path — renaming onto the link itself would replace it with a private copy and silently split the board from the file the human edits.
 5. **Sequential reviews, commit-bound sign-offs.** Code Review gates QA (a Code Review fail skips the sandbox run). Both sign-offs bind to a specific commit — any code change re-enters at the gate and repeats both reviews.
@@ -93,7 +93,8 @@ Use these terms exactly; introduce no synonyms. The list grows only by editing t
 - **coordinator** — the long-running process that watches the board and dispatches runs.
 - **harness** — the agent-session abstraction (`spawn(promptSpec, cwd) → event stream`, plus interactive launch); Claude Code and Codex are implementations.
 - **worktree** — the isolated git checkout (branch `jfdi/<ticket-id>`) a run works in.
-- **resume** — a re-dispatch that deliberately continues an interrupted run's partial work: the worktree is sanitized first, and the Implementation prompt carries what the branch already holds plus the previous run's unanswered feedback.
+- **resume** — a re-dispatch that deliberately continues an interrupted run's partial work: the worktree is sanitized first, and the Implementation prompt carries what the branch already holds plus the previous run's unanswered feedback. (Run-level; distinct from **continuation**, which is session-level.)
+- **continuation** — re-entering a stage's own previous agent session in a later round of the same run (`claude -p --resume` / `codex exec resume`) with a short brief, instead of starting a fresh session. Round 1 of every stage is always fresh; a forgotten session falls back to one fresh spawn.
 - **crash orphan** — a card left in the in-progress column by a coordinator that died; the startup sweep moves it to Blocked.
 - **observation** — an out-of-scope issue a stage reports in its verdict (`observations` array); never fixed inline.
 - **inbox** — the board column where observations land as proposal cards. Agent-writable via the coordinator only, human-drained, never dispatched from: agents propose, humans promote.

@@ -6,6 +6,21 @@ not from the diff.
 
 {{SPEC}}
 
+The ticket note (the implementer's logged Decisions and open Questions) is at:
+{{NOTE_PATH}}
+
+## What changed
+
+{{GATE_RESULT}}
+
+Commits on this branch:
+
+{{COMMIT_LOG}}
+
+Diffstat:
+
+{{DIFF_STAT}}
+
 ## Sandbox contract
 
 How to build, launch, drive, and tear down the product under test:
@@ -18,8 +33,9 @@ How to build, launch, drive, and tear down the product under test:
 - Encode what you verified as automated end-to-end/regression tests, committed on this
   branch — future runs must cover this behavior mechanically. Old behavior is already
   covered by the existing suite; focus manual exercise on the new surface.
-- Run the mechanical gate after committing tests; it must still pass:
-{{GATE_COMMANDS}}
+- Run the tests you add to prove they pass, but do NOT re-run the full mechanical
+  gate — it already passed on the reviewed commit, and the pipeline re-runs it
+  mechanically after your session; a failure comes straight back to this ticket.
 - Leave the working tree clean — tests committed, scratch artifacts removed.
 
 ## Working posture
