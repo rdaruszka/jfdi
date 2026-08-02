@@ -63,6 +63,28 @@ export function emptyState(): CoordinatorState {
   return { updatedAt: "", tickets: {}, integrationQueue: [] };
 }
 
+const STAGE_NAMES: readonly string[] = ["implementation", "code-review", "qa", "integration"];
+
+// An event's `data` is untyped by design (each event type carries its own
+// shape) and reaches us re-parsed from events.jsonl, so every field read out
+// of it is checked rather than cast.
+function stringField(data: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = data?.[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function numberField(data: Record<string, unknown> | undefined, key: string): number | undefined {
+  const value = data?.[key];
+  return typeof value === "number" ? value : undefined;
+}
+
+function stageField(data: Record<string, unknown> | undefined): StageName | undefined {
+  const value = data?.stage;
+  return typeof value === "string" && STAGE_NAMES.includes(value)
+    ? (value as StageName)
+    : undefined;
+}
+
 function newTicketState(id: string, ts: string): TicketState {
   return {
     id,
@@ -90,20 +112,20 @@ function applyTicketEvent(
   switch (event.type) {
     case "dispatch":
       ticket.status = "running";
-      ticket.title = (event.data?.title as string) ?? id;
-      ticket.branch = (event.data?.branch as string) ?? "";
+      ticket.title = stringField(event.data, "title") ?? id;
+      ticket.branch = stringField(event.data, "branch") ?? "";
       ticket.lastActivity = "dispatched";
       break;
     case "round_start":
-      ticket.round = (event.data?.round as number) ?? ticket.round + 1;
+      ticket.round = numberField(event.data, "round") ?? ticket.round + 1;
       ticket.lastActivity = `round ${ticket.round}`;
       break;
     case "stage_start":
-      ticket.stage = (event.data?.stage as StageName) ?? ticket.stage;
+      ticket.stage = stageField(event.data) ?? ticket.stage;
       ticket.lastActivity = `${ticket.stage} running`;
       break;
     case "stage_end":
-      ticket.lastActivity = `${(event.data?.stage as string) ?? ticket.stage}: ${(event.data?.verdict as string) ?? "done"}`;
+      ticket.lastActivity = `${stringField(event.data, "stage") ?? ticket.stage}: ${stringField(event.data, "verdict") ?? "done"}`;
       break;
     case "gate_start":
       ticket.lastActivity = "gate running";
@@ -114,7 +136,7 @@ function applyTicketEvent(
         : `gate failed (${event.data?.step ?? "?"})`;
       break;
     case "session_activity":
-      ticket.lastActivity = (event.data?.text as string) ?? ticket.lastActivity;
+      ticket.lastActivity = stringField(event.data, "text") ?? ticket.lastActivity;
       break;
     case "escalation":
       ticket.lastActivity = "escalated";
@@ -122,7 +144,7 @@ function applyTicketEvent(
     case "blocked":
       ticket.status = "blocked";
       ticket.stage = null;
-      ticket.lastActivity = (event.data?.reason as string) ?? "blocked";
+      ticket.lastActivity = stringField(event.data, "reason") ?? "blocked";
       next.integrationQueue = next.integrationQueue.filter((queued) => queued !== id);
       break;
     case "merge_queued":
@@ -156,7 +178,7 @@ function applyTicketEvent(
     case "failed":
       ticket.status = "failed";
       ticket.stage = null;
-      ticket.lastActivity = (event.data?.reason as string) ?? "failed";
+      ticket.lastActivity = stringField(event.data, "reason") ?? "failed";
       next.integrationQueue = next.integrationQueue.filter((queued) => queued !== id);
       break;
     // card_moved, observation and error carry no ticket-state transition.
@@ -240,20 +262,55 @@ export class EventLog {
 
   /** Rebuild state purely from events.jsonl. */
   static async rebuild(stateDir: string): Promise<CoordinatorState> {
-    const content = await readIfExists(path.join(stateDir, "events.jsonl"));
+    const eventsPath = path.join(stateDir, "events.jsonl");
+    const content = await readIfExists(eventsPath);
     let state = emptyState();
     if (content === null) return state;
     for (const line of content.split("\n")) {
       if (!line.trim()) continue;
-      state = reduceEvent(state, JSON.parse(line) as JfdiEvent);
+      const parsed: unknown = JSON.parse(line);
+      if (!isJfdiEvent(parsed))
+        throw new Error(
+          `${eventsPath} contains a line that is not a JFDI event: ${line.slice(0, MAX_BAD_LINE_CHARS)}`,
+        );
+      state = reduceEvent(state, parsed);
     }
     return state;
   }
 }
 
+/** Longest excerpt of a rejected line quoted back in an error. */
+const MAX_BAD_LINE_CHARS = 200;
+
+// events.jsonl and state.json are files on disk: another process, a crashed
+// write, or a hand edit can leave anything there. Both are checked before the
+// rest of the program is allowed to believe their types.
+function isJfdiEvent(value: unknown): value is JfdiEvent {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.ts === "string" && typeof record.type === "string";
+}
+
+function isCoordinatorState(value: unknown): value is CoordinatorState {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.updatedAt === "string" &&
+    typeof record.tickets === "object" &&
+    record.tickets !== null &&
+    Array.isArray(record.integrationQueue)
+  );
+}
+
 /** Load the current snapshot from disk (jfdi status). */
 export async function loadState(stateDir: string): Promise<CoordinatorState> {
-  const content = await readIfExists(path.join(stateDir, "state.json"));
+  const statePath = path.join(stateDir, "state.json");
+  const content = await readIfExists(statePath);
   if (content === null) return EventLog.rebuild(stateDir);
-  return JSON.parse(content) as CoordinatorState;
+  const parsed: unknown = JSON.parse(content);
+  if (!isCoordinatorState(parsed))
+    throw new Error(
+      `${statePath} is not a coordinator snapshot — delete it to rebuild from events.jsonl`,
+    );
+  return parsed;
 }

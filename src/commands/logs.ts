@@ -15,6 +15,7 @@ export async function logsCommand(ticketId: string): Promise<number> {
   try {
     entries = await fs.readdir(base);
   } catch {
+    // No runs directory at all — the ticket has never been dispatched.
     console.error(`no runs recorded for ticket "${ticketId}"`);
     return 1;
   }
@@ -35,6 +36,8 @@ export async function logsCommand(ticketId: string): Promise<number> {
         .map(String)
         .sort();
     } catch {
+      // This run has no such directory (e.g. no integration ever ran); the
+      // remaining directories may still have logs, so keep going.
       continue;
     }
     for (const file of files) {

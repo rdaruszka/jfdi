@@ -192,7 +192,12 @@ export function branchDiff(worktree: string, target: string): Promise<string> {
 
 export async function commitCount(worktree: string, target: string): Promise<number> {
   const output = await git(worktree, "rev-list", "--count", `${target}..HEAD`);
-  return Number.parseInt(output, 10);
+  const count = Number.parseInt(output, 10);
+  // Subprocess output is a trust boundary: a non-numeric answer means git told
+  // us something we do not understand, not that there are zero commits.
+  if (!Number.isInteger(count))
+    throw new GitError(`git rev-list --count returned non-numeric output: ${output}`);
+  return count;
 }
 
 /** Commit anything left uncommitted in the worktree (agent safety net). */

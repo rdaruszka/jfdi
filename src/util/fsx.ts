@@ -68,6 +68,7 @@ export async function fileExists(filePath: string): Promise<boolean> {
     await fs.access(filePath);
     return true;
   } catch {
+    // Unreadable is indistinguishable from absent for every caller here.
     return false;
   }
 }
@@ -88,19 +89,32 @@ export class MtimeConflictError extends Error {
   }
 }
 
-/** In-process writers to the same file are strictly serialized. */
+/**
+ * In-process writers to the same file are strictly serialized.
+ *
+ * Module-level mutable state, deliberately: the guarantee is "one writer per
+ * path per process", which cannot be expressed by anything narrower than a
+ * process-wide table. It is the only such state in the codebase.
+ *
+ * Entries are evicted as they settle (see below) so the coordinator, which
+ * runs for days and writes a new path per run directory, does not accumulate
+ * one map entry per file it has ever touched.
+ */
 const fileLocks = new Map<string, Promise<unknown>>();
 
 function withFileLock<T>(filePath: string, job: () => Promise<T>): Promise<T> {
   const previous = fileLocks.get(filePath) ?? Promise.resolve();
   const run = previous.then(job, job);
-  fileLocks.set(
-    filePath,
-    run.then(
-      () => undefined,
-      () => undefined,
-    ),
+  const settled: Promise<void> = run.then(
+    () => undefined,
+    () => undefined,
   );
+  fileLocks.set(filePath, settled);
+  void settled.then(() => {
+    // Drop the entry only if nobody chained onto it meanwhile — otherwise the
+    // later writer would lose its predecessor and the two could interleave.
+    if (fileLocks.get(filePath) === settled) fileLocks.delete(filePath);
+  });
   return run;
 }
 
@@ -119,18 +133,22 @@ export function readModifyWrite(
   const retries = options.retries ?? DEFAULT_RETRIES;
   const retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
   return withFileLock(filePath, async () => {
-    for (let attempt = 0; ; attempt++) {
+    // Termination measure: `attempt` only grows and the loop is bounded by
+    // `retries`; the last attempt either writes or throws.
+    for (let attempt = 0; attempt <= retries; attempt++) {
       const content = await fs.readFile(filePath, "utf8");
       const next = modify(content);
       if (next === null) return false;
       const reread = await fs.readFile(filePath, "utf8");
       if (reread !== content) {
         if (attempt >= retries) throw new MtimeConflictError(filePath);
-        await new Promise((r) => setTimeout(r, retryDelayMs * (attempt + 1)));
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs * (attempt + 1)));
         continue;
       }
       await atomicWrite(filePath, next);
       return true;
     }
+    // Unreachable: the final iteration always returns or throws above.
+    throw new MtimeConflictError(filePath);
   });
 }

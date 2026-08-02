@@ -18,14 +18,36 @@ export async function saveReport(
   );
 }
 
+/**
+ * report.json is our own file, but a crashed write or a hand edit can leave
+ * anything there — and callers dereference `decisions`/`observations` without
+ * guarding. Check the shape before handing it over.
+ */
+function isRunReport(value: unknown): value is RunReport {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.summary === "string" &&
+    Array.isArray(record.decisions) &&
+    Array.isArray(record.observations) &&
+    typeof record.testsAdded === "string" &&
+    typeof record.rounds === "number" &&
+    typeof record.commit === "string"
+  );
+}
+
 export async function loadReport(stateDir: string, ticketId: string): Promise<RunReport | null> {
   const content = await readIfExists(path.join(runsDir(stateDir, ticketId), "report.json"));
   if (content === null) return null;
+  let parsed: unknown;
   try {
-    return JSON.parse(content) as RunReport;
+    parsed = JSON.parse(content);
   } catch {
+    // A truncated or hand-mangled report is treated as absent: the caller
+    // re-runs the pipeline rather than merging on a half-read record.
     return null;
   }
+  return isRunReport(parsed) ? parsed : null;
 }
 
 /**

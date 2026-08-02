@@ -49,6 +49,8 @@ async function readVerdictFile(path: string): Promise<Record<string, unknown> | 
     const parsed = JSON.parse(stripped) as unknown;
     return isRecord(parsed) ? parsed : null;
   } catch {
+    // A verdict we cannot parse is a verdict the stage did not produce: the
+    // caller re-runs or fails the round rather than guessing at intent.
     return null;
   }
 }

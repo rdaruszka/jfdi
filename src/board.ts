@@ -163,6 +163,7 @@ export async function createBoardIfMissing(boardPath: string, columns: string[])
     await fs.access(boardPath);
     return;
   } catch {
+    // Absent, which is the whole point of the call — create it.
     const body = columns.map((c) => `## ${c}\n`).join("\n");
     await atomicWrite(boardPath, `---\n\nkanban-plugin: board\n\n---\n\n${body}`);
   }

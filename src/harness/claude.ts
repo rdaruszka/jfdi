@@ -173,6 +173,9 @@ export class ClaudeHarness implements Harness {
       [Symbol.asyncIterator]() {
         return {
           async next(): Promise<IteratorResult<HarnessEvent>> {
+            // Unbounded but never hot: each pass either takes a queued event,
+            // reports the stream closed, or awaits the next `notify` — and the
+            // subprocess's close/error handler always sets hasEnded.
             for (;;) {
               const event = queue.shift();
               if (event) return { value: event, done: false };
