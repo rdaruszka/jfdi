@@ -79,7 +79,7 @@ Ticket notes are plain markdown. During a run the pipeline appends structured se
 
 ### Write contention
 
-Obsidian and the coordinator both write `board.md`. The coordinator must do atomic read-modify-write: read, check mtime, write via temp-file rename, and re-read/retry on mtime change. Coordinator edits are minimal and surgical (move one card line between columns); it never rewrites the file wholesale.
+Obsidian writes `board.md`, and so does the tool — the coordinator as it dispatches and finishes runs, and `jfdi merge` closing out the card it just integrated. Every such write must be an atomic read-modify-write: read, check mtime, write via temp-file rename, and re-read/retry on mtime change. The tool's edits are minimal and surgical (move one card line between columns); it never rewrites the file wholesale.
 
 ## 4. The Agent Pipeline
 
