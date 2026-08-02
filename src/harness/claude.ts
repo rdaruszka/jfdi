@@ -121,7 +121,7 @@ export class ClaudeHarness implements Harness {
 
     const queue: HarnessEvent[] = [];
     let notify: (() => void) | null = null;
-    let ended = false;
+    let hasEnded = false;
     let result: HarnessResult | null = null;
 
     const push = (event: HarnessEvent) => {
@@ -142,7 +142,7 @@ export class ClaudeHarness implements Harness {
 
     const done = new Promise<HarnessResult>((resolve) => {
       child.on("error", (error) => {
-        ended = true;
+        hasEnded = true;
         log?.end();
         resolve({
           ok: false,
@@ -152,7 +152,7 @@ export class ClaudeHarness implements Harness {
         notify?.();
       });
       child.on("close", (code) => {
-        ended = true;
+        hasEnded = true;
         log?.end();
         if (result && code === 0) {
           resolve({ ...result, exitCode: 0 });
@@ -176,7 +176,7 @@ export class ClaudeHarness implements Harness {
             for (;;) {
               const event = queue.shift();
               if (event) return { value: event, done: false };
-              if (ended) return { value: undefined, done: true };
+              if (hasEnded) return { value: undefined, done: true };
               await new Promise<void>((r) => {
                 notify = r;
               });

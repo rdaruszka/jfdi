@@ -25,7 +25,7 @@ export async function logsCommand(ticketId: string): Promise<number> {
     );
   const latest = runs.at(-1);
   const dirs = [...(latest ? [path.join(base, latest)] : []), path.join(base, "integration")];
-  let printed = false;
+  let hasPrinted = false;
   for (const dir of dirs) {
     let files: string[] = [];
     try {
@@ -41,10 +41,10 @@ export async function logsCommand(ticketId: string): Promise<number> {
       const full = path.join(dir, file);
       console.log(`\n===== ${path.relative(context.stateDir, full)} =====`);
       console.log(await fs.readFile(full, "utf8"));
-      printed = true;
+      hasPrinted = true;
     }
   }
-  if (!printed) {
+  if (!hasPrinted) {
     console.error(`no session logs found for ticket "${ticketId}"`);
     return 1;
   }

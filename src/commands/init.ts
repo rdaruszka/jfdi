@@ -11,14 +11,14 @@ import { scaffoldJfdi } from "../scaffold.js";
  * contract), then hand off to an agent session that inspects the repo and gives
  * the mechanical gate teeth. `--bare` skips the agent step.
  */
-export async function initCommand(options: { bare?: boolean } = {}): Promise<number> {
+export async function initCommand(options: { isBare?: boolean } = {}): Promise<number> {
   const root = await repoRoot(process.cwd());
   const jfdiDir = path.join(root, JFDI_DIR);
   await scaffoldJfdi(root, jfdiDir);
   console.log(`scaffolded ${JFDI_DIR}/ (config, board, tickets, prompts, sandbox contract)`);
 
   const config = await loadConfig(root);
-  if (options.bare || config.harness !== "claude") {
+  if (options.isBare || config.harness !== "claude") {
     console.log("next: fill in the gate commands in .jfdi/config.json and .jfdi/sandbox.md");
     return 0;
   }

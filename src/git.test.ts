@@ -12,7 +12,7 @@ import {
   GitError,
   git,
   isAncestor,
-  rebaseInProgress,
+  isRebaseInProgress,
   rebaseOnto,
   removeWorktree,
   ticketBranch,
@@ -69,7 +69,7 @@ describe("worktrees", () => {
 
   it("removes a worktree", async () => {
     const worktree = await createWorktree(repo, worktreesDir, "gone", "main");
-    await removeWorktree(repo, worktree.path, { force: true });
+    await removeWorktree(repo, worktree.path, { shouldForce: true });
     await expect(fs.access(worktree.path)).rejects.toThrow();
     // Branch survives removal (kept for inspection until merged).
     expect(await branchExists(repo, "jfdi/gone")).toBe(true);
@@ -86,7 +86,7 @@ describe("rebase and merge", () => {
     await commit(repo, "other");
 
     const rebase = await rebaseOnto(worktree.path, "main");
-    expect(rebase).toMatchObject({ ok: true, conflict: false });
+    expect(rebase).toMatchObject({ ok: true, hasConflict: false });
     expect(await commitCount(worktree.path, "main")).toBe(1);
 
     // main is checked out in the primary worktree and clean → ff merge.
@@ -104,13 +104,13 @@ describe("rebase and merge", () => {
 
     const rebase = await rebaseOnto(worktree.path, "main");
     expect(rebase.ok).toBe(false);
-    expect(rebase.conflict).toBe(true);
-    expect(await rebaseInProgress(worktree.path)).toBe(true);
+    expect(rebase.hasConflict).toBe(true);
+    expect(await isRebaseInProgress(worktree.path)).toBe(true);
     // Resolve as the integration agent would.
     await write(worktree.path, "README.md", "merged version\n");
     await git(worktree.path, "add", "README.md");
     await git(worktree.path, "-c", "core.editor=true", "rebase", "--continue");
-    expect(await rebaseInProgress(worktree.path)).toBe(false);
+    expect(await isRebaseInProgress(worktree.path)).toBe(false);
   });
 
   it("fastForward refuses non-descendants", async () => {

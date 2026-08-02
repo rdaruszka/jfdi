@@ -222,7 +222,7 @@ export async function runQaStage(
     SANDBOX: sandbox,
   });
   const outcome = await runStageSession(context, ticket, worktree, "qa", prompt, roundDir);
-  const verdict = await readReviewVerdict(outcome.verdictPath, { allowEscalate: true });
+  const verdict = await readReviewVerdict(outcome.verdictPath, { isEscalateAllowed: true });
   if (verdict) await recordDecisions(notePath, "qa", round, verdict.decisions);
   context.log.emit("stage_end", ticket.id, {
     stage: "qa",
@@ -308,7 +308,7 @@ async function runCodeReviewStage(
   const outcome = await runStageSession(context, ticket, worktree, "code-review", prompt, roundDir);
   // Reviewers are read-only; discard any stray modifications.
   await git(worktree.path, "checkout", "--", ".");
-  const verdict = await readReviewVerdict(outcome.verdictPath, { allowEscalate: false });
+  const verdict = await readReviewVerdict(outcome.verdictPath, { isEscalateAllowed: false });
   context.log.emit("stage_end", ticket.id, {
     stage: "code-review",
     verdict: verdict?.verdict ?? (outcome.ok ? "invalid-verdict" : "session-failed"),

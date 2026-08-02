@@ -76,13 +76,13 @@ export async function readImplementationVerdict(
 
 export async function readReviewVerdict(
   path: string,
-  options: { allowEscalate: boolean },
+  options: { isEscalateAllowed: boolean },
 ): Promise<ReviewVerdict | null> {
   const raw = await readVerdictFile(path);
   if (!raw) return null;
   const verdict = raw.verdict;
   if (verdict !== "pass" && verdict !== "fail" && verdict !== "escalate") return null;
-  if (verdict === "escalate" && !options.allowEscalate) return null;
+  if (verdict === "escalate" && !options.isEscalateAllowed) return null;
   const result: ReviewVerdict = { verdict };
   const feedback = optionalString(raw.feedback);
   if (feedback) result.feedback = feedback;

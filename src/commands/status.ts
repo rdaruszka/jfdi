@@ -2,10 +2,10 @@ import { loadState } from "../events.js";
 import { buildContext } from "./context.js";
 
 /** `jfdi status` — snapshot of state.json for scripts and quick checks. */
-export async function statusCommand(options: { json?: boolean } = {}): Promise<number> {
+export async function statusCommand(options: { shouldEmitJson?: boolean } = {}): Promise<number> {
   const context = await buildContext();
   const state = await loadState(context.stateDir);
-  if (options.json) {
+  if (options.shouldEmitJson) {
     console.log(JSON.stringify(state, null, 2));
     return 0;
   }

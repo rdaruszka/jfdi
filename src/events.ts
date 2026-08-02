@@ -194,7 +194,7 @@ export class EventLog {
 
   constructor(
     private readonly stateDir: string,
-    private readonly persist: boolean = true,
+    private readonly shouldPersist: boolean = true,
   ) {}
 
   get eventsPath(): string {
@@ -221,7 +221,7 @@ export class EventLog {
       ...(data !== undefined ? { data } : {}),
     };
     this.state = reduceEvent(this.state, event);
-    if (this.persist) {
+    if (this.shouldPersist) {
       const snapshot = this.state;
       this.writeChain = this.writeChain.then(async () => {
         await ensureDir(this.stateDir);

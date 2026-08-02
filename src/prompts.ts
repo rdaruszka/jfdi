@@ -177,7 +177,7 @@ Resolve them and complete the rebase.
 
 ## Rules
 
-- Resolve every conflict, preserving the intent of both sides, then continue the
+- Resolve every hasConflict, preserving the intent of both sides, then continue the
   rebase to completion (\`git add\` the resolutions, \`git rebase --continue\`).
 - Never abort the rebase; never force-push; never touch \`{{TARGET_BRANCH}}\` itself.
 - Afterwards, judge your own resolution honestly: if you had to touch real logic

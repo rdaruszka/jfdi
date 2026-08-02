@@ -27,7 +27,7 @@ export async function main(argv: string[]): Promise<number> {
       }
       case "status": {
         const { statusCommand } = await import("./commands/status.js");
-        return await statusCommand({ json: rest.includes("--json") });
+        return await statusCommand({ shouldEmitJson: rest.includes("--json") });
       }
       case "logs": {
         const id = rest[0];
@@ -47,7 +47,7 @@ export async function main(argv: string[]): Promise<number> {
       }
       case "init": {
         const { initCommand } = await import("./commands/init.js");
-        return await initCommand({ bare: rest.includes("--bare") });
+        return await initCommand({ isBare: rest.includes("--bare") });
       }
       case undefined:
       case "help":

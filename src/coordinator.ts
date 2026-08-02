@@ -29,12 +29,12 @@ export class Coordinator {
   private readonly active = new Map<string, Promise<void>>();
   private readonly integrations = new IntegrationQueue();
   private readonly pollMs: number;
-  private stopped = false;
-  private scanning = false;
-  private rescanWanted = false;
+  private isStopped = false;
+  private isScanning = false;
+  private isRescanWanted = false;
   private watcher: ReturnType<typeof watch> | null = null;
   private pollTimer: NodeJS.Timeout | null = null;
-  private lastMtime = 0;
+  private lastMtimeMs = 0;
   readonly sessions = new Set<{ kill(): void }>();
 
   constructor(
@@ -77,7 +77,7 @@ export class Coordinator {
 
   /** Stop watching, kill live sessions. In-flight pipelines settle in the background. */
   stop(): void {
-    this.stopped = true;
+    this.isStopped = true;
     this.watcher?.close();
     if (this.pollTimer) clearInterval(this.pollTimer);
     for (const session of this.sessions) session.kill();
@@ -98,8 +98,8 @@ export class Coordinator {
   private async pollMtime(): Promise<void> {
     try {
       const stat = await fs.stat(this.boardPath);
-      if (stat.mtimeMs !== this.lastMtime) {
-        this.lastMtime = stat.mtimeMs;
+      if (stat.mtimeMs !== this.lastMtimeMs) {
+        this.lastMtimeMs = stat.mtimeMs;
         this.requestScan();
       }
     } catch {
@@ -109,26 +109,26 @@ export class Coordinator {
 
   /** Coalesce scan requests — only one scan runs at a time. */
   requestScan(): void {
-    if (this.stopped) return;
-    if (this.scanning) {
-      this.rescanWanted = true;
+    if (this.isStopped) return;
+    if (this.isScanning) {
+      this.isRescanWanted = true;
       return;
     }
     void this.scan();
   }
 
   private async scan(): Promise<void> {
-    if (this.stopped || this.scanning) return;
-    this.scanning = true;
+    if (this.isStopped || this.isScanning) return;
+    this.isScanning = true;
     try {
       do {
-        this.rescanWanted = false;
+        this.isRescanWanted = false;
         await this.scanOnce();
-      } while (this.rescanWanted && !this.stopped);
+      } while (this.isRescanWanted && !this.isStopped);
     } catch (error) {
       this.context.log.emit("error", undefined, { message: (error as Error).message });
     } finally {
-      this.scanning = false;
+      this.isScanning = false;
     }
   }
 
@@ -244,9 +244,11 @@ export class Coordinator {
     card: Card,
     from: string,
     to: string,
-    checkOff: boolean,
+    shouldCheckOff: boolean,
   ): Promise<void> {
-    const rewrite = checkOff ? { rewriteLine: (l: string) => l.replace("- [ ]", "- [x]") } : {};
+    const rewrite = shouldCheckOff
+      ? { rewriteLine: (l: string) => l.replace("- [ ]", "- [x]") }
+      : {};
     try {
       await moveCard(this.boardPath, card.raw, from, to, rewrite);
     } catch {

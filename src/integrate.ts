@@ -5,7 +5,7 @@ import {
   deleteBranch,
   fastForward,
   isAncestor,
-  rebaseInProgress,
+  isRebaseInProgress,
   rebaseOnto,
   removeWorktree,
   ticketBranch,
@@ -127,7 +127,7 @@ async function resolveConflictedRebase(
   const runDir = path.join(runsDir(context.stateDir, ticket.id), "integration");
   await ensureDir(runDir);
   const verdict = await runIntegrationAgent(context, ticket, worktree, runDir);
-  if (await rebaseInProgress(worktree.path))
+  if (await isRebaseInProgress(worktree.path))
     return {
       status: "blocked",
       reason: "integration agent left the rebase unfinished — resolve manually in the worktree",
@@ -140,7 +140,7 @@ async function resolveConflictedRebase(
   if (!gate.ok)
     return {
       status: "blocked",
-      reason: `gate failed after conflict resolution:\n\n${formatGateFailure(gate)}`,
+      reason: `gate failed after hasConflict resolution:\n\n${formatGateFailure(gate)}`,
     };
 
   if (verdict.resolution !== "complicated") return { status: "resolved", notes };
@@ -178,7 +178,7 @@ export async function integrateTicket(
   const rebase = await rebaseOnto(worktree.path, target);
   let resolutionNote = "";
   if (!rebase.ok) {
-    if (!rebase.conflict) {
+    if (!rebase.hasConflict) {
       const reason = `rebase onto ${target} failed: ${rebase.output.slice(0, MAX_REBASE_ERROR_CHARS)}`;
       return blocked(context, ticket, notePath, reason);
     }
@@ -220,7 +220,7 @@ export async function integrateTicket(
 }
 
 async function cleanup(context: PipelineContext, worktree: Worktree): Promise<void> {
-  await removeWorktree(context.repoRoot, worktree.path, { force: true });
+  await removeWorktree(context.repoRoot, worktree.path, { shouldForce: true });
 }
 
 async function blocked(

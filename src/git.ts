@@ -119,10 +119,10 @@ export async function createWorktree(
 export async function removeWorktree(
   repo: string,
   worktreePath: string,
-  options: { force?: boolean } = {},
+  options: { shouldForce?: boolean } = {},
 ): Promise<void> {
   const args = ["worktree", "remove", worktreePath];
-  if (options.force) args.push("--force");
+  if (options.shouldForce) args.push("--force");
   await gitTry(repo, ...args);
   await gitTry(repo, "worktree", "prune");
 }
@@ -133,20 +133,20 @@ export async function deleteBranch(repo: string, branch: string): Promise<void> 
 
 export interface RebaseResult {
   ok: boolean;
-  conflict: boolean;
+  hasConflict: boolean;
   output: string;
 }
 
-/** Rebase the worktree's branch onto `target`. On conflict the rebase is left in progress. */
+/** Rebase the worktree's branch onto `target`. On hasConflict the rebase is left in progress. */
 export async function rebaseOnto(worktree: string, target: string): Promise<RebaseResult> {
   const result = await gitTry(worktree, "rebase", target);
-  if (result.ok) return { ok: true, conflict: false, output: result.output };
-  const conflict = /CONFLICT|could not apply|needs merge/i.test(result.output);
-  if (!conflict) await gitTry(worktree, "rebase", "--abort");
-  return { ok: false, conflict, output: result.output };
+  if (result.ok) return { ok: true, hasConflict: false, output: result.output };
+  const hasConflict = /CONFLICT|could not apply|needs merge/i.test(result.output);
+  if (!hasConflict) await gitTry(worktree, "rebase", "--abort");
+  return { ok: false, hasConflict, output: result.output };
 }
 
-export async function rebaseInProgress(worktree: string): Promise<boolean> {
+export async function isRebaseInProgress(worktree: string): Promise<boolean> {
   const gitDir = await git(worktree, "rev-parse", "--git-dir");
   const gitDirPath = path.isAbsolute(gitDir) ? gitDir : path.join(worktree, gitDir);
   for (const d of ["rebase-merge", "rebase-apply"]) {
