@@ -21,8 +21,22 @@
       "complexity": {
         "noExcessiveLinesPerFunction": {
           "level": "error",
-          "options": { "maxLines": 100, "skipBlankLines": true }
+          "options": {
+            "maxLines": 100,
+            "skipBlankLines": true
+          }
+        },
+        "noExcessiveCognitiveComplexity": {
+          "level": "error",
+          "options": {
+            "maxAllowedComplexity": 15
+          }
         }
+      },
+      "correctness": {
+        "noUnusedVariables": "error",
+        "noUnusedImports": "error",
+        "noUnusedFunctionParameters": "error"
       },
       "suspicious": {
         "noEmptyBlockStatements": "error",
@@ -34,17 +48,24 @@
       },
       "style": {
         "noParameterAssign": "error",
+        "noNonNullAssertion": "error",
+        "noMagicNumbers": "error",
+        "useReadonlyClassProperties": "error",
         "useNamingConvention": {
           "level": "error",
           "options": {
             "strictCase": false,
             "conventions": [
               {
-                "selector": { "kind": "objectLiteralProperty" },
+                "selector": {
+                  "kind": "objectLiteralProperty"
+                },
                 "formats": ["camelCase", "CONSTANT_CASE", "snake_case"]
               },
               {
-                "selector": { "kind": "typeProperty" },
+                "selector": {
+                  "kind": "typeProperty"
+                },
                 "formats": ["camelCase", "CONSTANT_CASE", "snake_case"]
               }
             ]
@@ -53,7 +74,8 @@
       },
       "nursery": {
         "noFloatingPromises": "error",
-        "noMisusedPromises": "error"
+        "noMisusedPromises": "error",
+        "useExhaustiveSwitchCases": "error"
       }
     }
   },
@@ -70,6 +92,9 @@
         "rules": {
           "complexity": {
             "noExcessiveLinesPerFunction": "off"
+          },
+          "style": {
+            "noMagicNumbers": "off"
           }
         }
       }
