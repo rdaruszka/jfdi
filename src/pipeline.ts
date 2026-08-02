@@ -67,10 +67,10 @@ export function runsDir(stateDir: string, ticketId: string): string {
 
 interface RunDirs {
   /** This dispatch's run-<k> directory. */
-  dir: string;
-  runNumber: number;
+  current: string;
   /** The previous dispatch's directory, or null if this is the ticket's first run. */
-  previousDir: string | null;
+  previous: string | null;
+  runNumber: number;
 }
 
 /** Next run-<k> directory under runs/<ticket>/ (history is kept across dispatches). */
@@ -79,12 +79,12 @@ async function nextRunDir(stateDir: string, ticketId: string): Promise<RunDirs> 
   await ensureDir(base);
   const entries = await fs.readdir(base);
   const runCount = entries.filter((e) => /^run-\d+$/.test(e)).length;
-  const dir = path.join(base, `run-${runCount + 1}`);
-  await ensureDir(dir);
+  const current = path.join(base, `run-${runCount + 1}`);
+  await ensureDir(current);
   return {
-    dir,
+    current,
+    previous: runCount > 0 ? path.join(base, `run-${runCount}`) : null,
     runNumber: runCount + 1,
-    previousDir: runCount > 0 ? path.join(base, `run-${runCount}`) : null,
   };
 }
 
@@ -512,7 +512,7 @@ export async function runPipeline(
     ticket.id,
     target,
   );
-  const runDir = await nextRunDir(context.stateDir, ticket.id);
+  const runDirs = await nextRunDir(context.stateDir, ticket.id);
   context.log.emit("dispatch", ticket.id, { title: ticket.cardText, branch: worktree.branch });
 
   // A re-dispatched ticket may carry partial work and a half-finished git
@@ -526,7 +526,7 @@ export async function runPipeline(
     });
 
   // Why the previous run failed, recovered from disk; `history` is this run's own.
-  const priorHistory = runDir.previousDir ? await loadFeedbackHistory(runDir.previousDir) : [];
+  const priorHistory = runDirs.previous ? await loadFeedbackHistory(runDirs.previous) : [];
   const history: FeedbackItem[] = [];
   const allDecisions: string[] = [];
   const allObservations: string[] = [];
@@ -535,7 +535,7 @@ export async function runPipeline(
 
   for (let round = 1; round <= maxRounds; round++) {
     context.log.emit("round_start", ticket.id, { round });
-    const roundDir = path.join(runDir.dir, `round-${round}`);
+    const roundDir = path.join(runDirs.current, `round-${round}`);
     await ensureDir(roundDir);
 
     const result = await runRound(
@@ -556,19 +556,19 @@ export async function runPipeline(
 
     if (result.step.kind === "retry") {
       history.push({
-        run: runDir.runNumber,
+        run: runDirs.runNumber,
         round,
         source: result.step.source,
         feedback: result.step.feedback,
       });
-      await saveFeedbackHistory(runDir.dir, history);
+      await saveFeedbackHistory(runDirs.current, history);
       continue;
     }
     if (result.step.kind === "blocked") return { status: "blocked", reason: result.step.reason };
 
     // The run finished: earlier rounds' feedback was addressed, so it is no
     // longer unfinished business for a later dispatch to inherit.
-    await saveFeedbackHistory(runDir.dir, []);
+    await saveFeedbackHistory(runDirs.current, []);
     const finalCommit = await revParse(worktree.path, "HEAD");
     return {
       status: "passed",
