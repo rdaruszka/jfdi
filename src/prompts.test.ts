@@ -21,15 +21,18 @@ describe("renderPrompt", () => {
 });
 
 describe("ensurePrompts / loadPrompt", () => {
-  it("seeds all six prompt files", async () => {
+  it("seeds all nine prompt files", async () => {
     await ensurePrompts(dir);
     const files = await fs.readdir(path.join(dir, "prompts"));
     expect(files.sort()).toEqual([
+      "code-review-continue.md",
       "code-review.md",
       "convo.md",
+      "implementation-continue.md",
       "implementation.md",
       "init.md",
       "integration.md",
+      "qa-continue.md",
       "qa.md",
     ]);
   });

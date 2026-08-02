@@ -10,7 +10,7 @@ import type {
 export type FakeHandler = (
   promptSpec: PromptSpec,
   options: SpawnOptions,
-) => Promise<{ ok: boolean; text: string }>;
+) => Promise<{ ok: boolean; text: string; sessionId?: string }>;
 
 /**
  * In-process harness for tests: the handler plays the agent, performing side

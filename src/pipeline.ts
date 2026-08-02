@@ -2,9 +2,9 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { JfdiConfig } from "./config.js";
 import type { EventLog, StageName } from "./events.js";
-import { formatGateFailure, type GateResult, runGate } from "./gate.js";
+import { formatGateFailure, formatGatePass, type GateResult, runGate } from "./gate.js";
 import { commitAllIfDirty, createWorktree, git, revParse, type Worktree } from "./git.js";
-import type { Harness } from "./harness/index.js";
+import type { Harness, HarnessEvent } from "./harness/index.js";
 import { formatGateCommands, loadPrompt, type PromptName, renderPrompt } from "./prompts.js";
 import {
   type FeedbackItem,
@@ -15,9 +15,16 @@ import {
   saveFeedbackHistory,
 } from "./resume.js";
 import { ensureJfdiGitignore } from "./scaffold.js";
+import {
+  collectChangeContext,
+  collectStageDelta,
+  formatContinuationFeedback,
+  formatQaProvenance,
+  formatReviewProvenance,
+} from "./stage-context.js";
 import { appendToSection, ensureTicketNote, type Ticket } from "./tickets.js";
 import { todayIsoDate } from "./util/dates.js";
-import { ensureDir, readIfExists } from "./util/fsx.js";
+import { ensureDir, fileExists, readIfExists } from "./util/fsx.js";
 import { type ReviewVerdict, readImplementationVerdict, readReviewVerdict } from "./verdicts.js";
 
 export interface PipelineContext {
@@ -88,10 +95,50 @@ async function nextRunDir(stateDir: string, ticketId: string): Promise<RunDirs> 
   };
 }
 
+/**
+ * What the pipeline remembers about a stage's most recent session within one
+ * run, so a later round can continue that conversation instead of paying for a
+ * fresh session to re-derive the same context. In-memory only: a re-dispatched
+ * run always starts its stages fresh.
+ */
+export interface StageSessionMemory {
+  /** Absent when the provider never reported an id — the next round runs fresh. */
+  sessionId?: string | undefined;
+  /** The commit the stage last saw; continuation prompts brief the delta since it. */
+  lastSeenCommit?: string | undefined;
+}
+
+type ContinuableStage = "implementation" | "code-review" | "qa";
+
+export type SessionMemory = Partial<Record<ContinuableStage, StageSessionMemory>>;
+
 interface StageOutcome {
   ok: boolean;
   resultText: string;
   verdictPath: string;
+  sessionId?: string;
+}
+
+/** Session progress → TUI activity line; session/result events carry no narration. */
+function narrateSessionActivity(
+  context: PipelineContext,
+  ticketId: string,
+  stage: StageName,
+  event: HarnessEvent,
+): void {
+  if (event.type === "tool") {
+    context.log.emit("session_activity", ticketId, {
+      text: `${stage}: ${event.name}${event.detail ? ` ${event.detail}` : ""}`,
+    });
+    return;
+  }
+  if (event.type === "text") {
+    const line = event.text.split("\n")[0] ?? "";
+    if (line.trim())
+      context.log.emit("session_activity", ticketId, {
+        text: `${stage}: ${line.slice(0, MAX_ACTIVITY_CHARS)}`,
+      });
+  }
 }
 
 async function runStageSession(
@@ -101,31 +148,71 @@ async function runStageSession(
   stage: StageName,
   prompt: string,
   roundDir: string,
+  continueSessionId?: string,
 ): Promise<StageOutcome> {
   const verdictPath = path.join(roundDir, `${stage}.verdict.json`);
   const logPath = path.join(roundDir, `${stage}.log.jsonl`);
-  context.log.emit("stage_start", ticket.id, { stage });
-  const session = context.harness.spawn({ prompt }, { cwd: worktree.path, logPath });
+  context.log.emit("stage_start", ticket.id, {
+    stage,
+    ...(continueSessionId ? { isContinuation: true } : {}),
+  });
+  const session = context.harness.spawn(
+    { prompt },
+    { cwd: worktree.path, logPath, ...(continueSessionId ? { continueSessionId } : {}) },
+  );
   context.sessions?.add(session);
   try {
     for await (const event of session.events) {
-      if (event.type === "tool") {
-        context.log.emit("session_activity", ticket.id, {
-          text: `${stage}: ${event.name}${event.detail ? ` ${event.detail}` : ""}`,
-        });
-      } else if (event.type === "text") {
-        const line = event.text.split("\n")[0] ?? "";
-        if (line.trim())
-          context.log.emit("session_activity", ticket.id, {
-            text: `${stage}: ${line.slice(0, MAX_ACTIVITY_CHARS)}`,
-          });
-      }
+      narrateSessionActivity(context, ticket.id, stage, event);
     }
     const result = await session.done;
-    return { ok: result.ok, resultText: result.text, verdictPath };
+    return {
+      ok: result.ok,
+      resultText: result.text,
+      verdictPath,
+      ...(result.sessionId ? { sessionId: result.sessionId } : {}),
+    };
   } finally {
     context.sessions?.delete(session);
   }
+}
+
+interface ContinuationSpec {
+  sessionId: string;
+  prompt: string;
+}
+
+/**
+ * Run a stage, continuing its previous session when one exists. A continuation
+ * that dies without writing a verdict falls back to one fresh session with the
+ * full prompt — providers forget sessions, and a forgotten session must cost a
+ * fallback, never the round.
+ */
+async function runStageWithFallback(
+  context: PipelineContext,
+  ticket: Ticket,
+  worktree: Worktree,
+  stage: StageName,
+  roundDir: string,
+  freshPrompt: () => Promise<string>,
+  continuation: ContinuationSpec | null,
+): Promise<StageOutcome> {
+  if (continuation) {
+    const outcome = await runStageSession(
+      context,
+      ticket,
+      worktree,
+      stage,
+      continuation.prompt,
+      roundDir,
+      continuation.sessionId,
+    );
+    if (outcome.ok || (await fileExists(outcome.verdictPath))) return outcome;
+    context.log.emit("session_activity", ticket.id, {
+      text: `${stage}: continuation failed; restarting fresh`,
+    });
+  }
+  return runStageSession(context, ticket, worktree, stage, await freshPrompt(), roundDir);
 }
 
 async function stagePrompt(
@@ -218,6 +305,15 @@ async function recordEscalation(
   context.log.emit("escalation", ticket.id, { stage, question, recommendation });
 }
 
+export interface QaStageOptions {
+  /** Rendered into the prompt's gate slot; empty means "say nothing about the gate". */
+  gateSummary?: string | undefined;
+  /** Continue this earlier QA session instead of starting fresh. */
+  previousSession?: StageSessionMemory | undefined;
+  /** Why the branch moved since that session — provenance for the continuation. */
+  previousFailure?: FeedbackItem | undefined;
+}
+
 /** Run QA alone (used post-rebase on a complicated merge). */
 export async function runQaStage(
   context: PipelineContext,
@@ -226,16 +322,37 @@ export async function runQaStage(
   roundDir: string,
   notePath: string,
   round: number,
+  options: QaStageOptions = {},
 ): Promise<{ verdict: ReviewVerdict | null; outcome: StageOutcome }> {
-  const sandbox =
-    (await readIfExists(path.join(context.jfdiDir, "sandbox.md"))) ??
-    "(no sandbox contract found — exercise the artifact as best you can and say so in your feedback)";
+  const target = context.config.integration.target_branch;
   const verdictPath = path.join(roundDir, "qa.verdict.json");
-  const prompt = await stagePrompt(context, "qa", {
+  const vars = {
     ...commonVars(context, ticket, worktree, verdictPath),
-    SANDBOX: sandbox,
-  });
-  const outcome = await runStageSession(context, ticket, worktree, "qa", prompt, roundDir);
+    NOTE_PATH: notePath,
+    GATE_RESULT: options.gateSummary ?? "",
+  };
+  const continuation = await buildQaContinuation(context, worktree, vars, options);
+  const freshPrompt = async () => {
+    const sandbox =
+      (await readIfExists(path.join(context.jfdiDir, "sandbox.md"))) ??
+      "(no sandbox contract found — exercise the artifact as best you can and say so in your feedback)";
+    const change = await collectChangeContext(worktree.path, target);
+    return stagePrompt(context, "qa", {
+      ...vars,
+      SANDBOX: sandbox,
+      COMMIT_LOG: change.commitLog,
+      DIFF_STAT: change.diffStat,
+    });
+  };
+  const outcome = await runStageWithFallback(
+    context,
+    ticket,
+    worktree,
+    "qa",
+    roundDir,
+    freshPrompt,
+    continuation,
+  );
   const verdict = await readReviewVerdict(outcome.verdictPath, { isEscalateAllowed: true });
   if (verdict) await recordDecisions(notePath, "qa", round, verdict.decisions);
   context.log.emit("stage_end", ticket.id, {
@@ -245,39 +362,84 @@ export async function runQaStage(
   return { verdict, outcome };
 }
 
+async function buildQaContinuation(
+  context: PipelineContext,
+  worktree: Worktree,
+  vars: Record<string, string>,
+  options: QaStageOptions,
+): Promise<ContinuationSpec | null> {
+  const { previousSession, previousFailure } = options;
+  if (!previousSession?.sessionId || !previousSession.lastSeenCommit || !previousFailure)
+    return null;
+  const delta = await collectStageDelta(worktree.path, previousSession.lastSeenCommit);
+  const headCommit = await revParse(worktree.path, "HEAD");
+  return {
+    sessionId: previousSession.sessionId,
+    prompt: await stagePrompt(context, "qa-continue", {
+      ...vars,
+      LAST_SEEN_COMMIT: previousSession.lastSeenCommit,
+      HEAD_COMMIT: headCommit,
+      PROVENANCE: formatQaProvenance(previousFailure),
+      NEW_COMMITS: delta.newCommits,
+      TOUCHED_FILES: delta.touchedFiles,
+    }),
+  };
+}
+
 type ImplementationStep =
   | { kind: "done"; summary: string | undefined; decisions: string[]; observations: string[] }
   | { kind: "retry"; feedback: string }
   | { kind: "escalate"; question: string; recommendation: string };
 
+interface ImplementationStageInput {
+  roundDir: string;
+  notePath: string;
+  round: number;
+  history: FeedbackItem[];
+  resume: ResumeState | null;
+  previousSession: StageSessionMemory | undefined;
+}
+
 async function runImplementationStage(
   context: PipelineContext,
   ticket: Ticket,
   worktree: Worktree,
-  roundDir: string,
-  notePath: string,
-  round: number,
-  history: FeedbackItem[],
-  resume: ResumeState | null,
-): Promise<ImplementationStep> {
+  input: ImplementationStageInput,
+): Promise<{ step: ImplementationStep; sessionId: string | undefined }> {
+  const { roundDir, notePath, round, history, resume } = input;
   const verdictPath = path.join(roundDir, "implementation.verdict.json");
-  const prompt = await stagePrompt(context, "implementation", {
-    ...commonVars(context, ticket, worktree, verdictPath),
-    RESUME_SECTION: formatResumeSection(
-      resume,
-      worktree.branch,
-      context.config.integration.target_branch,
-    ),
-    FEEDBACK_SECTION: formatFeedbackSection(history, ticket.mode),
-  });
-  const outcome = await runStageSession(
+  const vars = commonVars(context, ticket, worktree, verdictPath);
+  const previousFailure = history.at(-1);
+  const continuation =
+    input.previousSession?.sessionId && previousFailure
+      ? {
+          sessionId: input.previousSession.sessionId,
+          prompt: await stagePrompt(context, "implementation-continue", {
+            ...vars,
+            FEEDBACK: formatContinuationFeedback(previousFailure),
+          }),
+        }
+      : null;
+  const freshPrompt = () =>
+    stagePrompt(context, "implementation", {
+      ...vars,
+      RESUME_SECTION: formatResumeSection(
+        resume,
+        worktree.branch,
+        context.config.integration.target_branch,
+      ),
+      FEEDBACK_SECTION: formatFeedbackSection(history, ticket.mode),
+    });
+  const outcome = await runStageWithFallback(
     context,
     ticket,
     worktree,
     "implementation",
-    prompt,
     roundDir,
+    freshPrompt,
+    continuation,
   );
+  const sessionId = outcome.sessionId;
   const verdict = await readImplementationVerdict(outcome.verdictPath);
   context.log.emit("stage_end", ticket.id, {
     stage: "implementation",
@@ -285,25 +447,34 @@ async function runImplementationStage(
   });
   if (!verdict) {
     return {
-      kind: "retry",
-      feedback: outcome.ok
-        ? "The previous implementation session ended without writing a valid verdict file. Re-verify the work is complete, committed, and gate-passing, then write the verdict file as instructed."
-        : `The previous implementation session failed: ${outcome.resultText.slice(0, MAX_SESSION_ERROR_CHARS)}`,
+      sessionId,
+      step: {
+        kind: "retry",
+        feedback: outcome.ok
+          ? "The previous implementation session ended without writing a valid verdict file. Re-verify the work is complete, committed, and gate-passing, then write the verdict file as instructed."
+          : `The previous implementation session failed: ${outcome.resultText.slice(0, MAX_SESSION_ERROR_CHARS)}`,
+      },
     };
   }
   const decisions = await recordDecisions(notePath, "implementation", round, verdict.decisions);
   if (verdict.status === "escalate") {
     return {
-      kind: "escalate",
-      question: verdict.question ?? "Escalated without a stated question.",
-      recommendation: verdict.recommendation ?? "(no recommendation given)",
+      sessionId,
+      step: {
+        kind: "escalate",
+        question: verdict.question ?? "Escalated without a stated question.",
+        recommendation: verdict.recommendation ?? "(no recommendation given)",
+      },
     };
   }
   return {
-    kind: "done",
-    summary: verdict.summary,
-    decisions,
-    observations: verdict.observations ?? [],
+    sessionId,
+    step: {
+      kind: "done",
+      summary: verdict.summary,
+      decisions,
+      observations: verdict.observations ?? [],
+    },
   };
 }
 
@@ -311,21 +482,64 @@ type CodeReviewStep =
   | { kind: "pass"; decisions: string[]; observations: string[] }
   | { kind: "retry"; feedback: string };
 
+interface CodeReviewStageInput {
+  roundDir: string;
+  notePath: string;
+  round: number;
+  /** The gate result that admitted this commit to review, quoted into the prompt. */
+  gate: GateResult;
+  headCommit: string;
+  previousSession: StageSessionMemory | undefined;
+  previousFailure: FeedbackItem | undefined;
+}
+
 async function runCodeReviewStage(
   context: PipelineContext,
   ticket: Ticket,
   worktree: Worktree,
-  roundDir: string,
-  notePath: string,
-  round: number,
-): Promise<CodeReviewStep> {
-  const verdictPath = path.join(roundDir, "code-review.verdict.json");
-  const prompt = await stagePrompt(
+  input: CodeReviewStageInput,
+): Promise<{ step: CodeReviewStep; sessionId: string | undefined }> {
+  const target = context.config.integration.target_branch;
+  const verdictPath = path.join(input.roundDir, "code-review.verdict.json");
+  const vars = {
+    ...commonVars(context, ticket, worktree, verdictPath),
+    NOTE_PATH: input.notePath,
+    GATE_RESULT: formatGatePass(input.gate),
+  };
+  const { previousSession, previousFailure } = input;
+  const continuation =
+    previousSession?.sessionId && previousSession.lastSeenCommit && previousFailure
+      ? {
+          sessionId: previousSession.sessionId,
+          prompt: await stagePrompt(context, "code-review-continue", {
+            ...vars,
+            LAST_SEEN_COMMIT: previousSession.lastSeenCommit,
+            HEAD_COMMIT: input.headCommit,
+            PROVENANCE: formatReviewProvenance(previousFailure),
+            ...(await collectStageDelta(worktree.path, previousSession.lastSeenCommit).then(
+              (delta) => ({ NEW_COMMITS: delta.newCommits, TOUCHED_FILES: delta.touchedFiles }),
+            )),
+          }),
+        }
+      : null;
+  const freshPrompt = async () => {
+    const change = await collectChangeContext(worktree.path, target);
+    return stagePrompt(context, "code-review", {
+      ...vars,
+      COMMIT_LOG: change.commitLog,
+      DIFF_STAT: change.diffStat,
+      DIFF_SECTION: change.diffSection,
+    });
+  };
+  const outcome = await runStageWithFallback(
     context,
+    ticket,
+    worktree,
     "code-review",
-    commonVars(context, ticket, worktree, verdictPath),
+    input.roundDir,
+    freshPrompt,
+    continuation,
   );
-  const outcome = await runStageSession(context, ticket, worktree, "code-review", prompt, roundDir);
   // Reviewers are read-only; discard any stray modifications.
   await git(worktree.path, "checkout", "--", ".");
   const verdict = await readReviewVerdict(outcome.verdictPath, { isEscalateAllowed: false });
@@ -335,16 +549,27 @@ async function runCodeReviewStage(
   });
   if (!verdict || verdict.verdict === "fail") {
     return {
-      kind: "retry",
-      feedback:
-        verdict?.feedback ??
-        (verdict
-          ? "Code review failed without specific feedback."
-          : `Code review session did not produce a valid verdict${outcome.ok ? "" : `: ${outcome.resultText.slice(0, MAX_VERDICT_ERROR_CHARS)}`}.`),
+      sessionId: outcome.sessionId,
+      step: {
+        kind: "retry",
+        feedback:
+          verdict?.feedback ??
+          (verdict
+            ? "Code review failed without specific feedback."
+            : `Code review session did not produce a valid verdict${outcome.ok ? "" : `: ${outcome.resultText.slice(0, MAX_VERDICT_ERROR_CHARS)}`}.`),
+      },
     };
   }
-  const decisions = await recordDecisions(notePath, "code-review", round, verdict.decisions);
-  return { kind: "pass", decisions, observations: verdict.observations ?? [] };
+  const decisions = await recordDecisions(
+    input.notePath,
+    "code-review",
+    input.round,
+    verdict.decisions,
+  );
+  return {
+    sessionId: outcome.sessionId,
+    step: { kind: "pass", decisions, observations: verdict.observations ?? [] },
+  };
 }
 
 type RoundStep =
@@ -358,6 +583,8 @@ interface RoundResult {
   decisions: string[];
   observations: string[];
   summary: string | undefined;
+  /** Session memory for the next round: which conversations can be continued. */
+  memory: SessionMemory;
 }
 
 /** The mechanical gate, with its start/result events. Cheapest reviewer, runs first, always. */
@@ -378,21 +605,30 @@ async function runGateStage(
   return gate;
 }
 
+interface RoundInput {
+  roundDir: string;
+  notePath: string;
+  round: number;
+  history: FeedbackItem[];
+  resume: ResumeState | null;
+  memory: SessionMemory;
+}
+
 /**
- * One round: Implementation → gate → Code Review → QA, stopping at the first
- * step that wants another round. Reviews are sequential — Code Review gates QA,
- * so a code-review failure never pays for a sandbox run.
+ * One round: Implementation → gate → Code Review → QA → gate again if QA
+ * committed, stopping at the first step that wants another round. Reviews are
+ * sequential — Code Review gates QA, so a code-review failure never pays for a
+ * sandbox run. Stages that already ran this run are continued, not restarted.
  */
 async function runRound(
   context: PipelineContext,
   ticket: Ticket,
   worktree: Worktree,
-  roundDir: string,
-  notePath: string,
-  round: number,
-  history: FeedbackItem[],
-  resume: ResumeState | null,
+  input: RoundInput,
 ): Promise<RoundResult> {
+  const { roundDir, notePath, round, history, resume } = input;
+  const memory: SessionMemory = { ...input.memory };
+  const previousFailure = history.at(-1);
   const decisions: string[] = [];
   const observations: string[] = [];
   // Nothing has been collected until Implementation returns, so the two exits
@@ -404,31 +640,34 @@ async function runRound(
     summary: undefined,
   });
 
-  const implementation = await runImplementationStage(
-    context,
-    ticket,
-    worktree,
+  const implementation = await runImplementationStage(context, ticket, worktree, {
     roundDir,
     notePath,
     round,
     history,
     resume,
-  );
-  if (implementation.kind === "retry") {
-    const { feedback } = implementation;
-    return { ...nothingCollected(), step: { kind: "retry", source: "implementation", feedback } };
+    previousSession: memory.implementation,
+  });
+  memory.implementation = { sessionId: implementation.sessionId };
+  if (implementation.step.kind === "retry") {
+    const { feedback } = implementation.step;
+    return {
+      ...nothingCollected(),
+      memory,
+      step: { kind: "retry", source: "implementation", feedback },
+    };
   }
-  if (implementation.kind === "escalate") {
-    const { question, recommendation } = implementation;
+  if (implementation.step.kind === "escalate") {
+    const { question, recommendation } = implementation.step;
     await recordEscalation(context, ticket, notePath, "implementation", question, recommendation);
     context.log.emit("blocked", ticket.id, {
       reason: `escalated: ${question.slice(0, MAX_REASON_CHARS)}`,
     });
-    return { ...nothingCollected(), step: { kind: "blocked", reason: question } };
+    return { ...nothingCollected(), memory, step: { kind: "blocked", reason: question } };
   }
-  decisions.push(...implementation.decisions);
-  observations.push(...implementation.observations);
-  const summary = implementation.summary;
+  decisions.push(...implementation.step.decisions);
+  observations.push(...implementation.step.observations);
+  const summary = implementation.step.summary;
   await commitAllIfDirty(worktree.path, `jfdi(${ticket.id}): checkpoint uncommitted work`);
 
   const gate = await runGateStage(context, ticket, worktree);
@@ -437,30 +676,68 @@ async function runRound(
       decisions,
       observations,
       summary,
+      memory,
       step: { kind: "retry", source: "gate", feedback: formatGateFailure(gate) },
     };
 
-  const review = await runCodeReviewStage(context, ticket, worktree, roundDir, notePath, round);
-  if (review.kind === "retry") {
-    const { feedback } = review;
+  const headCommit = await revParse(worktree.path, "HEAD");
+  const review = await runCodeReviewStage(context, ticket, worktree, {
+    roundDir,
+    notePath,
+    round,
+    gate,
+    headCommit,
+    previousSession: memory["code-review"],
+    previousFailure,
+  });
+  memory["code-review"] = { sessionId: review.sessionId, lastSeenCommit: headCommit };
+  if (review.step.kind === "retry") {
+    const { feedback } = review.step;
     return {
       decisions,
       observations,
       summary,
+      memory,
       step: { kind: "retry", source: "code-review", feedback },
     };
   }
-  decisions.push(...review.decisions);
-  observations.push(...review.observations);
+  decisions.push(...review.step.decisions);
+  observations.push(...review.step.observations);
 
-  const qa = await runQaStage(context, ticket, worktree, roundDir, notePath, round);
+  const qa = await runQaStage(context, ticket, worktree, roundDir, notePath, round, {
+    gateSummary: formatGatePass(gate),
+    previousSession: memory.qa,
+    previousFailure,
+  });
+  const qaSeenCommit = await revParse(worktree.path, "HEAD");
+  memory.qa = { sessionId: qa.outcome.sessionId, lastSeenCommit: qaSeenCommit };
   const qaStep = await judgeQa(context, ticket, notePath, qa);
-  if (qaStep.kind === "passed") {
-    decisions.push(...(qa.verdict?.decisions ?? []));
-    observations.push(...(qa.verdict?.observations ?? []));
-    await commitAllIfDirty(worktree.path, `jfdi(${ticket.id}): QA artifacts`);
+  if (qaStep.kind !== "passed") return { decisions, observations, summary, memory, step: qaStep };
+
+  decisions.push(...(qa.verdict?.decisions ?? []));
+  observations.push(...(qa.verdict?.observations ?? []));
+  await commitAllIfDirty(worktree.path, `jfdi(${ticket.id}): QA artifacts`);
+  // QA's committed tests are code the reviewed gate never saw. Re-running the
+  // gate here is the pipeline's job, not QA's — a session re-running a suite
+  // the machine can run for free is wasted context.
+  const qaHead = await revParse(worktree.path, "HEAD");
+  if (qaHead !== headCommit) {
+    memory.qa = { sessionId: qa.outcome.sessionId, lastSeenCommit: qaHead };
+    const postQaGate = await runGateStage(context, ticket, worktree);
+    if (!postQaGate.ok)
+      return {
+        decisions,
+        observations,
+        summary,
+        memory,
+        step: {
+          kind: "retry",
+          source: "gate",
+          feedback: `The mechanical gate failed after QA committed its tests.\n\n${formatGateFailure(postQaGate)}`,
+        },
+      };
   }
-  return { decisions, observations, summary, step: qaStep };
+  return { decisions, observations, summary, memory, step: qaStep };
 }
 
 /** Turn a QA outcome into the round's verdict, recording an escalation if that's what it is. */
@@ -495,6 +772,8 @@ async function judgeQa(
  * The per-ticket pipeline: Implementation → mechanical gate → Code Review → QA,
  * with feedback rounds. Reviews are sequential — Code Review gates QA — and both
  * sign-offs bind to a commit: any fix round re-enters at the gate and repeats both.
+ * Round 1 of every stage is a fresh session; later rounds continue the stage's
+ * own session so it keeps its context instead of re-deriving it.
  */
 export async function runPipeline(
   context: PipelineContext,
@@ -531,6 +810,7 @@ export async function runPipeline(
   const allDecisions: string[] = [];
   const allObservations: string[] = [];
   let summary = "";
+  let memory: SessionMemory = {};
   const maxRounds = context.config.pipeline.max_rounds;
 
   for (let round = 1; round <= maxRounds; round++) {
@@ -538,18 +818,17 @@ export async function runPipeline(
     const roundDir = path.join(runDirs.current, `round-${round}`);
     await ensureDir(roundDir);
 
-    const result = await runRound(
-      context,
-      ticket,
-      worktree,
+    const result = await runRound(context, ticket, worktree, {
       roundDir,
       notePath,
       round,
-      [...priorHistory, ...history],
+      history: [...priorHistory, ...history],
       // Only the first session of the run inherits an interrupted state; later
       // rounds work on top of commits this run made itself.
-      round === 1 ? resume : null,
-    );
+      resume: round === 1 ? resume : null,
+      memory,
+    });
+    memory = result.memory;
     allDecisions.push(...result.decisions);
     allObservations.push(...result.observations);
     summary = result.summary ?? summary;

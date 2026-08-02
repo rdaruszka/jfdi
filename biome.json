@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!dist", "!node_modules", "!fixtures"]
+    "includes": ["**", "!dist", "!node_modules", "!fixtures", "!.jfdi/worktrees"]
   },
   "formatter": {
     "enabled": true,

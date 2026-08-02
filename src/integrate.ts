@@ -103,7 +103,10 @@ async function requalifyAfterMerge(
   context.log.emit("complicated_merge", ticket.id, { notes });
   const qaDir = path.join(runDir, "requalify");
   await ensureDir(qaDir);
-  const qa = await runQaStage(context, ticket, worktree, qaDir, notePath, 0);
+  const qa = await runQaStage(context, ticket, worktree, qaDir, notePath, 0, {
+    gateSummary:
+      "The branch was just rebased with conflict resolutions; the pipeline re-runs the full mechanical gate after your session — do not run it yourself.",
+  });
   if (qa.verdict?.verdict !== "pass") {
     const detail = qa.verdict?.feedback ?? qa.verdict?.question ?? "no valid verdict";
     return { status: "blocked", reason: `post-merge QA did not pass: ${detail}` };

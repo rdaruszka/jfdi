@@ -35,10 +35,15 @@ describe("scaffoldJfdi", () => {
     ]);
     const stats = await fs.stat(path.join(jfdiDir, "tickets"));
     expect(stats.isDirectory()).toBe(true);
-    expect(await fs.readdir(path.join(jfdiDir, "prompts"))).toHaveLength(6);
+    expect(await fs.readdir(path.join(jfdiDir, "prompts"))).toHaveLength(9);
     expect(await fs.readFile(path.join(jfdiDir, "sandbox.md"), "utf8")).toContain(
       "Sandbox Contract",
     );
+    // Hook config for JFDI-spawned Claude sessions: format-on-edit.
+    const settings = await fs.readFile(path.join(jfdiDir, "claude-settings.json"), "utf8");
+    expect(JSON.parse(settings).hooks.PostToolUse[0].matcher).toBe("Edit|Write");
+    const hookStats = await fs.stat(path.join(jfdiDir, "hooks", "format.sh"));
+    expect(hookStats.mode & 0o100).toBeTruthy();
     const ignore = await fs.readFile(path.join(jfdiDir, ".gitignore"), "utf8");
     // Worktrees plus the board and tickets — work tracking stays out of
     // product history (spec §2). "tickets" has no trailing slash so the

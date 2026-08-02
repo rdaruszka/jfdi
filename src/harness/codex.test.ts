@@ -30,6 +30,11 @@ describe("mapCodexLine", () => {
   it("ignores unparseable lines", () => {
     expect(mapCodexLine("not json")).toEqual([]);
   });
+
+  it("maps the thread id used to resume the session later", () => {
+    const line = JSON.stringify({ type: "thread.started", thread_id: "thread-9" });
+    expect(mapCodexLine(line)).toEqual([{ type: "session", sessionId: "thread-9" }]);
+  });
 });
 
 describe("CodexHarness subprocess", () => {
@@ -107,5 +112,38 @@ describe("CodexHarness subprocess", () => {
     ).done;
     expect(result.ok).toBe(false);
     expect(result.exitCode).not.toBe(0);
+  });
+
+  it("resolves with the thread id so the pipeline can continue the session", async () => {
+    const executable = await stubCodex([
+      { type: "thread.started", thread_id: "thread-1" },
+      { type: "item.completed", item: { type: "agent_message", text: "done" } },
+    ]);
+    const result = await new CodexHarness(executable).spawn(
+      { prompt: "first line\nsecond line with spaces" },
+      { cwd: dir },
+    ).done;
+    expect(result.sessionId).toBe("thread-1");
+  });
+
+  it("runs `exec resume` when continuing an earlier session", async () => {
+    const script = path.join(dir, "fake-codex-resume");
+    const body = [
+      "#!/bin/sh",
+      '[ "$1" = "exec" ] || exit 91',
+      '[ "$2" = "resume" ] || exit 92',
+      '[ "$3" = "--json" ] || exit 93',
+      '[ "$4" = "--dangerously-bypass-approvals-and-sandbox" ] || exit 94',
+      '[ "$5" = "thread-7" ] || exit 95',
+      '[ "$6" = "go on" ] || exit 96',
+      `echo '${JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "continued" } })}'`,
+    ].join("\n");
+    await fs.writeFile(script, `${body}\n`, { mode: 0o755 });
+    const result = await new CodexHarness(script).spawn(
+      { prompt: "go on" },
+      { cwd: dir, continueSessionId: "thread-7" },
+    ).done;
+    expect(result.ok).toBe(true);
+    expect(result.text).toBe("continued");
   });
 });

@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { createWriteStream, mkdirSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync } from "node:fs";
 import * as path from "node:path";
 import * as readline from "node:readline";
 import { EXIT_COMMAND_NOT_EXECUTABLE } from "../util/exit-codes.js";
@@ -26,6 +26,7 @@ interface ClaudeStreamLine {
   subtype?: string;
   result?: string;
   is_error?: boolean;
+  session_id?: string;
   message?: {
     content?: Array<{ type?: string; text?: string; name?: string; input?: unknown }>;
   };
@@ -60,14 +61,20 @@ export function mapClaudeLine(line: string): HarnessEvent[] {
   if (parsed.type === "assistant") {
     return (parsed.message?.content ?? []).flatMap(mapAssistantBlock);
   }
+  // A continued session gets a fresh id, so the init line and the result line
+  // both report it; the last one seen wins.
+  if (parsed.type === "system" && parsed.subtype === "init" && parsed.session_id) {
+    return [{ type: "session", sessionId: parsed.session_id }];
+  }
   if (parsed.type === "result") {
-    return [
-      {
-        type: "result",
-        ok: parsed.subtype === "success" && !parsed.is_error,
-        text: parsed.result ?? "",
-      },
-    ];
+    const events: HarnessEvent[] = [];
+    if (parsed.session_id) events.push({ type: "session", sessionId: parsed.session_id });
+    events.push({
+      type: "result",
+      ok: parsed.subtype === "success" && !parsed.is_error,
+      text: parsed.result ?? "",
+    });
+    return events;
   }
   return [];
 }
@@ -104,6 +111,11 @@ export class ClaudeHarness implements Harness {
       "--permission-mode",
       "bypassPermissions",
     ];
+    if (options.continueSessionId) args.push("--resume", options.continueSessionId);
+    // Per-project hook config (PostToolUse formatter etc.), scoped to
+    // JFDI-spawned sessions only — never the target project's own .claude/.
+    const settingsPath = path.join(options.cwd, ".jfdi", "claude-settings.json");
+    if (existsSync(settingsPath)) args.push("--settings", settingsPath);
     const child: ChildProcess = spawn(this.executable, args, {
       cwd: options.cwd,
       stdio: ["ignore", "pipe", "pipe"],
@@ -122,6 +134,7 @@ export class ClaudeHarness implements Harness {
     let notify: (() => void) | null = null;
     let hasEnded = false;
     let result: HarnessResult | null = null;
+    let sessionId: string | undefined;
 
     const push = (event: HarnessEvent) => {
       queue.push(event);
@@ -134,6 +147,7 @@ export class ClaudeHarness implements Harness {
     stdoutLines?.on("line", (line) => {
       log?.write(`${line}\n`);
       for (const event of mapClaudeLine(line)) {
+        if (event.type === "session") sessionId = event.sessionId;
         if (event.type === "result") result = { ok: event.ok, text: event.text, exitCode: 0 };
         push(event);
       }
@@ -153,17 +167,15 @@ export class ClaudeHarness implements Harness {
       child.on("close", (code) => {
         hasEnded = true;
         log?.end();
-        if (result && code === 0) {
-          resolve({ ...result, exitCode: 0 });
-        } else {
-          resolve({
-            ok: false,
-            text:
-              result?.text ??
-              `harness exited with code ${code ?? "?"}${stderrTail ? `\nstderr: ${stderrTail.trim()}` : ""}`,
-            exitCode: code ?? 1,
-          });
-        }
+        const closed: HarnessResult =
+          result && code === 0
+            ? { ...result, exitCode: 0 }
+            : {
+                ok: false,
+                text: result?.text ?? exitText(code, stderrTail),
+                exitCode: code ?? 1,
+              };
+        resolve(withSession(closed, sessionId));
         notify?.();
       });
     });
@@ -221,4 +233,13 @@ function interactiveResult(child: ChildProcess, executable: string): Promise<num
 function openLog(logPath: string) {
   mkdirSync(path.dirname(logPath), { recursive: true });
   return createWriteStream(logPath, { flags: "a" });
+}
+
+/** Attach the provider's session id to a result when one was reported. */
+function withSession(result: HarnessResult, sessionId: string | undefined): HarnessResult {
+  return sessionId ? { ...result, sessionId } : result;
+}
+
+function exitText(code: number | null, stderrTail: string): string {
+  return `harness exited with code ${code ?? "?"}${stderrTail ? `\nstderr: ${stderrTail.trim()}` : ""}`;
 }

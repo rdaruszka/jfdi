@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { JfdiEvent } from "./events.js";
 import { createWorktree, git, isRebaseInProgress, rebaseOnto } from "./git.js";
+import type { FakeHandler } from "./harness/fake.js";
 import { runPipeline } from "./pipeline.js";
 import { commitFile, type Fixture, makeFixture, stageOf, writeVerdict } from "./test-helpers.js";
 import { resolveTicket } from "./tickets.js";
@@ -396,6 +397,214 @@ describe("runPipeline", () => {
       hasCheckpointedChanges: true,
       hasAbortedRebase: true,
     });
+  });
+
+  it("fresh reviewer and QA prompts carry the injected change context", async () => {
+    let reviewPrompt = "";
+    let qaPrompt = "";
+    const context = fixture.context(async (spec, options) => {
+      const stage = stageOf(spec.prompt);
+      if (stage === "implementation") {
+        await commitFile(options.cwd, "impl.txt", "the feature\n", "implement the feature");
+        await writeVerdict(spec.prompt, { status: "done" });
+      } else {
+        if (stage === "code-review") reviewPrompt = spec.prompt;
+        if (stage === "qa") qaPrompt = spec.prompt;
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    });
+    const ticket = await resolveTicket("Injected context", fixture.ticketsDir);
+    expect((await runPipeline(context, ticket)).status).toBe("passed");
+
+    // The reviewer starts holding the facts it used to burn turns fetching:
+    // gate outcome, commit log, diffstat, inline diff, and the ticket note.
+    expect(reviewPrompt).toContain("gate has already passed");
+    expect(reviewPrompt).toContain("check ✓");
+    expect(reviewPrompt).toContain("implement the feature");
+    expect(reviewPrompt).toContain("impl.txt");
+    expect(reviewPrompt).toContain("```diff");
+    expect(reviewPrompt).toContain(`${ticket.id}.md`);
+    // QA gets the same gate trust plus the change summary (no inline diff —
+    // its checks derive from the ticket).
+    expect(qaPrompt).toContain("gate has already passed");
+    expect(qaPrompt).toContain("implement the feature");
+    expect(qaPrompt).not.toContain("```diff");
+  });
+
+  it("later rounds continue the stage sessions instead of restarting them", async () => {
+    const spawns: Array<{ stage: string; continueSessionId: string | undefined }> = [];
+    let implementationCalls = 0;
+    let reviewCalls = 0;
+    const context = fixture.context(async (spec, options) => {
+      const stage = stageOf(spec.prompt);
+      spawns.push({ stage, continueSessionId: options.continueSessionId });
+      switch (stage) {
+        case "implementation":
+          implementationCalls++;
+          if (implementationCalls === 2) {
+            // The continued author gets the reviewer's feedback, not the ticket again.
+            expect(spec.prompt).toContain("Your implementation session is being continued");
+            expect(spec.prompt).toContain("rename the helper");
+            expect(spec.prompt).not.toContain("Implement the ticket below completely");
+          }
+          await commitFile(options.cwd, "impl.txt", `v${implementationCalls}\n`, "fix helper");
+          await writeVerdict(spec.prompt, { status: "done" });
+          return { ok: true, text: "", sessionId: `impl-session-${implementationCalls}` };
+        case "code-review":
+          reviewCalls++;
+          if (reviewCalls === 2) {
+            // The continued reviewer is briefed on the delta, not re-deriving it.
+            expect(spec.prompt).toContain("Your code-review session is being continued");
+            expect(spec.prompt).toContain("feedback YOU gave");
+            expect(spec.prompt).toContain("impl.txt");
+          }
+          await writeVerdict(
+            spec.prompt,
+            reviewCalls === 1
+              ? { verdict: "fail", feedback: "rename the helper" }
+              : { verdict: "pass" },
+          );
+          return { ok: true, text: "", sessionId: `review-session-${reviewCalls}` };
+        case "qa":
+          await writeVerdict(spec.prompt, { verdict: "pass" });
+          return { ok: true, text: "", sessionId: "qa-session-1" };
+        default:
+          throw new Error("unexpected");
+      }
+    });
+
+    const ticket = await resolveTicket("Continue me", fixture.ticketsDir);
+    expect((await runPipeline(context, ticket)).status).toBe("passed");
+    expect(spawns).toEqual([
+      { stage: "implementation", continueSessionId: undefined },
+      { stage: "code-review", continueSessionId: undefined },
+      { stage: "implementation", continueSessionId: "impl-session-1" },
+      { stage: "code-review", continueSessionId: "review-session-1" },
+      { stage: "qa", continueSessionId: undefined },
+    ]);
+  });
+
+  it("a continued reviewer that passed last round is told the change was QA-driven", async () => {
+    let reviewCalls = 0;
+    let qaCalls = 0;
+    let secondReviewPrompt = "";
+    let secondQaPrompt = "";
+    const context = fixture.context(async (spec, options) => {
+      const stage = stageOf(spec.prompt);
+      switch (stage) {
+        case "implementation":
+          await commitFile(options.cwd, "impl.txt", `${Math.random()}\n`, "implement");
+          await writeVerdict(spec.prompt, { status: "done" });
+          return { ok: true, text: "", sessionId: "impl-1" };
+        case "code-review":
+          reviewCalls++;
+          if (reviewCalls === 2) secondReviewPrompt = spec.prompt;
+          await writeVerdict(spec.prompt, { verdict: "pass" });
+          return { ok: true, text: "", sessionId: `review-${reviewCalls}` };
+        case "qa":
+          qaCalls++;
+          if (qaCalls === 2) {
+            secondQaPrompt = spec.prompt;
+            expect(options.continueSessionId).toBe("qa-1");
+          }
+          await writeVerdict(
+            spec.prompt,
+            qaCalls === 1
+              ? { verdict: "fail", feedback: "the flag is ignored on empty input" }
+              : { verdict: "pass" },
+          );
+          return { ok: true, text: "", sessionId: `qa-${qaCalls}` };
+        default:
+          throw new Error("unexpected");
+      }
+    });
+
+    const ticket = await resolveTicket("QA driven fix", fixture.ticketsDir);
+    expect((await runPipeline(context, ticket)).status).toBe("passed");
+    expect(secondReviewPrompt).toContain("you PASSED your previous review");
+    expect(secondReviewPrompt).toContain("the flag is ignored on empty input");
+    expect(secondQaPrompt).toContain("failures YOU reported");
+  });
+
+  it("a continuation the provider forgot falls back to one fresh session", async () => {
+    const implementationSpawns: Array<string | undefined> = [];
+    let reviewCalls = 0;
+    const implementationTurn: FakeHandler = async (spec, options) => {
+      implementationSpawns.push(options.continueSessionId);
+      if (options.continueSessionId) {
+        // The provider forgot the session: die without writing a verdict.
+        return { ok: false, text: "no conversation found with session id" };
+      }
+      if (implementationSpawns.length > 1) {
+        // The fallback is the full fresh prompt, feedback included.
+        expect(spec.prompt).toContain("Implement the ticket below completely");
+        expect(spec.prompt).toContain("rename the helper");
+      }
+      await commitFile(options.cwd, "impl.txt", `${implementationSpawns.length}\n`, "attempt");
+      await writeVerdict(spec.prompt, { status: "done" });
+      return { ok: true, text: "", sessionId: "impl-1" };
+    };
+    const context = fixture.context(async (spec, options) => {
+      const stage = stageOf(spec.prompt);
+      if (stage === "implementation") return implementationTurn(spec, options);
+      if (stage === "code-review") {
+        reviewCalls++;
+        await writeVerdict(
+          spec.prompt,
+          reviewCalls === 1
+            ? { verdict: "fail", feedback: "rename the helper" }
+            : { verdict: "pass" },
+        );
+        return { ok: true, text: "" };
+      }
+      await writeVerdict(spec.prompt, { verdict: "pass" });
+      return { ok: true, text: "" };
+    });
+
+    const ticket = await resolveTicket("Forgetful provider", fixture.ticketsDir);
+    expect((await runPipeline(context, ticket)).status).toBe("passed");
+    // Round 1 fresh, round 2 continuation (fails), round 2 fresh fallback.
+    expect(implementationSpawns).toEqual([undefined, "impl-1", undefined]);
+  });
+
+  it("the gate re-runs mechanically after QA commits tests, and a failure costs the round", async () => {
+    // The gate rejects any committed qa-broken.txt — QA's test commit breaks it.
+    await fixture.cleanup();
+    fixture = await makeFixture({
+      gate: [{ name: "check", cmd: "test -f impl.txt && test ! -f qa-broken.txt" }],
+    });
+    let qaCalls = 0;
+    let implementationCalls = 0;
+    const context = fixture.context(async (spec, options) => {
+      const stage = stageOf(spec.prompt);
+      if (stage === "implementation") {
+        implementationCalls++;
+        if (implementationCalls === 1) {
+          await commitFile(options.cwd, "impl.txt", "x\n", "implement");
+        } else {
+          expect(spec.prompt).toContain("gate failed after QA committed its tests");
+          await commitFile(options.cwd, "qa-broken.txt.gone", "fixed\n", "remove broken qa file");
+          await git(options.cwd, "rm", "-q", "qa-broken.txt");
+          await git(options.cwd, "commit", "-qm", "drop broken qa test");
+        }
+        await writeVerdict(spec.prompt, { status: "done" });
+      } else if (stage === "qa") {
+        qaCalls++;
+        if (qaCalls === 1) await commitFile(options.cwd, "qa-broken.txt", "boom\n", "qa tests");
+        await writeVerdict(spec.prompt, { verdict: "pass", testsAdded: "one" });
+      } else {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    });
+
+    const ticket = await resolveTicket("QA broke the gate", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    expect(outcome.status).toBe("passed");
+    if (outcome.status === "passed") expect(outcome.report.rounds).toBe(2);
+    expect(implementationCalls).toBe(2);
+    expect(qaCalls).toBe(2);
   });
 
   it("a session that never writes a verdict burns a round with feedback", async () => {

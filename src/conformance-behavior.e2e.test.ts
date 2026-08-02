@@ -261,17 +261,22 @@ describe("CLI surface", () => {
       expect(entries.sort()).toEqual([
         ".gitignore",
         "board.md",
+        "claude-settings.json",
         "config.json",
+        "hooks",
         "prompts",
         "sandbox.md",
         "tickets",
       ]);
       expect((await fs.readdir(path.join(jfdiDir, "prompts"))).sort()).toEqual([
+        "code-review-continue.md",
         "code-review.md",
         "convo.md",
+        "implementation-continue.md",
         "implementation.md",
         "init.md",
         "integration.md",
+        "qa-continue.md",
         "qa.md",
       ]);
 

@@ -64,8 +64,11 @@ export async function makeFixture(configOverrides: Partial<JfdiConfig> = {}): Pr
 /** Which pipeline stage a prompt belongs to (matched on each default's task statement). */
 export function stageOf(prompt: string): "implementation" | "code-review" | "qa" | "integration" {
   if (prompt.includes("Implement the ticket below completely")) return "implementation";
+  if (prompt.includes("Your implementation session is being continued")) return "implementation";
   if (prompt.includes("pure code standpoint")) return "code-review";
+  if (prompt.includes("Your code-review session is being continued")) return "code-review";
   if (prompt.includes("Derive your checks from the ticket")) return "qa";
+  if (prompt.includes("Your QA session is being continued")) return "qa";
   if (prompt.includes("has hit conflicts")) return "integration";
   throw new Error(`cannot determine stage from prompt: ${prompt.slice(0, 100)}`);
 }

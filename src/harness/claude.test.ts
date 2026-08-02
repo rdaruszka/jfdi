@@ -42,6 +42,21 @@ describe("mapClaudeLine", () => {
   it("ignores unparseable lines", () => {
     expect(mapClaudeLine("not json")).toEqual([]);
   });
+
+  it("maps the session id from init and result lines", () => {
+    const initLine = JSON.stringify({ type: "system", subtype: "init", session_id: "abc-123" });
+    expect(mapClaudeLine(initLine)).toEqual([{ type: "session", sessionId: "abc-123" }]);
+    const resultLine = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      result: "done",
+      session_id: "def-456",
+    });
+    expect(mapClaudeLine(resultLine)).toEqual([
+      { type: "session", sessionId: "def-456" },
+      { type: "result", ok: true, text: "done" },
+    ]);
+  });
 });
 
 describe("ClaudeHarness subprocess", () => {
@@ -113,5 +128,51 @@ describe("ClaudeHarness subprocess", () => {
     const result = await session.done;
     expect(result.ok).toBe(false);
     expect(result.text).toContain("failed to spawn");
+  });
+
+  it("resolves with the session id so the pipeline can continue the session", async () => {
+    const exe = await stubClaude([
+      { type: "system", subtype: "init", session_id: "session-1" },
+      { type: "result", subtype: "success", result: "ok", session_id: "session-1" },
+    ]);
+    const result = await new ClaudeHarness(exe).spawn(
+      { prompt: "first line\nsecond line with spaces" },
+      { cwd: dir },
+    ).done;
+    expect(result.sessionId).toBe("session-1");
+  });
+
+  it("passes --resume when continuing an earlier session", async () => {
+    const script = path.join(dir, "fake-claude-resume");
+    const body = [
+      "#!/bin/sh",
+      '[ "$8" = "--resume" ] || exit 96',
+      '[ "$9" = "old-session" ] || exit 97',
+      `echo '${JSON.stringify({ type: "result", subtype: "success", result: "continued" })}'`,
+    ].join("\n");
+    await fs.writeFile(script, `${body}\n`, { mode: 0o755 });
+    const result = await new ClaudeHarness(script).spawn(
+      { prompt: "go on" },
+      { cwd: dir, continueSessionId: "old-session" },
+    ).done;
+    expect(result.ok).toBe(true);
+    expect(result.text).toBe("continued");
+  });
+
+  it("passes --settings when the worktree carries .jfdi/claude-settings.json", async () => {
+    const settingsPath = path.join(dir, ".jfdi", "claude-settings.json");
+    await fs.mkdir(path.dirname(settingsPath), { recursive: true });
+    await fs.writeFile(settingsPath, "{}");
+    const script = path.join(dir, "fake-claude-settings");
+    const body = [
+      "#!/bin/sh",
+      '[ "$8" = "--settings" ] || exit 96',
+      `[ "$9" = "${settingsPath}" ] || exit 97`,
+      `echo '${JSON.stringify({ type: "result", subtype: "success", result: "hooked" })}'`,
+    ].join("\n");
+    await fs.writeFile(script, `${body}\n`, { mode: 0o755 });
+    const result = await new ClaudeHarness(script).spawn({ prompt: "p" }, { cwd: dir }).done;
+    expect(result.ok).toBe(true);
+    expect(result.text).toBe("hooked");
   });
 });

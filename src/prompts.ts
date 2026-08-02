@@ -1,7 +1,16 @@
 import * as path from "node:path";
 import { atomicWrite, fileExists, readIfExists } from "./util/fsx.js";
 
-export type PromptName = "implementation" | "code-review" | "qa" | "integration" | "convo" | "init";
+export type PromptName =
+  | "implementation"
+  | "implementation-continue"
+  | "code-review"
+  | "code-review-continue"
+  | "qa"
+  | "qa-continue"
+  | "integration"
+  | "convo"
+  | "init";
 
 const COMMON_POSTURE = `## Working posture
 
@@ -81,11 +90,26 @@ Schema:
 conventions, maintainability, test quality. Functionality is NOT in scope here;
 the change's behavior is validated separately.
 
-Inspect the change with: \`git diff {{TARGET_BRANCH}}...HEAD\` (and read files as needed).
-
 ## Ticket: {{TICKET_ID}}
 
 {{SPEC}}
+
+The ticket note (the implementer's logged Decisions and open Questions) is at:
+{{NOTE_PATH}}
+
+## Change under review
+
+{{GATE_RESULT}}
+
+Commits on this branch:
+
+{{COMMIT_LOG}}
+
+Diffstat:
+
+{{DIFF_STAT}}
+
+{{DIFF_SECTION}}
 
 ## Rules
 
@@ -94,6 +118,7 @@ Inspect the change with: \`git diff {{TARGET_BRANCH}}...HEAD\` (and read files a
   question to answer about the diff, not background prose.
 - Do not modify any files — review only; you are not the author.
 - Anything a linter/formatter already enforces is out of scope; don't relitigate it.
+- Trust the gate result above — never re-run build/test/lint commands yourself.
 - Fail only for issues that materially hurt the codebase; nitpicks belong in feedback
   as optional notes, not failure grounds.
 
@@ -137,6 +162,21 @@ not from the diff.
 
 {{SPEC}}
 
+The ticket note (the implementer's logged Decisions and open Questions) is at:
+{{NOTE_PATH}}
+
+## What changed
+
+{{GATE_RESULT}}
+
+Commits on this branch:
+
+{{COMMIT_LOG}}
+
+Diffstat:
+
+{{DIFF_STAT}}
+
 ## Sandbox contract
 
 How to build, launch, drive, and tear down the product under test:
@@ -149,8 +189,9 @@ How to build, launch, drive, and tear down the product under test:
 - Encode what you verified as automated end-to-end/regression tests, committed on this
   branch — future runs must cover this behavior mechanically. Old behavior is already
   covered by the existing suite; focus manual exercise on the new surface.
-- Run the mechanical gate after committing tests; it must still pass:
-{{GATE_COMMANDS}}
+- Run the tests you add to prove they pass, but do NOT re-run the full mechanical
+  gate — it already passed on the reviewed commit, and the pipeline re-runs it
+  mechanically after your session; a failure comes straight back to this ticket.
 - Leave the working tree clean — tests committed, scratch artifacts removed.
 
 ${COMMON_POSTURE}
@@ -162,6 +203,104 @@ Schema:
   "verdict": "pass" | "fail" | "escalate",
   "feedback": "when failing: what behavior is wrong or missing, with reproduction steps",
   "testsAdded": "summary of the automated tests you committed",
+  "decisions": ["judgment call you made", ...],
+  "observations": ["out-of-scope problem you noticed (not grounds for this verdict)", ...],
+  "question": "only when escalating",
+  "recommendation": "only when escalating: your recommended answer"
+}`,
+
+  "implementation-continue": `Your implementation session is being continued: the work you
+submitted did not clear the pipeline. Address the feedback below, then finish the same
+way as before.
+
+## What happened
+
+{{FEEDBACK}}
+
+## Rules (unchanged from your original instructions)
+
+- Address every item with NEW commits — never amend or squash commits a reviewer has
+  already seen. Leave the working tree clean.
+- The mechanical gate must pass before you finish. Run it yourself and fix failures:
+{{GATE_COMMANDS}}
+- Stay inside this worktree; touch no branch other than \`{{BRANCH}}\`.
+
+${VERDICT_INSTRUCTIONS}
+
+Schema (same as your previous verdict):
+{
+  "status": "done" | "escalate",
+  "summary": "one-paragraph summary of what you changed this round",
+  "decisions": ["autonomous choice you made and why", ...],
+  "observations": ["out-of-scope issue worth its own ticket — never fixed inline", ...],
+  "question": "only when escalating: the precise question",
+  "recommendation": "only when escalating: your recommended answer"
+}`,
+
+  "code-review-continue": `Your code-review session is being continued: the branch has new
+commits since the commit you last reviewed ({{LAST_SEEN_COMMIT}}).
+
+{{PROVENANCE}}
+
+## What changed since your last review
+
+{{GATE_RESULT}}
+
+New commits:
+
+{{NEW_COMMITS}}
+
+Files touched:
+
+{{TOUCHED_FILES}}
+
+## Your job now
+
+Re-review the branch as it now stands — same standards, same checklist as before. Your
+sign-off binds to the current HEAD ({{HEAD_COMMIT}}): judge the full diff against
+\`{{TARGET_BRANCH}}\`, with attention on the new commits. Do not modify any files.
+
+${VERDICT_INSTRUCTIONS}
+
+Schema (same as your previous verdict):
+{
+  "verdict": "pass" | "fail",
+  "feedback": "when failing: specific, actionable items for the author",
+  "decisions": ["judgment call you made", ...],
+  "observations": ["out-of-scope issue worth its own ticket (not failure grounds)", ...]
+}`,
+
+  "qa-continue": `Your QA session is being continued: the branch has new commits since the
+commit you last validated ({{LAST_SEEN_COMMIT}}).
+
+{{PROVENANCE}}
+
+## What changed since your last validation
+
+{{GATE_RESULT}}
+
+New commits:
+
+{{NEW_COMMITS}}
+
+Files touched:
+
+{{TOUCHED_FILES}}
+
+## Your job now
+
+Re-validate the behavior against the ticket, per your original instructions and the
+sandbox contract you already have. Commit any new or updated regression tests. Do NOT
+re-run the full mechanical gate — the pipeline re-runs it after your session. Your
+sign-off binds to the current HEAD ({{HEAD_COMMIT}}).
+
+${VERDICT_INSTRUCTIONS}
+
+Schema (same as your previous verdict):
+{
+  "verdict": "pass" | "fail" | "escalate",
+  "feedback": "when failing: what behavior is wrong or missing, with reproduction steps",
+  "testsAdded": "summary of the automated tests you committed this round",
   "decisions": ["judgment call you made", ...],
   "observations": ["out-of-scope problem you noticed (not grounds for this verdict)", ...],
   "question": "only when escalating",
@@ -222,8 +361,12 @@ with defaults. Your job is to make it real:
    human where taste is involved.
 4. Write .jfdi/sandbox.md: how QA should build, launch, drive, and tear down this
    product (invocation patterns, expected outputs, scratch-dir conventions).
-5. Adjust the board column names in config.json if the human wants different ones.
-6. Verify: run every gate command; each must exit zero.
+5. Wire .jfdi/hooks/format.sh to this project's formatter: replace the placeholder
+   with the real single-file format command (the hook runs after every agent file
+   edit, so agents never burn turns on lint-fix loops). If the project has no
+   formatter, leave the placeholder no-op in place.
+6. Adjust the board column names in config.json if the human wants different ones.
+7. Verify: run every gate command; each must exit zero.
 
 Report what you set up and anything the human should tune.
 

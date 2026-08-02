@@ -1,3 +1,4 @@
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { createBoardIfMissing } from "./board.js";
 import { defaultConfig, type JfdiConfig } from "./config.js";
@@ -55,6 +56,45 @@ session spawning.
 `;
 
 /**
+ * Hook settings for JFDI-spawned Claude Code sessions only (passed via
+ * `--settings`, never written into the target project's own .claude/). The
+ * PostToolUse hook formats each edited file so agents never burn session turns
+ * on lint-fix loops. Codex has no hook system; its sessions simply skip this.
+ */
+const CLAUDE_SETTINGS = `{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \\"$CLAUDE_PROJECT_DIR/.jfdi/hooks/format.sh\\""
+          }
+        ]
+      }
+    ]
+  }
+}
+`;
+
+const EXECUTABLE_FILE_MODE = 0o755;
+
+const FORMAT_HOOK_TEMPLATE = `#!/bin/sh
+# JFDI PostToolUse hook: format the file the agent just edited.
+# Receives the Claude Code hook payload on stdin; the edited file's path is at
+# .tool_input.file_path. \`jfdi init\` (or you) should replace the placeholder
+# below with this project's real single-file format command. Keep it fast and
+# always exit 0 — a formatter problem must never fail the agent's edit.
+#
+# Example (a Node project using biome):
+#   file=$(node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const f=JSON.parse(d).tool_input?.file_path;if(f)console.log(f)}catch{}})')
+#   [ -n "$file" ] && cd "$CLAUDE_PROJECT_DIR" && pnpm exec biome check --write "$file" >/dev/null 2>&1
+cat > /dev/null
+exit 0
+`;
+
+/**
  * Full .jfdi/ scaffold for \`jfdi init\`: config, board, tickets dir, prompts,
  * sandbox contract. Idempotent — existing files are never overwritten.
  */
@@ -81,4 +121,11 @@ export async function scaffoldJfdi(
   await ensurePrompts(jfdiDir);
   const sandboxPath = path.join(jfdiDir, "sandbox.md");
   if (!(await fileExists(sandboxPath))) await atomicWrite(sandboxPath, SANDBOX_TEMPLATE);
+  const settingsPath = path.join(jfdiDir, "claude-settings.json");
+  if (!(await fileExists(settingsPath))) await atomicWrite(settingsPath, CLAUDE_SETTINGS);
+  const formatHookPath = path.join(jfdiDir, "hooks", "format.sh");
+  if (!(await fileExists(formatHookPath))) {
+    await atomicWrite(formatHookPath, FORMAT_HOOK_TEMPLATE);
+    await fs.chmod(formatHookPath, EXECUTABLE_FILE_MODE);
+  }
 }

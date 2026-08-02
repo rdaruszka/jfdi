@@ -17,6 +17,7 @@ export interface GateResult {
 }
 
 const MAX_OUTPUT_CHARS = 20_000;
+const MILLISECONDS_PER_SECOND = 1_000;
 
 function tail(output: string): string {
   return output.length <= MAX_OUTPUT_CHARS
@@ -58,6 +59,21 @@ export async function runGate(
     if (code !== 0) return { ok: false, results };
   }
   return { ok: true, results };
+}
+
+/**
+ * Render a passing gate as prompt context for reviewers, so they trust the
+ * mechanical result instead of burning session turns re-running it.
+ */
+export function formatGatePass(result: GateResult): string {
+  if (result.results.length === 0) return "";
+  const steps = result.results
+    .map((step) => `${step.name} ✓ (${(step.durationMs / MILLISECONDS_PER_SECOND).toFixed(1)}s)`)
+    .join(", ");
+  return [
+    `The mechanical gate has already passed on the current commit: ${steps}.`,
+    "Do not re-run the gate commands — spend your session on what they cannot check.",
+  ].join("\n");
 }
 
 /** Render a gate failure as feedback for the Implementation agent. */

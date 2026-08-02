@@ -21,6 +21,7 @@ const ELLIPSIS = "...";
 interface CodexStreamLine {
   type?: string;
   message?: string;
+  thread_id?: string;
   error?: { message?: string };
   item?: {
     type?: string;
@@ -51,6 +52,10 @@ function truncateDetail(detail: string): string {
 export function mapCodexLine(line: string): HarnessEvent[] {
   const parsed = parseStreamLine(line);
   if (parsed === null) return [];
+  // The thread id is what `codex exec resume <id>` continues later.
+  if (parsed.type === "thread.started" && parsed.thread_id) {
+    return [{ type: "session", sessionId: parsed.thread_id }];
+  }
   if (parsed.type === "item.completed" && parsed.item?.type === "agent_message") {
     return parsed.item.text ? [{ type: "text", text: parsed.item.text }] : [];
   }
@@ -85,15 +90,22 @@ export class CodexHarness implements Harness {
   constructor(private readonly executable: string = "codex") {}
 
   spawn(promptSpec: PromptSpec, options: SpawnOptions): HarnessSession {
-    const child: ChildProcess = spawn(
-      this.executable,
-      ["exec", "--json", "--dangerously-bypass-approvals-and-sandbox", promptSpec.prompt],
-      {
-        cwd: options.cwd,
-        stdio: ["ignore", "pipe", "pipe"],
-        env: process.env,
-      },
-    );
+    // `codex exec resume <thread-id> <prompt>` continues an earlier thread.
+    const args = options.continueSessionId
+      ? [
+          "exec",
+          "resume",
+          "--json",
+          "--dangerously-bypass-approvals-and-sandbox",
+          options.continueSessionId,
+          promptSpec.prompt,
+        ]
+      : ["exec", "--json", "--dangerously-bypass-approvals-and-sandbox", promptSpec.prompt];
+    const child: ChildProcess = spawn(this.executable, args, {
+      cwd: options.cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: process.env,
+    });
     const log = options.logPath ? openLog(options.logPath) : null;
     let stderrTail = "";
     child.stderr?.on("data", (chunk: Buffer) => {
@@ -107,6 +119,7 @@ export class CodexHarness implements Harness {
     let hasEnded = false;
     let finalText = "";
     let failureText: string | null = null;
+    let sessionId: string | undefined;
     const push = (event: HarnessEvent) => {
       queue.push(event);
       notify?.();
@@ -118,6 +131,7 @@ export class CodexHarness implements Harness {
     stdoutLines?.on("line", (line) => {
       log?.write(`${line}\n`);
       for (const event of mapCodexLine(line)) {
+        if (event.type === "session") sessionId = event.sessionId;
         if (event.type === "text") finalText = event.text;
         if (event.type === "result" && !event.ok) failureText = event.text;
         push(event);
@@ -138,18 +152,16 @@ export class CodexHarness implements Harness {
       child.on("close", (code) => {
         hasEnded = true;
         log?.end();
-        if (code === 0 && finalText && failureText === null) {
-          push({ type: "result", ok: true, text: finalText });
-          resolve({ ok: true, text: finalText, exitCode: 0 });
-        } else {
-          resolve({
-            ok: false,
-            text:
-              failureText ??
-              `harness exited with code ${code ?? "?"}${stderrTail ? `\nstderr: ${stderrTail.trim()}` : ""}`,
-            exitCode: code ?? 1,
-          });
-        }
+        const isSuccess = code === 0 && finalText !== "" && failureText === null;
+        if (isSuccess) push({ type: "result", ok: true, text: finalText });
+        const closed: HarnessResult = isSuccess
+          ? { ok: true, text: finalText, exitCode: 0 }
+          : {
+              ok: false,
+              text: failureText ?? exitText(code, stderrTail),
+              exitCode: code ?? 1,
+            };
+        resolve(withSession(closed, sessionId));
         notify?.();
       });
     });
@@ -205,4 +217,13 @@ function interactiveResult(child: ChildProcess, executable: string): Promise<num
 function openLog(logPath: string) {
   mkdirSync(path.dirname(logPath), { recursive: true });
   return createWriteStream(logPath, { flags: "a" });
+}
+
+/** Attach the provider's session id to a result when one was reported. */
+function withSession(result: HarnessResult, sessionId: string | undefined): HarnessResult {
+  return sessionId ? { ...result, sessionId } : result;
+}
+
+function exitText(code: number | null, stderrTail: string): string {
+  return `harness exited with code ${code ?? "?"}${stderrTail ? `\nstderr: ${stderrTail.trim()}` : ""}`;
 }
