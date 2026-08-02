@@ -2,7 +2,7 @@ import { watch } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { type Board, type Card, ensureColumns, findColumn, parseBoard } from "./board.js";
-import { moveCardSafe } from "./card-moves.js";
+import { boardPath, moveCardSafe } from "./cards.js";
 import { mergedTicketIds } from "./events.js";
 import { branchExists, isAncestor, revParse, ticketBranch } from "./git.js";
 import { IntegrationQueue, integrateTicket } from "./integrate.js";
@@ -58,7 +58,7 @@ export class Coordinator {
   }
 
   private get boardPath(): string {
-    return path.join(this.context.repoRoot, this.context.config.board.path);
+    return boardPath(this.context);
   }
 
   /** Set up board + watchers and run the initial scan. Resolves once watching. */

@@ -4,6 +4,31 @@ import type { PipelineContext } from "./pipeline.js";
 import { readIfExists } from "./util/fsx.js";
 import { ticketIdFromCard } from "./util/ids.js";
 
+/** Where the board lives for a project — every card read and write starts here. */
+export function boardPath(context: PipelineContext): string {
+  return path.join(context.repoRoot, context.config.board.path);
+}
+
+/**
+ * The card a ticket should keep in step: the first one anywhere on the board
+ * whose ticket id matches. The inbox is skipped — its cards are agent
+ * proposals a human has not promoted, and nothing dispatches from there.
+ */
+export async function findTicketCard(
+  context: PipelineContext,
+  ticketId: string,
+  inboxColumn: string,
+): Promise<{ card: Card; column: string } | null> {
+  const content = await readIfExists(boardPath(context));
+  if (content === null) return null;
+  for (const column of parseBoard(content).columns) {
+    if (column.name === inboxColumn) continue;
+    const card = column.cards.find((c) => ticketIdFromCard(c.text) === ticketId);
+    if (card) return { card, column: column.name };
+  }
+  return null;
+}
+
 type MoveResult = "moved" | "skipped" | "failed";
 
 /**
@@ -13,7 +38,7 @@ type MoveResult = "moved" | "skipped" | "failed";
  * board is the human's document).
  */
 async function tolerantMove(
-  boardPath: string,
+  targetBoardPath: string,
   cardRaw: string,
   from: string,
   to: string,
@@ -26,17 +51,17 @@ async function tolerantMove(
     ? { rewriteLine: (line: string) => line.replace("- [ ]", "- [x]") }
     : {};
   try {
-    await moveCard(boardPath, cardRaw, from, to, rewrite);
+    await moveCard(targetBoardPath, cardRaw, from, to, rewrite);
     return "moved";
   } catch {
     // Not in `from` — locate it.
-    const content = await readIfExists(boardPath);
+    const content = await readIfExists(targetBoardPath);
     if (content === null) return "skipped";
     const board = parseBoard(content);
     const actual = board.columns.find((column) => column.cards.some((c) => c.raw === cardRaw));
     if (!actual || actual.name === to) return "skipped";
     try {
-      await moveCard(boardPath, cardRaw, actual.name, to, rewrite);
+      await moveCard(targetBoardPath, cardRaw, actual.name, to, rewrite);
       return "moved";
     } catch {
       return "failed";
@@ -47,8 +72,8 @@ async function tolerantMove(
 /**
  * Advance one card to the column its ticket's progress calls for, and record
  * the move on the event stream. Every mover goes through here — the
- * coordinator and `jfdi run` alike — so a card travels the same way whichever
- * one is driving.
+ * coordinator, `jfdi run`, and `jfdi merge` alike — so a card travels the same
+ * way whichever one is driving.
  */
 export async function moveCardSafe(
   context: PipelineContext,
@@ -57,8 +82,7 @@ export async function moveCardSafe(
   to: string,
   shouldCheckOff: boolean,
 ): Promise<void> {
-  const boardPath = path.join(context.repoRoot, context.config.board.path);
-  const result = await tolerantMove(boardPath, card.raw, from, to, shouldCheckOff);
+  const result = await tolerantMove(boardPath(context), card.raw, from, to, shouldCheckOff);
   if (result === "failed") {
     context.log.emit("error", ticketIdFromCard(card.text), {
       message: `could not move card to "${to}" — leaving board as-is`,

@@ -1,13 +1,11 @@
 import * as path from "node:path";
-import { type Card, ensureColumns, parseBoard } from "../board.js";
-import { moveCardSafe } from "../card-moves.js";
+import { ensureColumns } from "../board.js";
+import { boardPath, findTicketCard, moveCardSafe } from "../cards.js";
 import { integrateTicket } from "../integrate.js";
 import type { PipelineContext } from "../pipeline.js";
 import { runPipeline } from "../pipeline.js";
 import { recordMergeReady, recordObservations } from "../report.js";
 import { resolveTicket } from "../tickets.js";
-import { readIfExists } from "../util/fsx.js";
-import { ticketIdFromCard } from "../util/ids.js";
 import { attachInlinePrinter, buildContext } from "./context.js";
 
 /**
@@ -27,26 +25,6 @@ export async function runCommand(ticketRef: string): Promise<number> {
   }
 }
 
-/**
- * The card this run should keep in step: the first one anywhere on the board
- * whose ticket id matches. The inbox is skipped — its cards are agent
- * proposals a human has not promoted, and nothing dispatches from there.
- */
-async function findTicketCard(
-  boardPath: string,
-  ticketId: string,
-  inboxColumn: string,
-): Promise<{ card: Card; column: string } | null> {
-  const content = await readIfExists(boardPath);
-  if (content === null) return null;
-  for (const column of parseBoard(content).columns) {
-    if (column.name === inboxColumn) continue;
-    const card = column.cards.find((c) => ticketIdFromCard(c.text) === ticketId);
-    if (card) return { card, column: column.name };
-  }
-  return null;
-}
-
 /** The run itself, over an already-built context. */
 export async function runTicketInline(
   context: PipelineContext,
@@ -57,12 +35,11 @@ export async function runTicketInline(
   console.log(`ticket: ${ticket.id}`);
 
   const columns = context.config.board.columns;
-  const boardPath = path.join(context.repoRoot, context.config.board.path);
-  const located = await findTicketCard(boardPath, ticket.id, columns.inbox);
+  const located = await findTicketCard(context, ticket.id, columns.inbox);
   if (located) {
     // Unlike the coordinator, a run has no startup phase to prepare the board —
     // make room for every column this run can leave the card in.
-    await ensureColumns(boardPath, [
+    await ensureColumns(boardPath(context), [
       columns.inProgress,
       columns.blocked,
       columns.readyToMerge,
