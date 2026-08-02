@@ -135,7 +135,25 @@ function narrate(event: JfdiEvent, ticket: TicketState): string {
       return stringField(event.data, "text") ?? ticket.lastActivity;
     case "escalation":
       return "escalated";
-    default:
+    // The rest never reach here: applyTicketEvent writes their activity line
+    // itself, or they have none. Enumerated rather than left to a `default`,
+    // for the same reason as the tail of applyTicketEvent — a `default` clause
+    // silences useExhaustiveSwitchCases, so a new EventType grouped with the
+    // narrating cases above would quietly re-emit the previous line instead of
+    // getting a wording decision. With no `default`, tsc (TS2366) agrees.
+    case "dispatch":
+    case "round_start":
+    case "blocked":
+    case "merge_queued":
+    case "merge_start":
+    case "complicated_merge":
+    case "merged":
+    case "merge_ready":
+    case "card_moved":
+    case "observation":
+    case "done":
+    case "failed":
+    case "error":
       return ticket.lastActivity;
   }
 }

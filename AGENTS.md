@@ -93,6 +93,8 @@ Use these terms exactly; introduce no synonyms. The list grows only by editing t
 - **coordinator** — the long-running process that watches the board and dispatches runs.
 - **harness** — the agent-session abstraction (`spawn(promptSpec, cwd) → event stream`, plus interactive launch); Claude Code and Codex are implementations.
 - **worktree** — the isolated git checkout (branch `jfdi/<ticket-id>`) a run works in.
+- **resume** — a re-dispatch that deliberately continues an interrupted run's partial work: the worktree is sanitized first, and the Implementation prompt carries what the branch already holds plus the previous run's unanswered feedback.
+- **crash orphan** — a card left in the in-progress column by a coordinator that died; the startup sweep moves it to Blocked.
 - **observation** — an out-of-scope issue a stage reports in its verdict (`observations` array); never fixed inline.
 - **inbox** — the board column where observations land as proposal cards. Agent-writable via the coordinator only, human-drained, never dispatched from: agents propose, humans promote.
 

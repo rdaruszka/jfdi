@@ -517,7 +517,7 @@ export async function runPipeline(
 
   // A re-dispatched ticket may carry partial work and a half-finished git
   // state from a run that died; sanitize both before any session sees them.
-  const resume = await prepareResume(worktree, target, ticket.id);
+  const resume = await prepareResume(worktree.path, target, ticket.id);
   if (resume)
     context.log.emit("resumed", ticket.id, {
       commitCount: resume.commitCount,
@@ -564,7 +564,14 @@ export async function runPipeline(
       await saveFeedbackHistory(runDirs.current, history);
       continue;
     }
-    if (result.step.kind === "blocked") return { status: "blocked", reason: result.step.reason };
+    if (result.step.kind === "blocked") {
+      // A blocked run concluded nothing: the session saw the inherited feedback
+      // but stopped on a question instead of answering it. So the *inherited*
+      // items stay unanswered business too, and are carried forward — unlike a
+      // retry, where the next round re-reads them from memory anyway.
+      await saveFeedbackHistory(runDirs.current, [...priorHistory, ...history]);
+      return { status: "blocked", reason: result.step.reason };
+    }
 
     // The run finished: earlier rounds' feedback was addressed, so it is no
     // longer unfinished business for a later dispatch to inherit.

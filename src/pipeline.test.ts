@@ -267,10 +267,13 @@ describe("runPipeline", () => {
 
   it("re-dispatch resumes: prior commits summarized, prior feedback carried over", async () => {
     // Run 1: every round commits, code review never approves → retries exhausted.
+    // Distinct content per round, so each round has something to actually commit.
+    let attempt = 0;
     const failing = fixture.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       if (stage === "implementation") {
-        await commitFile(options.cwd, "impl.txt", `${Date.now()}\n`, "partial attempt");
+        attempt += 1;
+        await commitFile(options.cwd, "impl.txt", `attempt ${attempt}\n`, "partial attempt");
         await writeVerdict(spec.prompt, { status: "done" });
       } else if (stage === "code-review") {
         await writeVerdict(spec.prompt, { verdict: "fail", feedback: "the parser is wrong" });
@@ -301,6 +304,52 @@ describe("runPipeline", () => {
     // …and why the interrupted run failed, attributed to its run.
     expect(prompt).toContain("the parser is wrong");
     expect(prompt).toContain("Run 1, round 3 — code review");
+  });
+
+  it("carries unanswered feedback across a run that ends in an escalation", async () => {
+    // Run 1: code review never approves → retries exhausted, its feedback on disk.
+    let attempt = 0;
+    const failing = fixture.context(async (spec, options) => {
+      const stage = stageOf(spec.prompt);
+      if (stage === "implementation") {
+        attempt += 1;
+        await commitFile(options.cwd, "impl.txt", `attempt ${attempt}\n`, "partial attempt");
+        await writeVerdict(spec.prompt, { status: "done" });
+      } else if (stage === "code-review") {
+        await writeVerdict(spec.prompt, { verdict: "fail", feedback: "the parser is wrong" });
+      }
+      return { ok: true, text: "" };
+    });
+    const ticket = await resolveTicket("Escalating haul", fixture.ticketsDir);
+    expect((await runPipeline(failing, ticket)).status).toBe("blocked");
+
+    // Run 2: escalates in its first round, so it answers nothing it inherited.
+    const escalating = fixture.context(async (spec) => {
+      await writeVerdict(spec.prompt, {
+        status: "escalate",
+        question: "Which parser is meant?",
+        recommendation: "the new one",
+      });
+      return { ok: true, text: "" };
+    });
+    expect((await runPipeline(escalating, ticket)).status).toBe("blocked");
+
+    // Run 3: run 1's code-review feedback is still unanswered, so it must survive
+    // run 2 — otherwise the escalation silently erases why run 1 failed.
+    let prompt = "";
+    const answering = fixture.context(async (spec, options) => {
+      const stage = stageOf(spec.prompt);
+      if (stage === "implementation") {
+        prompt = prompt || spec.prompt;
+        await commitFile(options.cwd, "impl.txt", "final\n", "finish it");
+        await writeVerdict(spec.prompt, { status: "done" });
+      } else {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    });
+    expect((await runPipeline(answering, ticket)).status).toBe("passed");
+    expect(prompt).toContain("the parser is wrong");
   });
 
   it("sanitizes a worktree a killed session left dirty and mid-rebase", async () => {

@@ -30,12 +30,12 @@ afterEach(async () => {
 
 describe("prepareResume", () => {
   it("reports nothing to resume for a freshly created worktree", async () => {
-    expect(await prepareResume(worktree, "main", "ticket")).toBeNull();
+    expect(await prepareResume(worktree.path, "main", "ticket")).toBeNull();
   });
 
   it("summarizes commits the interrupted run already made", async () => {
     await commitFile(worktree.path, "partial.txt", "half\n", "start the feature");
-    const resume = await prepareResume(worktree, "main", "ticket");
+    const resume = await prepareResume(worktree.path, "main", "ticket");
     expect(resume?.commitCount).toBe(1);
     expect(resume?.recentCommits).toContain("start the feature");
     expect(resume?.hasCheckpointedChanges).toBe(false);
@@ -44,7 +44,7 @@ describe("prepareResume", () => {
 
   it("checkpoint-commits what a killed session left uncommitted", async () => {
     await fs.writeFile(path.join(worktree.path, "scratch.txt"), "half-written\n");
-    const resume = await prepareResume(worktree, "main", "ticket");
+    const resume = await prepareResume(worktree.path, "main", "ticket");
     expect(resume?.hasCheckpointedChanges).toBe(true);
     expect(await git(worktree.path, "status", "--porcelain")).toBe("");
     expect(await git(worktree.path, "log", "-1", "--format=%s")).toBe(
@@ -60,7 +60,7 @@ describe("prepareResume", () => {
     expect(rebase.hasConflict).toBe(true);
     expect(await isRebaseInProgress(worktree.path)).toBe(true);
 
-    const resume = await prepareResume(worktree, "main", "ticket");
+    const resume = await prepareResume(worktree.path, "main", "ticket");
     expect(resume?.hasAbortedRebase).toBe(true);
     expect(await isRebaseInProgress(worktree.path)).toBe(false);
     // Pre-rebase state restored: the branch's own commit is back and intact.
@@ -77,7 +77,7 @@ describe("formatResumeSection", () => {
 
   it("tells the agent to continue the existing work, with the commit summary", async () => {
     await commitFile(worktree.path, "partial.txt", "half\n", "start the feature");
-    const resume = await prepareResume(worktree, "main", "ticket");
+    const resume = await prepareResume(worktree.path, "main", "ticket");
     const section = formatResumeSection(resume, "jfdi/ticket", "main");
     expect(section).toContain("Resuming an interrupted attempt");
     expect(section).toContain("1 commit of partial work");
@@ -95,7 +95,7 @@ describe("formatResumeSection", () => {
     await fs.writeFile(path.join(worktree.path, "scratch.txt"), "half-written\n");
 
     const section = formatResumeSection(
-      await prepareResume(worktree, "main", "ticket"),
+      await prepareResume(worktree.path, "main", "ticket"),
       "jfdi/ticket",
       "main",
     );

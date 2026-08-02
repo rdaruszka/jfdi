@@ -1,12 +1,5 @@
 import * as path from "node:path";
-import {
-  abortRebase,
-  commitAllIfDirty,
-  commitCount,
-  git,
-  isRebaseInProgress,
-  type Worktree,
-} from "./git.js";
+import { abortRebase, commitAllIfDirty, commitCount, git, isRebaseInProgress } from "./git.js";
 import { atomicWrite, readIfExists } from "./util/fsx.js";
 
 /**
@@ -43,20 +36,20 @@ export interface ResumeState {
  * nothing to resume, and the implementation prompt stays as it was.
  */
 export async function prepareResume(
-  worktree: Worktree,
+  worktreePath: string,
   targetBranch: string,
   ticketId: string,
 ): Promise<ResumeState | null> {
-  const hasAbortedRebase = await isRebaseInProgress(worktree.path);
-  if (hasAbortedRebase) await abortRebase(worktree.path);
+  const hasAbortedRebase = await isRebaseInProgress(worktreePath);
+  if (hasAbortedRebase) await abortRebase(worktreePath);
   const hasCheckpointedChanges = await commitAllIfDirty(
-    worktree.path,
+    worktreePath,
     `jfdi(${ticketId}): recovered from interrupted run`,
   );
-  const count = await commitCount(worktree.path, targetBranch);
+  const count = await commitCount(worktreePath, targetBranch);
   if (count === 0 && !hasAbortedRebase && !hasCheckpointedChanges) return null;
   const recentCommits = await git(
-    worktree.path,
+    worktreePath,
     "log",
     "--oneline",
     "--no-decorate",
@@ -99,13 +92,22 @@ function historyPath(runDir: string): string {
 }
 
 /**
+ * Newest items kept when a run's unfinished feedback is written. A run that
+ * ends blocked carries what it inherited forward, so a chain of runs that each
+ * escalate without ever completing a round would otherwise grow the list — and
+ * the whole list is rendered into the next implementation prompt.
+ */
+const MAX_CARRIED_FEEDBACK_ITEMS = 10;
+
+/**
  * Persist a run's unfinished feedback — the rounds a later dispatch still has
  * to answer. The in-memory history dies with the process, so it is written as
  * rounds complete; a run that finishes writes an empty list, because its
  * earlier rounds were addressed. Round verdicts stay on disk either way.
  */
 export async function saveFeedbackHistory(runDir: string, history: FeedbackItem[]): Promise<void> {
-  await atomicWrite(historyPath(runDir), `${JSON.stringify(history, null, 2)}\n`);
+  const kept = history.slice(-MAX_CARRIED_FEEDBACK_ITEMS);
+  await atomicWrite(historyPath(runDir), `${JSON.stringify(kept, null, 2)}\n`);
 }
 
 /**
