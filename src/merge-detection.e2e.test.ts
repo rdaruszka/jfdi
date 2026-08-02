@@ -37,6 +37,8 @@ const WAIT_TIMEOUT_MS = 40_000;
 const WAIT_STEP_MS = 200;
 /** How long the slow ticket's session holds the coordinator process open. */
 const SLOW_SESSION_MS = 25_000;
+/** Grace between SIGTERM and SIGKILL so a coordinator can kill its sessions. */
+const SHUTDOWN_GRACE_MS = 500;
 
 /**
  * A `claude` that never talks to the network: it replays two stream-json lines
@@ -276,6 +278,11 @@ beforeAll(async () => {
 }, BUILD_TIMEOUT_MS);
 
 afterEach(async () => {
+  // SIGTERM first — `jfdi start` kills its live sessions on the way out, so a
+  // stub session does not outlive the sandbox it was working in. A test that
+  // failed mid-flight never reached its own stop; SIGKILL is only the backstop.
+  for (const child of running) child.kill("SIGTERM");
+  await sleep(SHUTDOWN_GRACE_MS);
   for (const child of running.splice(0)) child.kill("SIGKILL");
   await Promise.all(sandboxes.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
