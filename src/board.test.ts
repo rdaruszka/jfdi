@@ -71,6 +71,25 @@ describe("parseBoard", () => {
 });
 
 describe("moveCard", () => {
+  it("writes through a symlinked board and preserves the link", async () => {
+    // The deployed shape: board.md in .jfdi/ is a symlink into an Obsidian
+    // vault. A move must land in the vault file, not replace the link.
+    const vault = path.join(dir, "vault");
+    await fs.mkdir(vault);
+    const vaultBoard = path.join(vault, "kanban.md");
+    await fs.rename(boardPath, vaultBoard);
+    await fs.symlink(vaultBoard, boardPath);
+
+    await moveCard(boardPath, "- [ ] Add a --help flag", "Ready", "In Progress");
+
+    expect((await fs.lstat(boardPath)).isSymbolicLink()).toBe(true);
+    const board = parseBoard(await fs.readFile(vaultBoard, "utf8"));
+    expect(findColumn(board, "In Progress")?.cards.map((c) => c.text)).toEqual([
+      "Old task",
+      "Add a --help flag",
+    ]);
+  });
+
   it("moves a card line between columns surgically", async () => {
     await moveCard(boardPath, "- [ ] Add a --help flag", "Ready", "In Progress");
     const content = await fs.readFile(boardPath, "utf8");

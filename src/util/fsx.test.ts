@@ -29,6 +29,49 @@ describe("atomicWrite", () => {
   });
 });
 
+describe("atomicWrite through symlinks", () => {
+  it("writes through a file symlink and preserves the link", async () => {
+    const vault = path.join(dir, "vault");
+    await fs.mkdir(vault);
+    const target = path.join(vault, "board.md");
+    await fs.writeFile(target, "original");
+    const link = path.join(dir, "board.md");
+    await fs.symlink(target, link);
+
+    await atomicWrite(link, "updated");
+
+    expect(await fs.readFile(target, "utf8")).toBe("updated");
+    expect((await fs.lstat(link)).isSymbolicLink()).toBe(true);
+    expect(await fs.readdir(vault)).toEqual(["board.md"]);
+    expect(await fs.readdir(dir)).toEqual(expect.arrayContaining(["board.md", "vault"]));
+  });
+
+  it("follows a dangling symlink and creates its target", async () => {
+    const vault = path.join(dir, "vault");
+    await fs.mkdir(vault);
+    const target = path.join(vault, "new-note.md");
+    const link = path.join(dir, "note.md");
+    await fs.symlink(target, link);
+
+    await atomicWrite(link, "born");
+
+    expect(await fs.readFile(target, "utf8")).toBe("born");
+    expect((await fs.lstat(link)).isSymbolicLink()).toBe(true);
+  });
+
+  it("creates new files through a symlinked directory", async () => {
+    const vault = path.join(dir, "vault");
+    await fs.mkdir(vault);
+    const linkedDir = path.join(dir, "tickets");
+    await fs.symlink(vault, linkedDir);
+
+    await atomicWrite(path.join(linkedDir, "ticket.md"), "note");
+
+    expect(await fs.readFile(path.join(vault, "ticket.md"), "utf8")).toBe("note");
+    expect((await fs.lstat(linkedDir)).isSymbolicLink()).toBe(true);
+  });
+});
+
 describe("readIfExists / fileExists", () => {
   it("returns null / false for missing files", async () => {
     expect(await readIfExists(path.join(dir, "nope"))).toBeNull();

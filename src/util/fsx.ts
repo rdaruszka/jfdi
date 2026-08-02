@@ -6,13 +6,51 @@ export async function ensureDir(dir: string): Promise<void> {
   await fs.mkdir(dir, { recursive: true });
 }
 
-/** Write a file atomically via temp-file-in-same-dir + rename. */
+/**
+ * Write a file atomically via temp-file-in-same-dir + rename, following
+ * symlinks. The rename targets the link's *real* path — renaming onto the
+ * given path would replace a symlink (e.g. a board.md linked into an Obsidian
+ * vault) with a private regular file, silently splitting it from the file the
+ * human edits. The temp file lives in the target's real directory so the
+ * rename stays atomic on one filesystem.
+ */
 export async function atomicWrite(filePath: string, content: string): Promise<void> {
-  const dir = path.dirname(filePath);
+  const target = await realWriteTarget(filePath);
+  const dir = path.dirname(target);
   await ensureDir(dir);
-  const tmp = path.join(dir, `.${path.basename(filePath)}.${randomBytes(4).toString("hex")}.tmp`);
+  const tmp = path.join(dir, `.${path.basename(target)}.${randomBytes(4).toString("hex")}.tmp`);
   await fs.writeFile(tmp, content, "utf8");
-  await fs.rename(tmp, filePath);
+  await fs.rename(tmp, target);
+}
+
+/**
+ * Resolve the real path a write to `filePath` should land on: the fully
+ * resolved file if it exists, the link's (eventual) target if it is a
+ * dangling symlink — matching plain-writeFile semantics, which would create
+ * the target — else the real parent directory plus the new basename.
+ */
+async function realWriteTarget(filePath: string): Promise<string> {
+  try {
+    return await fs.realpath(filePath);
+  } catch (error) {
+    // ENOENT means missing file or dangling link; cycles (ELOOP) and
+    // permission errors propagate to the caller.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  let linkTarget: string | null = null;
+  try {
+    linkTarget = await fs.readlink(filePath);
+  } catch {
+    // Not a symlink — a genuinely absent file.
+  }
+  if (linkTarget !== null) {
+    // Dangling link: recurse on the target. Terminates because each hop
+    // shortens the remaining chain; a cycle would have thrown ELOOP above.
+    return realWriteTarget(path.resolve(path.dirname(filePath), linkTarget));
+  }
+  const parentDir = path.dirname(filePath);
+  await ensureDir(parentDir);
+  return path.join(await fs.realpath(parentDir), path.basename(filePath));
 }
 
 export async function fileExists(filePath: string): Promise<boolean> {
