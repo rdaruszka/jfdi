@@ -2,7 +2,7 @@ import { watch } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { type Card, ensureColumns, findColumn, moveCard, parseBoard } from "./board.js";
-import { branchExists, isAncestor, ticketBranch } from "./git.js";
+import { branchExists, isAncestor, revParse, ticketBranch } from "./git.js";
 import { IntegrationQueue, integrateTicket } from "./integrate.js";
 import type { PipelineContext, RunReport } from "./pipeline.js";
 import { runPipeline, worktreesDir } from "./pipeline.js";
@@ -177,10 +177,17 @@ export class Coordinator {
       await this.moveCardSafe(card, columns.begin, columns.inProgress, false);
 
       // A begin-column card whose pipeline already passed is an approval:
-      // integrate the existing branch instead of rebuilding.
+      // integrate the existing branch instead of rebuilding. Sign-offs bind to
+      // a commit, so the shortcut holds only while the branch still points at
+      // the commit the report signed off on — if it moved, the report no
+      // longer describes what would land, and the pipeline runs instead.
       const savedReport = await loadReport(this.context.stateDir, id);
       const branch = ticketBranch(id);
-      if (savedReport && (await branchExists(this.context.repoRoot, branch))) {
+      if (
+        savedReport &&
+        (await branchExists(this.context.repoRoot, branch)) &&
+        (await revParse(this.context.repoRoot, branch)) === savedReport.commit
+      ) {
         await this.integrate(card, ticket, savedReport);
         return;
       }

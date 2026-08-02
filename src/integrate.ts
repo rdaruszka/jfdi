@@ -2,6 +2,7 @@ import * as path from "node:path";
 import type { StageName } from "./events.js";
 import { formatGateFailure, runGate } from "./gate.js";
 import {
+  abortRebase,
   deleteBranch,
   fastForward,
   isAncestor,
@@ -16,7 +17,7 @@ import { runQaStage, runsDir, worktreesDir } from "./pipeline.js";
 import { formatGateCommands, loadPrompt, renderPrompt } from "./prompts.js";
 import { appendToSection, ensureTicketNote, type Ticket } from "./tickets.js";
 import { todayIsoDate } from "./util/dates.js";
-import { ensureDir } from "./util/fsx.js";
+import { ensureDir, fileExists } from "./util/fsx.js";
 import { type IntegrationVerdict, readIntegrationVerdict } from "./verdicts.js";
 
 /** Git output quoted into a blocked reason when a rebase fails outright. */
@@ -164,7 +165,21 @@ export async function integrateTicket(
     ticket,
     path.join(context.repoRoot, context.config.ticketsDir),
   );
-  context.log.emit("merge_start", ticket.id);
+  // A previous integration can leave the worktree mid-rebase (the agent gave
+  // up half-resolved and we blocked). Re-entering there makes git refuse with
+  // "rebase already in progress" — which is not a conflict, so it would block
+  // again with a baffling reason. Abort first: a mid-rebase worktree has a
+  // detached HEAD and an untouched branch ref, so this restores the
+  // pre-rebase state losslessly. A worktree that is gone has no rebase to
+  // abort; the rebase below reports its absence as a blocked integration.
+  const hadStaleRebase =
+    (await fileExists(worktree.path)) && (await isRebaseInProgress(worktree.path));
+  if (hadStaleRebase) await abortRebase(worktree.path);
+  context.log.emit(
+    "merge_start",
+    ticket.id,
+    hadStaleRebase ? { note: "aborted a stale rebase left in the worktree" } : undefined,
+  );
 
   // Human may have merged by hand (on-approval mode) — never double-merge.
   if (await isAncestor(context.repoRoot, worktree.branch, target)) {

@@ -1,9 +1,10 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { findColumn, parseBoard } from "./board.js";
+import { findColumn, moveCard, parseBoard } from "./board.js";
 import { Coordinator } from "./coordinator.js";
 import { git } from "./git.js";
+import { worktreesDir } from "./pipeline.js";
 import { commitFile, type Fixture, makeFixture, stageOf, writeVerdict } from "./test-helpers.js";
 import { ticketIdFromCard } from "./util/ids.js";
 
@@ -55,6 +56,69 @@ function autoHandler() {
     }
     return { ok: true, text: "" };
   };
+}
+
+const ALPHA_TEXT = "Add feature alpha";
+const ALPHA_CARD = `- [ ] ${ALPHA_TEXT}`;
+
+const SINGLE_CARD_BOARD = `---
+
+kanban-plugin: board
+
+---
+
+## Ready
+
+- [ ] Add feature alpha
+
+## In Progress
+
+## Done
+
+`;
+
+function boardPath(): string {
+  return path.join(fixture.jfdiDir, "board.md");
+}
+
+/** Handler whose implementation stage makes a distinct commit on every run. */
+function countingHandler(stages: string[]) {
+  let implementations = 0;
+  return async (spec: { prompt: string }, options: { cwd: string }) => {
+    const stage = stageOf(spec.prompt);
+    stages.push(stage);
+    if (stage === "implementation") {
+      implementations++;
+      const file = `impl-${implementations}.txt`;
+      await commitFile(options.cwd, file, `${implementations}\n`, `implement ${file}`);
+      await writeVerdict(spec.prompt, { status: "done", summary: `built ${file}` });
+    } else if (stage === "integration") {
+      await writeVerdict(spec.prompt, { resolution: "clean" });
+    } else {
+      await writeVerdict(spec.prompt, { verdict: "pass" });
+    }
+    return { ok: true, text: "" };
+  };
+}
+
+/** One card through the pipeline in on-approval mode: branch and saved report, nothing merged. */
+async function runToMergeReady(stages: string[]): Promise<Coordinator> {
+  await fs.writeFile(boardPath(), SINGLE_CARD_BOARD);
+  fixture.config.integration.mode = "on-approval";
+  const coordinator = new Coordinator(fixture.context(countingHandler(stages)), {
+    pollMs: 60_000,
+  });
+  await coordinator.start();
+  await coordinator.drain();
+  return coordinator;
+}
+
+/** Board edits are picked up asynchronously — let the scan reach dispatch before draining. */
+async function rescan(coordinator: Coordinator): Promise<void> {
+  coordinator.requestScan();
+  await new Promise((r) => setTimeout(r, 100));
+  await coordinator.drain();
+  await new Promise((r) => setTimeout(r, 100));
 }
 
 describe("Coordinator", () => {
@@ -190,6 +254,39 @@ describe("Coordinator", () => {
     // Proposals are inert: nothing ran for them, both real tickets are Done.
     expect(findColumn(board, "Done")?.cards).toHaveLength(2);
     expect(coordinator.activeCount()).toBe(0);
+  });
+
+  it("re-dispatch skips to integration when the branch still matches the report", async () => {
+    const stages: string[] = [];
+    const coordinator = await runToMergeReady(stages);
+    await moveCard(boardPath(), ALPHA_CARD, "Ready to Merge", "Ready");
+
+    await rescan(coordinator);
+    coordinator.stop();
+
+    // No second pipeline: the saved sign-off still describes the branch tip.
+    expect(stages.filter((s) => s === "implementation")).toHaveLength(1);
+    expect(await fs.readFile(path.join(fixture.repo, "impl-1.txt"), "utf8")).toBe("1\n");
+    const done = findColumn(await readBoard(), "Done")?.cards ?? [];
+    expect(done.some((c) => c.text.includes("alpha"))).toBe(true);
+  });
+
+  it("re-dispatch runs the pipeline when the branch has moved past the report", async () => {
+    const stages: string[] = [];
+    const coordinator = await runToMergeReady(stages);
+    // A human commits on the branch after the sign-off — the report no longer
+    // describes what a merge would land.
+    const worktree = path.join(worktreesDir(fixture.jfdiDir), ticketIdFromCard(ALPHA_TEXT));
+    await commitFile(worktree, "by-hand.txt", "hand\n", "human edit");
+    await moveCard(boardPath(), ALPHA_CARD, "Ready to Merge", "Ready");
+
+    await rescan(coordinator);
+    coordinator.stop();
+
+    // Pipeline re-ran instead of merging the stale branch.
+    expect(stages.filter((s) => s === "implementation")).toHaveLength(2);
+    await expect(fs.access(path.join(fixture.repo, "impl-1.txt"))).rejects.toThrow();
+    expect(findColumn(await readBoard(), "Ready to Merge")?.cards).toHaveLength(1);
   });
 
   it("respects max_concurrent", async () => {

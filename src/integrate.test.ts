@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { git, isAncestor } from "./git.js";
+import { git, isAncestor, isRebaseInProgress } from "./git.js";
 import { IntegrationQueue, integrateTicket } from "./integrate.js";
 import { runPipeline } from "./pipeline.js";
 import { commitFile, type Fixture, makeFixture, stageOf, writeVerdict } from "./test-helpers.js";
@@ -166,6 +166,47 @@ describe("integrateTicket", () => {
     expect(await isAncestor(fixture.repo, outcome.worktree.branch, "main")).toBe(false);
     const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
     expect(note).toContain("behavior regressed");
+  });
+
+  it("aborts a rebase a previous integration left unfinished and re-integrates", async () => {
+    const context = fixture.context(passingHandler("feat5.txt"));
+    const ticket = await resolveTicket("Stale rebase", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    if (outcome.status !== "passed") throw new Error("pipeline should pass");
+    await commitFile(fixture.repo, "feat5.txt", "main version\n", "collide");
+
+    // First attempt: the agent walks away from the conflict, leaving the rebase open.
+    const abandoningContext = fixture.context(async (spec) => {
+      await writeVerdict(spec.prompt, { resolution: "clean", notes: "gave up" });
+      return { ok: true, text: "" };
+    });
+    const first = await integrateTicket(
+      abandoningContext,
+      ticket,
+      outcome.worktree,
+      outcome.report,
+    );
+    expect(first.status).toBe("blocked");
+    expect(await isRebaseInProgress(outcome.worktree.path)).toBe(true);
+
+    // Re-dispatch: the stale rebase is aborted, so this is a normal conflicted
+    // integration rather than "rebase already in progress".
+    const resolvingContext = fixture.context(async (spec, options) => {
+      expect(stageOf(spec.prompt)).toBe("integration");
+      await fs.writeFile(path.join(options.cwd, "feat5.txt"), "reconciled\n");
+      await git(options.cwd, "add", "-A");
+      await git(options.cwd, "-c", "core.editor=true", "rebase", "--continue");
+      await writeVerdict(spec.prompt, { resolution: "clean", notes: "kept both" });
+      return { ok: true, text: "" };
+    });
+    const second = await integrateTicket(
+      resolvingContext,
+      ticket,
+      outcome.worktree,
+      outcome.report,
+    );
+    expect(second).toEqual({ status: "merged" });
+    expect(await fs.readFile(path.join(fixture.repo, "feat5.txt"), "utf8")).toBe("reconciled\n");
   });
 
   it("detects a branch the human already merged and closes without double-merging", async () => {
