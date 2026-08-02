@@ -66,7 +66,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function optionalString(value: unknown, fallback: string, where: string): string {
+function stringOrDefault(value: unknown, fallback: string, where: string): string {
   if (value === undefined) return fallback;
   if (typeof value !== "string" || value.length === 0)
     throw new ConfigError(`${where} must be a non-empty string`);
@@ -94,24 +94,24 @@ export function parseConfig(raw: unknown): JfdiConfig {
   const board = isRecord(raw.board) ? raw.board : {};
   const rawColumns = isRecord(board.columns) ? board.columns : {};
   const columns: ColumnMap = {
-    begin: optionalString(rawColumns.begin, defaults.board.columns.begin, "board.columns.begin"),
-    inProgress: optionalString(
+    begin: stringOrDefault(rawColumns.begin, defaults.board.columns.begin, "board.columns.begin"),
+    inProgress: stringOrDefault(
       rawColumns.inProgress,
       defaults.board.columns.inProgress,
       "board.columns.inProgress",
     ),
-    done: optionalString(rawColumns.done, defaults.board.columns.done, "board.columns.done"),
-    blocked: optionalString(
+    done: stringOrDefault(rawColumns.done, defaults.board.columns.done, "board.columns.done"),
+    blocked: stringOrDefault(
       rawColumns.blocked,
       defaults.board.columns.blocked,
       "board.columns.blocked",
     ),
-    readyToMerge: optionalString(
+    readyToMerge: stringOrDefault(
       rawColumns.readyToMerge,
       defaults.board.columns.readyToMerge,
       "board.columns.readyToMerge",
     ),
-    inbox: optionalString(rawColumns.inbox, defaults.board.columns.inbox, "board.columns.inbox"),
+    inbox: stringOrDefault(rawColumns.inbox, defaults.board.columns.inbox, "board.columns.inbox"),
   };
 
   let gate: GateCommand[] = defaults.gate;
@@ -128,7 +128,7 @@ export function parseConfig(raw: unknown): JfdiConfig {
 
   const pipeline = isRecord(raw.pipeline) ? raw.pipeline : {};
   const integration = isRecord(raw.integration) ? raw.integration : {};
-  const mode = optionalString(integration.mode, defaults.integration.mode, "integration.mode");
+  const mode = stringOrDefault(integration.mode, defaults.integration.mode, "integration.mode");
   if (mode !== "auto" && mode !== "on-approval")
     throw new ConfigError(`integration.mode must be "auto" or "on-approval", got "${mode}"`);
 
@@ -140,8 +140,8 @@ export function parseConfig(raw: unknown): JfdiConfig {
   }
 
   return {
-    board: { path: optionalString(board.path, defaults.board.path, "board.path"), columns },
-    ticketsDir: optionalString(raw.ticketsDir, defaults.ticketsDir, "ticketsDir"),
+    board: { path: stringOrDefault(board.path, defaults.board.path, "board.path"), columns },
+    ticketsDir: stringOrDefault(raw.ticketsDir, defaults.ticketsDir, "ticketsDir"),
     gate,
     pipeline: {
       max_rounds: positiveInteger(
@@ -151,7 +151,7 @@ export function parseConfig(raw: unknown): JfdiConfig {
       ),
     },
     integration: {
-      target_branch: optionalString(
+      target_branch: stringOrDefault(
         integration.target_branch,
         defaults.integration.target_branch,
         "integration.target_branch",
@@ -159,7 +159,7 @@ export function parseConfig(raw: unknown): JfdiConfig {
       mode,
     },
     max_concurrent: positiveInteger(raw.max_concurrent, defaults.max_concurrent, "max_concurrent"),
-    harness: optionalString(raw.harness, defaults.harness, "harness"),
+    harness: stringOrDefault(raw.harness, defaults.harness, "harness"),
     harnessArgs,
   };
 }

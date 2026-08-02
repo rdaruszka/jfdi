@@ -180,8 +180,8 @@ export class ClaudeHarness implements Harness {
               const event = queue.shift();
               if (event) return { value: event, done: false };
               if (hasEnded) return { value: undefined, done: true };
-              await new Promise<void>((r) => {
-                notify = r;
+              await new Promise<void>((resolve) => {
+                notify = resolve;
               });
               notify = null;
             }

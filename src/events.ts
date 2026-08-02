@@ -197,8 +197,12 @@ function applyTicketEvent(
       ticket.lastActivity = stringField(event.data, "reason") ?? "failed";
       next.integrationQueue = next.integrationQueue.filter((queued) => queued !== id);
       break;
-    // card_moved, observation and error carry no ticket-state transition.
-    default:
+    // These three carry no ticket-state transition. Named rather than left to
+    // a `default`, so useExhaustiveSwitchCases fails the gate when a new
+    // EventType is added without deciding how it folds into ticket state.
+    case "card_moved":
+    case "observation":
+    case "error":
       break;
   }
 }
