@@ -7,7 +7,7 @@ import { git } from "./git.js";
 import { commitFile, type Fixture, makeFixture, stageOf, writeVerdict } from "./test-helpers.js";
 import { ticketIdFromCard } from "./util/ids.js";
 
-let fx: Fixture;
+let fixture: Fixture;
 
 const BOARD = `---
 
@@ -27,16 +27,16 @@ kanban-plugin: board
 `;
 
 async function readBoard(): Promise<ReturnType<typeof parseBoard>> {
-  return parseBoard(await fs.readFile(path.join(fx.jfdiDir, "board.md"), "utf8"));
+  return parseBoard(await fs.readFile(path.join(fixture.jfdiDir, "board.md"), "utf8"));
 }
 
 beforeEach(async () => {
-  fx = await makeFixture();
-  await fs.writeFile(path.join(fx.jfdiDir, "board.md"), BOARD);
+  fixture = await makeFixture();
+  await fs.writeFile(path.join(fixture.jfdiDir, "board.md"), BOARD);
 });
 
 afterEach(async () => {
-  await fx.cleanup();
+  await fixture.cleanup();
 });
 
 /** Handler that implements each ticket by writing a file named for its card. */
@@ -59,16 +59,16 @@ function autoHandler() {
 
 describe("Coordinator", () => {
   it("auto mode: dispatches board cards, runs pipelines, merges, moves cards to Done", async () => {
-    const context = fx.context(autoHandler());
-    fx.config.integration.mode = "auto";
+    const context = fixture.context(autoHandler());
+    fixture.config.integration.mode = "auto";
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
     await coordinator.start();
     await coordinator.drain();
     coordinator.stop();
 
     // Both features merged to main.
-    expect(await fs.readFile(path.join(fx.repo, "alpha.txt"), "utf8")).toBe("alpha\n");
-    expect(await fs.readFile(path.join(fx.repo, "beta.txt"), "utf8")).toBe("beta\n");
+    expect(await fs.readFile(path.join(fixture.repo, "alpha.txt"), "utf8")).toBe("alpha\n");
+    expect(await fs.readFile(path.join(fixture.repo, "beta.txt"), "utf8")).toBe("beta\n");
 
     // Cards moved to Done and checked off; well-known columns created.
     const board = await readBoard();
@@ -86,8 +86,8 @@ describe("Coordinator", () => {
   });
 
   it("on-approval mode: cards land in Ready to Merge with a report", async () => {
-    const context = fx.context(autoHandler());
-    fx.config.integration.mode = "on-approval";
+    const context = fixture.context(autoHandler());
+    fixture.config.integration.mode = "on-approval";
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
     await coordinator.start();
     await coordinator.drain();
@@ -96,17 +96,17 @@ describe("Coordinator", () => {
     const board = await readBoard();
     expect(findColumn(board, "Ready to Merge")?.cards).toHaveLength(2);
     // Nothing merged yet.
-    await expect(fs.access(path.join(fx.repo, "alpha.txt"))).rejects.toThrow();
+    await expect(fs.access(path.join(fixture.repo, "alpha.txt"))).rejects.toThrow();
 
     // Report appended to each ticket note.
     const alphaId = ticketIdFromCard("Add feature alpha");
-    const note = await fs.readFile(path.join(fx.ticketsDir, `${alphaId}.md`), "utf8");
+    const note = await fs.readFile(path.join(fixture.ticketsDir, `${alphaId}.md`), "utf8");
     expect(note).toContain("ready to merge");
     expect(note).toContain("built alpha");
   });
 
   it("blocked tickets move to the Blocked column", async () => {
-    const context = fx.context(async (spec) => {
+    const context = fixture.context(async (spec) => {
       await writeVerdict(spec.prompt, {
         status: "escalate",
         question: "which db?",
@@ -125,16 +125,16 @@ describe("Coordinator", () => {
   });
 
   it("closes hand-merged Ready-to-Merge cards without double-merging", async () => {
-    const context = fx.context(autoHandler());
-    fx.config.integration.mode = "on-approval";
+    const context = fixture.context(autoHandler());
+    fixture.config.integration.mode = "on-approval";
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
     await coordinator.start();
     await coordinator.drain();
 
     // Human merges alpha by hand.
     const alphaId = ticketIdFromCard("Add feature alpha");
-    await git(fx.repo, "merge", "--ff-only", `jfdi/${alphaId}`);
-    const headBefore = await git(fx.repo, "rev-parse", "HEAD");
+    await git(fixture.repo, "merge", "--ff-only", `jfdi/${alphaId}`);
+    const headBefore = await git(fixture.repo, "rev-parse", "HEAD");
 
     coordinator.requestScan();
     await coordinator.drain();
@@ -142,7 +142,7 @@ describe("Coordinator", () => {
     await new Promise((r) => setTimeout(r, 200));
     coordinator.stop();
 
-    expect(await git(fx.repo, "rev-parse", "HEAD")).toBe(headBefore);
+    expect(await git(fixture.repo, "rev-parse", "HEAD")).toBe(headBefore);
     const board = await readBoard();
     const doneCards = findColumn(board, "Done")?.cards ?? [];
     expect(doneCards.some((c) => c.text.includes("alpha"))).toBe(true);
@@ -150,7 +150,7 @@ describe("Coordinator", () => {
   });
 
   it("materializes stage observations as inbox cards and never dispatches them", async () => {
-    const context = fx.context(async (spec, options) => {
+    const context = fixture.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       if (stage === "implementation") {
         const match = /feature (\w+)/.exec(spec.prompt);
@@ -170,7 +170,7 @@ describe("Coordinator", () => {
       }
       return { ok: true, text: "" };
     });
-    fx.config.integration.mode = "auto";
+    fixture.config.integration.mode = "auto";
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
     await coordinator.start();
     await coordinator.drain();
@@ -195,7 +195,7 @@ describe("Coordinator", () => {
   it("respects max_concurrent", async () => {
     let peak = 0;
     let current = 0;
-    const context = fx.context(async (spec, options) => {
+    const context = fixture.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       if (stage === "implementation") {
         current++;
@@ -212,8 +212,8 @@ describe("Coordinator", () => {
       }
       return { ok: true, text: "" };
     });
-    fx.config.max_concurrent = 1;
-    fx.config.integration.mode = "auto";
+    fixture.config.max_concurrent = 1;
+    fixture.config.integration.mode = "auto";
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
     await coordinator.start();
     await coordinator.drain();

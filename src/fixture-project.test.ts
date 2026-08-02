@@ -35,41 +35,41 @@ async function board(repo: string) {
 
 describe("createProjectFixture", () => {
   it("mints a clean repo with staged history and all cards promoted", async () => {
-    const fx = await createProjectFixture(TEMPLATE, path.join(root, "repo"));
+    const fixture = await createProjectFixture(TEMPLATE, path.join(root, "repo"));
 
-    const subjects = (await git(fx.repo, "log", "--format=%s")).split("\n");
+    const subjects = (await git(fixture.repo, "log", "--format=%s")).split("\n");
     expect(subjects).toHaveLength(3);
     expect(subjects.at(-1)).toBe("chore: project tooling");
-    expect(await git(fx.repo, "status", "--porcelain")).toBe("");
-    expect(await git(fx.repo, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
+    expect(await git(fixture.repo, "status", "--porcelain")).toBe("");
+    expect(await git(fixture.repo, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
 
-    const parsedBoard = await board(fx.repo);
+    const parsedBoard = await board(fixture.repo);
     expect(findColumn(parsedBoard, "Ready")?.cards).toHaveLength(BACKLOG_SIZE);
     expect(findColumn(parsedBoard, "Backlog")?.cards).toHaveLength(0);
-    expect(fx.readyCards).toHaveLength(BACKLOG_SIZE);
+    expect(fixture.readyCards).toHaveLength(BACKLOG_SIZE);
 
     // Prompts were seeded pre-commit, so the copy versions the canonical set;
     // board and tickets exist on disk but stay out of product history.
-    const prompts = await fs.readdir(path.join(fx.repo, ".jfdi", "prompts"));
+    const prompts = await fs.readdir(path.join(fixture.repo, ".jfdi", "prompts"));
     expect(prompts).toContain("implementation.md");
-    const tracked = (await git(fx.repo, "ls-files", ".jfdi")).split("\n");
+    const tracked = (await git(fixture.repo, "ls-files", ".jfdi")).split("\n");
     expect(tracked).toContain(".jfdi/config.json");
     expect(tracked).toContain(".jfdi/prompts/implementation.md");
     expect(tracked).not.toContain(".jfdi/board.md");
     expect(tracked.some((f) => f.startsWith(".jfdi/tickets/"))).toBe(false);
 
     // Working artifacts from the template checkout never leak into copies.
-    await expect(fs.access(path.join(fx.repo, "node_modules"))).rejects.toThrow();
-    await expect(fs.access(path.join(fx.repo, "dist"))).rejects.toThrow();
+    await expect(fs.access(path.join(fixture.repo, "node_modules"))).rejects.toThrow();
+    await expect(fs.access(path.join(fixture.repo, "dist"))).rejects.toThrow();
   });
 
   it("promotes cards by position, wikilink id, or substring", async () => {
-    const fx = await createProjectFixture(TEMPLATE, path.join(root, "repo"), {
+    const fixture = await createProjectFixture(TEMPLATE, path.join(root, "repo"), {
       ready: ["filter-by-category", "7"],
     });
-    expect(fx.readyCards).toHaveLength(2);
+    expect(fixture.readyCards).toHaveLength(2);
 
-    const parsedBoard = await board(fx.repo);
+    const parsedBoard = await board(fixture.repo);
     const ready = findColumn(parsedBoard, "Ready")?.cards ?? [];
     expect(ready.map((c) => c.text)).toEqual([
       "Add a category filter to penny list [[filter-by-category]]",
@@ -79,9 +79,9 @@ describe("createProjectFixture", () => {
   });
 
   it("leaves everything in Backlog with ready: none, and rejects bad selectors", async () => {
-    const fx = await createProjectFixture(TEMPLATE, path.join(root, "a"), { ready: "none" });
-    expect(fx.readyCards).toHaveLength(0);
-    expect(findColumn(await board(fx.repo), "Backlog")?.cards).toHaveLength(BACKLOG_SIZE);
+    const fixture = await createProjectFixture(TEMPLATE, path.join(root, "a"), { ready: "none" });
+    expect(fixture.readyCards).toHaveLength(0);
+    expect(findColumn(await board(fixture.repo), "Backlog")?.cards).toHaveLength(BACKLOG_SIZE);
 
     await expect(
       createProjectFixture(TEMPLATE, path.join(root, "b"), { ready: ["no-such-ticket"] }),
@@ -89,28 +89,33 @@ describe("createProjectFixture", () => {
   });
 
   it("resolves a promoted card to its ticket note spec", async () => {
-    const fx = await createProjectFixture(TEMPLATE, path.join(root, "repo"), {
+    const fixture = await createProjectFixture(TEMPLATE, path.join(root, "repo"), {
       ready: ["filter-by-category"],
     });
-    const card = findColumn(await board(fx.repo), "Ready")?.cards[0];
-    const ticket = await resolveTicket(card?.text ?? "", path.join(fx.repo, ".jfdi", "tickets"));
+    const card = findColumn(await board(fixture.repo), "Ready")?.cards[0];
+    const ticket = await resolveTicket(
+      card?.text ?? "",
+      path.join(fixture.repo, ".jfdi", "tickets"),
+    );
     expect(ticket.id).toBe("filter-by-category");
     expect(ticket.spec).toContain("case-insensitive");
-    expect(ticket.notePath).toBe(path.join(fx.repo, ".jfdi", "tickets", "filter-by-category.md"));
+    expect(ticket.notePath).toBe(
+      path.join(fixture.repo, ".jfdi", "tickets", "filter-by-category.md"),
+    );
   });
 });
 
 describe("half-app end-to-end (fake harness)", () => {
   it("runs a promoted ticket through pipeline and integration onto main", async () => {
-    const fx = await createProjectFixture(TEMPLATE, path.join(root, "repo"), {
+    const fixture = await createProjectFixture(TEMPLATE, path.join(root, "repo"), {
       ready: ["filter-by-category"],
     });
-    const jfdiDir = path.join(fx.repo, ".jfdi");
+    const jfdiDir = path.join(fixture.repo, ".jfdi");
     // The real gate needs node_modules per worktree; substitute a cheap real
     // command — gate mechanics are covered by gate.test.ts and the env-gated
     // suite below covers the fixture's actual gate.
     const config = {
-      ...(await loadConfig(fx.repo)),
+      ...(await loadConfig(fixture.repo)),
       gate: [{ name: "smoke", cmd: "test -f src/commands/list.ts" }],
     };
 
@@ -144,7 +149,7 @@ describe("half-app end-to-end (fake harness)", () => {
 
     const stateDir = path.join(root, "state");
     const context: PipelineContext = {
-      repoRoot: fx.repo,
+      repoRoot: fixture.repo,
       jfdiDir,
       stateDir,
       config,
@@ -153,7 +158,7 @@ describe("half-app end-to-end (fake harness)", () => {
     };
     const ticket = await resolveTicket(
       "Add a category filter to penny list [[filter-by-category]]",
-      path.join(fx.repo, ".jfdi", "tickets"),
+      path.join(fixture.repo, ".jfdi", "tickets"),
     );
 
     const outcome = await runPipeline(context, ticket);
@@ -165,11 +170,11 @@ describe("half-app end-to-end (fake harness)", () => {
     const merged = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
     expect(merged, JSON.stringify(merged)).toEqual({ status: "merged" });
 
-    const subjects = await git(fx.repo, "log", "--format=%s", "main");
+    const subjects = await git(fixture.repo, "log", "--format=%s", "main");
     expect(subjects).toContain("feat: category filter on list");
 
     const note = await fs.readFile(
-      path.join(fx.repo, ".jfdi", "tickets", "filter-by-category.md"),
+      path.join(fixture.repo, ".jfdi", "tickets", "filter-by-category.md"),
       "utf8",
     );
     expect(note).toContain("## Decisions");
@@ -182,9 +187,11 @@ describe("half-app end-to-end (fake harness)", () => {
 // Opt-in — it hits the network/pnpm store and takes a minute cold.
 describe.runIf(process.env.JFDI_FIXTURE_E2E === "1")("half-app real gate", () => {
   it("baseline gate is green", { timeout: 600_000 }, async () => {
-    const fx = await createProjectFixture(TEMPLATE, path.join(root, "repo"), { ready: "none" });
-    const config = await loadConfig(fx.repo);
-    const gate = await runGate(config.gate, fx.repo);
+    const fixture = await createProjectFixture(TEMPLATE, path.join(root, "repo"), {
+      ready: "none",
+    });
+    const config = await loadConfig(fixture.repo);
+    const gate = await runGate(config.gate, fixture.repo);
     expect(gate.results.map((r) => `${r.name}:${r.code}`)).toEqual(
       config.gate.map((g) => `${g.name}:0`),
     );

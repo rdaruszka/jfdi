@@ -5,22 +5,22 @@ import { runPipeline } from "./pipeline.js";
 import { commitFile, type Fixture, makeFixture, stageOf, writeVerdict } from "./test-helpers.js";
 import { resolveTicket } from "./tickets.js";
 
-let fx: Fixture;
+let fixture: Fixture;
 
 beforeEach(async () => {
-  fx = await makeFixture({
+  fixture = await makeFixture({
     gate: [{ name: "check", cmd: "test -f impl.txt" }],
   });
 });
 
 afterEach(async () => {
-  await fx.cleanup();
+  await fixture.cleanup();
 });
 
 describe("runPipeline", () => {
   it("happy path: implementation → gate → code review → QA → passed", async () => {
     const stages: string[] = [];
-    const context = fx.context(async (spec, options) => {
+    const context = fixture.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       stages.push(stage);
       switch (stage) {
@@ -48,7 +48,7 @@ describe("runPipeline", () => {
       return { ok: true, text: `${stage} done` };
     });
 
-    const ticket = await resolveTicket("Build the feature", fx.ticketsDir);
+    const ticket = await resolveTicket("Build the feature", fixture.ticketsDir);
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     if (outcome.status !== "passed") return;
@@ -58,7 +58,7 @@ describe("runPipeline", () => {
     expect(outcome.report.testsAdded).toBe("one regression test");
 
     // Decisions recorded in the ticket note.
-    const note = await fs.readFile(path.join(fx.ticketsDir, `${ticket.id}.md`), "utf8");
+    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
     expect(note).toContain("## Decisions");
     expect(note).toContain("flat file instead of a db");
 
@@ -69,7 +69,7 @@ describe("runPipeline", () => {
   });
 
   it("writes run artifacts to the state directory and worktrees to .jfdi/", async () => {
-    const context = fx.context(async (spec, options) => {
+    const context = fixture.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       if (stage === "implementation") {
         await commitFile(options.cwd, "impl.txt", "the feature\n", "implement");
@@ -80,24 +80,24 @@ describe("runPipeline", () => {
       return { ok: true, text: "" };
     });
 
-    const ticket = await resolveTicket("Build the feature", fx.ticketsDir);
+    const ticket = await resolveTicket("Build the feature", fixture.ticketsDir);
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     if (outcome.status !== "passed") return;
 
     // Round artifacts (verdicts, logs) live outside the project checkout…
-    const roundDir = path.join(fx.stateDir, "runs", ticket.id, "run-1", "round-1");
+    const roundDir = path.join(fixture.stateDir, "runs", ticket.id, "run-1", "round-1");
     expect(await fs.readdir(roundDir)).toContain("implementation.verdict.json");
     // …and nothing put a runs/ directory back inside .jfdi/.
-    await expect(fs.readdir(path.join(fx.jfdiDir, "runs"))).rejects.toThrow();
+    await expect(fs.readdir(path.join(fixture.jfdiDir, "runs"))).rejects.toThrow();
     // Worktrees are unchanged: still in-project, still gitignored.
-    expect(outcome.worktree.path).toBe(path.join(fx.jfdiDir, "worktrees", ticket.id));
+    expect(outcome.worktree.path).toBe(path.join(fixture.jfdiDir, "worktrees", ticket.id));
   });
 
   it("code review failure skips QA and feeds back into round 2", async () => {
     const stages: string[] = [];
     let implementationRounds = 0;
-    const context = fx.context(async (spec, options) => {
+    const context = fixture.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       stages.push(stage);
       switch (stage) {
@@ -136,7 +136,7 @@ describe("runPipeline", () => {
       return { ok: true, text: "" };
     });
 
-    const ticket = await resolveTicket("Iterate on review", fx.ticketsDir);
+    const ticket = await resolveTicket("Iterate on review", fixture.ticketsDir);
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     // Round 1: CR fail → QA never ran. Round 2: full pass.
@@ -153,7 +153,7 @@ describe("runPipeline", () => {
   it("gate failure short-circuits reviews and feeds output back", async () => {
     let implementationRounds = 0;
     const stages: string[] = [];
-    const context = fx.context(async (spec, options) => {
+    const context = fixture.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       stages.push(stage);
       if (stage === "implementation") {
@@ -173,14 +173,14 @@ describe("runPipeline", () => {
       return { ok: true, text: "" };
     });
 
-    const ticket = await resolveTicket("Gate learner", fx.ticketsDir);
+    const ticket = await resolveTicket("Gate learner", fixture.ticketsDir);
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     expect(stages).toEqual(["implementation", "implementation", "code-review", "qa"]);
   });
 
   it("escalation blocks the ticket and writes Questions with a recommendation", async () => {
-    const context = fx.context(async (spec) => {
+    const context = fixture.context(async (spec) => {
       await writeVerdict(spec.prompt, {
         status: "escalate",
         question: "Should auth use OAuth or magic links?",
@@ -189,10 +189,10 @@ describe("runPipeline", () => {
       return { ok: true, text: "" };
     });
 
-    const ticket = await resolveTicket("Ambiguous auth ticket", fx.ticketsDir);
+    const ticket = await resolveTicket("Ambiguous auth ticket", fixture.ticketsDir);
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("blocked");
-    const note = await fs.readFile(path.join(fx.ticketsDir, `${ticket.id}.md`), "utf8");
+    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
     expect(note).toContain("## Questions");
     expect(note).toContain("OAuth or magic links");
     expect(note).toContain("Magic links — no third-party dependency.");
@@ -201,7 +201,7 @@ describe("runPipeline", () => {
   });
 
   it("exhausted rounds block with accumulated history in the note", async () => {
-    const context = fx.context(async (spec, options) => {
+    const context = fixture.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       if (stage === "implementation") {
         await commitFile(options.cwd, "impl.txt", `${Math.random()}\n`, "try");
@@ -212,22 +212,22 @@ describe("runPipeline", () => {
       return { ok: true, text: "" };
     });
 
-    const ticket = await resolveTicket("Never good enough", fx.ticketsDir);
+    const ticket = await resolveTicket("Never good enough", fixture.ticketsDir);
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("blocked");
     if (outcome.status === "blocked") expect(outcome.reason).toContain("retries exhausted");
-    const note = await fs.readFile(path.join(fx.ticketsDir, `${ticket.id}.md`), "utf8");
+    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
     expect(note).toContain("retries exhausted");
     expect(note).toContain("still not good enough");
   });
 
   it("mode: ask lowers the escalation bar in the implementation prompt", async () => {
     await fs.writeFile(
-      path.join(fx.ticketsDir, "careful.md"),
+      path.join(fixture.ticketsDir, "careful.md"),
       "---\nmode: ask\n---\n\nDo the careful thing.\n",
     );
     let sawOverride = false;
-    const context = fx.context(async (spec, options) => {
+    const context = fixture.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       if (stage === "implementation") {
         sawOverride = spec.prompt.includes("Escalation override");
@@ -238,7 +238,7 @@ describe("runPipeline", () => {
       }
       return { ok: true, text: "" };
     });
-    const ticket = await resolveTicket("[[careful]]", fx.ticketsDir);
+    const ticket = await resolveTicket("[[careful]]", fixture.ticketsDir);
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     expect(sawOverride).toBe(true);
@@ -246,7 +246,7 @@ describe("runPipeline", () => {
 
   it("a session that never writes a verdict burns a round with feedback", async () => {
     let implementationCalls = 0;
-    const context = fx.context(async (spec, options) => {
+    const context = fixture.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       if (stage === "implementation") {
         implementationCalls++;
@@ -259,7 +259,7 @@ describe("runPipeline", () => {
       }
       return { ok: true, text: "" };
     });
-    const ticket = await resolveTicket("Flaky session", fx.ticketsDir);
+    const ticket = await resolveTicket("Flaky session", fixture.ticketsDir);
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     expect(implementationCalls).toBe(2);

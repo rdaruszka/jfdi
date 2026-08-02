@@ -7,7 +7,7 @@ import { runPipeline } from "./pipeline.js";
 import { commitFile, type Fixture, makeFixture, stageOf, writeVerdict } from "./test-helpers.js";
 import { resolveTicket } from "./tickets.js";
 
-let fx: Fixture;
+let fixture: Fixture;
 
 /** Handler that sails a ticket through the pipeline (no gate configured). */
 function passingHandler(file: string) {
@@ -26,38 +26,38 @@ function passingHandler(file: string) {
 }
 
 beforeEach(async () => {
-  fx = await makeFixture();
+  fixture = await makeFixture();
 });
 
 afterEach(async () => {
-  await fx.cleanup();
+  await fixture.cleanup();
 });
 
 describe("integrateTicket", () => {
   it("clean rebase → merge, cleanup, report", async () => {
-    const context = fx.context(passingHandler("feat.txt"));
-    const ticket = await resolveTicket("Ship feature", fx.ticketsDir);
+    const context = fixture.context(passingHandler("feat.txt"));
+    const ticket = await resolveTicket("Ship feature", fixture.ticketsDir);
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     if (outcome.status !== "passed") return;
 
     // Move main forward (non-conflicting) to force a real rebase.
-    await commitFile(fx.repo, "other.txt", "other\n", "unrelated");
+    await commitFile(fixture.repo, "other.txt", "other\n", "unrelated");
 
     const result = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
     expect(result).toEqual({ status: "merged" });
-    expect(await fs.readFile(path.join(fx.repo, "feat.txt"), "utf8")).toBe("feature\n");
+    expect(await fs.readFile(path.join(fixture.repo, "feat.txt"), "utf8")).toBe("feature\n");
     // Worktree removed.
     await expect(fs.access(outcome.worktree.path)).rejects.toThrow();
     // Report appended to the note.
-    const note = await fs.readFile(path.join(fx.ticketsDir, `${ticket.id}.md`), "utf8");
+    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
     expect(note).toContain("## Report");
     expect(note).toContain("built feat.txt");
     expect(note).toContain("Merged into `main`");
   });
 
   it("conflicting rebase: agent resolves, clean verdict → merged", async () => {
-    const context = fx.context(async (spec, options) => {
+    const context = fixture.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       if (stage === "implementation") {
         await commitFile(options.cwd, "README.md", "branch version\n", "edit readme");
@@ -72,16 +72,16 @@ describe("integrateTicket", () => {
       }
       return { ok: true, text: "" };
     });
-    const ticket = await resolveTicket("Conflicting edit", fx.ticketsDir);
+    const ticket = await resolveTicket("Conflicting edit", fixture.ticketsDir);
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     if (outcome.status !== "passed") return;
 
     // Conflicting change on main.
-    await commitFile(fx.repo, "README.md", "main version\n", "main edit");
+    await commitFile(fixture.repo, "README.md", "main version\n", "main edit");
 
     // Swap in a proper conflict-resolving integration handler.
-    const integrationContext = fx.context(async (spec, options) => {
+    const integrationContext = fixture.context(async (spec, options) => {
       expect(stageOf(spec.prompt)).toBe("integration");
       await fs.writeFile(path.join(options.cwd, "README.md"), "merged version\n");
       await git(options.cwd, "add", "README.md");
@@ -96,19 +96,21 @@ describe("integrateTicket", () => {
       outcome.report,
     );
     expect(result.status).toBe("merged");
-    expect(await fs.readFile(path.join(fx.repo, "README.md"), "utf8")).toBe("merged version\n");
+    expect(await fs.readFile(path.join(fixture.repo, "README.md"), "utf8")).toBe(
+      "merged version\n",
+    );
   });
 
   it("complicated resolution goes back through QA before landing", async () => {
-    const context = fx.context(passingHandler("feat2.txt"));
-    const ticket = await resolveTicket("Complicated landing", fx.ticketsDir);
+    const context = fixture.context(passingHandler("feat2.txt"));
+    const ticket = await resolveTicket("Complicated landing", fixture.ticketsDir);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
-    await commitFile(fx.repo, "feat2.txt", "main took the name\n", "collide");
+    await commitFile(fixture.repo, "feat2.txt", "main took the name\n", "collide");
 
     const stages: string[] = [];
-    const integrationContext = fx.context(async (spec, options) => {
+    const integrationContext = fixture.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       stages.push(stage);
       if (stage === "integration") {
@@ -132,17 +134,17 @@ describe("integrateTicket", () => {
     );
     expect(result.status).toBe("merged");
     expect(stages).toEqual(["integration", "qa"]);
-    expect(await fs.readFile(path.join(fx.repo, "feat2.txt"), "utf8")).toBe("reconciled\n");
+    expect(await fs.readFile(path.join(fixture.repo, "feat2.txt"), "utf8")).toBe("reconciled\n");
   });
 
   it("complicated resolution with failing re-QA blocks", async () => {
-    const context = fx.context(passingHandler("feat3.txt"));
-    const ticket = await resolveTicket("Bad landing", fx.ticketsDir);
+    const context = fixture.context(passingHandler("feat3.txt"));
+    const ticket = await resolveTicket("Bad landing", fixture.ticketsDir);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
-    await commitFile(fx.repo, "feat3.txt", "collision\n", "collide");
+    await commitFile(fixture.repo, "feat3.txt", "collision\n", "collide");
 
-    const integrationContext = fx.context(async (spec, options) => {
+    const integrationContext = fixture.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       if (stage === "integration") {
         await fs.writeFile(path.join(options.cwd, "feat3.txt"), "broken reconcile\n");
@@ -161,24 +163,24 @@ describe("integrateTicket", () => {
       outcome.report,
     );
     expect(result.status).toBe("blocked");
-    expect(await isAncestor(fx.repo, outcome.worktree.branch, "main")).toBe(false);
-    const note = await fs.readFile(path.join(fx.ticketsDir, `${ticket.id}.md`), "utf8");
+    expect(await isAncestor(fixture.repo, outcome.worktree.branch, "main")).toBe(false);
+    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
     expect(note).toContain("behavior regressed");
   });
 
   it("detects a branch the human already merged and closes without double-merging", async () => {
-    const context = fx.context(passingHandler("feat4.txt"));
-    const ticket = await resolveTicket("Hand merged", fx.ticketsDir);
+    const context = fixture.context(passingHandler("feat4.txt"));
+    const ticket = await resolveTicket("Hand merged", fixture.ticketsDir);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
     // Human merges by hand.
-    await git(fx.repo, "merge", "--ff-only", outcome.worktree.branch);
-    const headBefore = await git(fx.repo, "rev-parse", "HEAD");
+    await git(fixture.repo, "merge", "--ff-only", outcome.worktree.branch);
+    const headBefore = await git(fixture.repo, "rev-parse", "HEAD");
 
     const result = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
     expect(result.status).toBe("already-merged");
-    expect(await git(fx.repo, "rev-parse", "HEAD")).toBe(headBefore);
+    expect(await git(fixture.repo, "rev-parse", "HEAD")).toBe(headBefore);
   });
 });
 
