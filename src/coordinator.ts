@@ -200,11 +200,12 @@ export class Coordinator {
 
   /**
    * Close Ready-to-Merge cards whose work already landed, without merging
-   * again. Two shapes of evidence, because the obvious one is perishable: the
-   * branch is contained in the target, or the branch is gone and a `merged`
-   * event records that it got there. Branch deletion is the normal end of a
-   * merge — `jfdi merge` does it, and so does a human tidying up — so treating
-   * a missing branch as "no evidence" strands the card forever.
+   * again. The obvious evidence is perishable — branch deletion is the normal
+   * end of a merge, both when `jfdi merge` does it and when a human tidies up
+   * after merging by hand — so treating a missing branch as "no evidence"
+   * strands the card forever. Three shapes are accepted, in cost order:
+   * the branch still exists and is contained in the target; a `merged` event
+   * is on record; or the commit the reviews signed off on is in the target.
    */
   private async closeMergedCards(board: Board): Promise<void> {
     const columns = this.context.config.board.columns;
@@ -217,19 +218,38 @@ export class Coordinator {
       const branch = ticketBranch(id);
       let hasMerged: boolean;
       if (await branchExists(this.context.repoRoot, branch)) {
-        hasMerged = await isAncestor(
-          this.context.repoRoot,
-          branch,
-          this.context.config.integration.target_branch,
-        );
+        hasMerged = await this.isInTarget(branch);
       } else {
         if (mergedIds === null) mergedIds = await mergedTicketIds(this.context.stateDir);
-        hasMerged = mergedIds.has(id);
+        hasMerged = mergedIds.has(id) || (await this.isSignedOffCommitInTarget(id));
       }
       if (!hasMerged) continue;
       await this.moveCardSafe(card, columns.readyToMerge, columns.done, true);
       this.context.log.emit("merged", id, { note: "merged outside the pipeline — card closed" });
     }
+  }
+
+  /**
+   * Whether the commit a run's reviews signed off on is already in the target.
+   * This is the evidence a hand-merge leaves once the branch is gone: nothing
+   * records the merge, but `report.json` still names the tip, and a plain
+   * `git merge` carries that very commit into the target. An integration that
+   * rebased first rewrites the sha instead — that case is the `merged` event's,
+   * which only our own integration writes. A sha git can no longer resolve
+   * (the branch was deleted unmerged) is not contained in anything.
+   */
+  private async isSignedOffCommitInTarget(ticketId: string): Promise<boolean> {
+    const report = await loadReport(this.context.stateDir, ticketId);
+    if (report === null) return false;
+    return this.isInTarget(report.commit);
+  }
+
+  private isInTarget(commitish: string): Promise<boolean> {
+    return isAncestor(
+      this.context.repoRoot,
+      commitish,
+      this.context.config.integration.target_branch,
+    );
   }
 
   /**

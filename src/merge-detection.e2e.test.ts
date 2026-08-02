@@ -380,6 +380,54 @@ describe("a running coordinator and merges it did not perform", () => {
   );
 
   it(
+    "closes the card when the human merges the branch by hand and deletes it",
+    async () => {
+      const sandbox = await makeSandbox();
+      expect((await runCli(sandbox, ["init", "--bare"])).code).toBe(0);
+      await seedBegin(sandbox, ["Add feature epsilon", "Add a slow feature"]);
+
+      const coordinator = await startCoordinator(sandbox);
+      await waitFor(
+        async () =>
+          (await columnCards(sandbox, "Ready to Merge")).some((c) => c.includes("epsilon")),
+        () => "epsilon never reached Ready to Merge",
+      );
+      const epsilonId = await soleTicketId(sandbox, "Add feature epsilon");
+
+      // The human approves it the other way: no `jfdi merge`, just git. Nothing
+      // writes a `merged` event, and the tidy-up removes the branch that would
+      // otherwise prove the work landed.
+      await git(sandbox.project, "worktree", "remove", "--force", `.jfdi/worktrees/${epsilonId}`);
+      await git(sandbox.project, "merge", "--no-ff", "-m", "merge by hand", `jfdi/${epsilonId}`);
+      await git(sandbox.project, "branch", "-D", `jfdi/${epsilonId}`);
+
+      // Touch the board so the mtime poll runs a scan, as saving it would.
+      const now = new Date();
+      await fs.utimes(sandbox.boardPath, now, now);
+
+      await waitFor(
+        async () => (await columnCards(sandbox, "Done")).some((c) => c.includes("epsilon")),
+        async () => `epsilon never reached Done; board:\n${await readBoard(sandbox)}`,
+      );
+      expect(coordinator.isAlive()).toBe(true);
+
+      expect(await columnCards(sandbox, "Done")).toContain("- [x] Add feature epsilon");
+      expect(await columnCards(sandbox, "Ready to Merge")).toEqual([]);
+      expect((await statusTickets(sandbox))[epsilonId]?.status).toBe("done");
+
+      // Exactly one closing event: the sweep must not keep re-closing the card.
+      const merged = (await readEvents(sandbox)).filter(
+        (e) => e.type === "merged" && e.ticketId === epsilonId,
+      );
+      expect(merged).toHaveLength(1);
+      expect(merged[0]?.data?.note).toContain("merged outside the pipeline");
+
+      stopCoordinator(coordinator);
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
     "leaves a Ready-to-Merge card alone when nothing records a merge",
     async () => {
       const sandbox = await makeSandbox();

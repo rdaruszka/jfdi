@@ -4,8 +4,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { findColumn, moveCard, parseBoard } from "./board.js";
 import { Coordinator } from "./coordinator.js";
 import { EventLog } from "./events.js";
-import { branchExists, deleteBranch, git } from "./git.js";
+import { branchExists, deleteBranch, git, revParse } from "./git.js";
 import { worktreesDir } from "./pipeline.js";
+import { saveReport } from "./report.js";
 import { commitFile, type Fixture, makeFixture, stageOf, writeVerdict } from "./test-helpers.js";
 import { ticketIdFromCard } from "./util/ids.js";
 
@@ -97,15 +98,32 @@ async function strandCard(): Promise<string> {
   return ticketIdFromCard("Add feature alpha");
 }
 
-/** Merge a ticket branch into the target and delete it, as `jfdi merge` does. */
-async function landAndDeleteBranch(ticketId: string): Promise<void> {
+/**
+ * Merge a ticket branch into the target and delete it — how both approval
+ * paths end. Returns the tip that was merged, the sha a run signs off on.
+ */
+async function landAndDeleteBranch(ticketId: string): Promise<string> {
   const branch = `jfdi/${ticketId}`;
   await git(fixture.repo, "checkout", "-b", branch);
   await commitFile(fixture.repo, "alpha.txt", "alpha\n", "implement alpha");
+  const tip = await revParse(fixture.repo, "HEAD");
   await git(fixture.repo, "checkout", "main");
-  await git(fixture.repo, "merge", "--ff-only", branch);
+  await git(fixture.repo, "merge", "--no-ff", "-m", `merge ${branch}`, branch);
   await deleteBranch(fixture.repo, branch);
   expect(await branchExists(fixture.repo, branch)).toBe(false);
+  return tip;
+}
+
+/** A report.json for a ticket, naming the commit its reviews signed off on. */
+async function recordSignOff(ticketId: string, commit: string): Promise<void> {
+  await saveReport(fixture.stateDir, ticketId, {
+    summary: "built alpha",
+    decisions: [],
+    observations: [],
+    testsAdded: "",
+    rounds: 1,
+    commit,
+  });
 }
 
 /** Handler that implements each ticket by writing a file named for its card. */
@@ -295,9 +313,53 @@ describe("Coordinator", () => {
     expect(context.log.snapshot().tickets[alphaId]?.status).toBe("done");
   });
 
+  it("closes a Ready-to-Merge card the human merged by hand and tidied up", async () => {
+    // The other approval path: no `jfdi merge`, so nothing recorded the merge.
+    // The evidence left is the sign-off commit named by report.json, which a
+    // plain `git merge` keeps and which is now contained in the target.
+    const alphaId = await strandCard();
+    const tip = await landAndDeleteBranch(alphaId);
+    await recordSignOff(alphaId, tip);
+
+    const context = fixture.context(autoHandler());
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+    await coordinator.start();
+    coordinator.stop();
+
+    const board = await readBoard();
+    expect(findColumn(board, "Done")?.cards.map((c) => [c.text, c.checked])).toEqual([
+      ["Add feature alpha", true],
+    ]);
+    expect(findColumn(board, "Ready to Merge")?.cards).toHaveLength(0);
+    expect(context.log.snapshot().tickets[alphaId]?.status).toBe("done");
+  });
+
   it("leaves a Ready-to-Merge card alone when the branch vanished unmerged", async () => {
     // Branch gone with nothing on record: no evidence the work ever landed.
     await strandCard();
+
+    const context = fixture.context(autoHandler());
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+    await coordinator.start();
+    coordinator.stop();
+
+    const board = await readBoard();
+    expect(findColumn(board, "Ready to Merge")?.cards).toHaveLength(1);
+    expect(findColumn(board, "Done")?.cards).toHaveLength(0);
+  });
+
+  it("leaves a Ready-to-Merge card alone when its sign-off commit is not in the target", async () => {
+    // A run that signed off and whose branch is gone, but whose work never
+    // reached the target: a report naming a live commit is not evidence by
+    // itself — containment is the question.
+    // Parked on a branch of its own so the sha still resolves; unmerged either
+    // way. The board is written afterwards so this detour cannot commit it.
+    await git(fixture.repo, "checkout", "-b", "sidetrack");
+    await commitFile(fixture.repo, "alpha.txt", "alpha\n", "implement alpha");
+    const tip = await revParse(fixture.repo, "HEAD");
+    await git(fixture.repo, "checkout", "main");
+    const alphaId = await strandCard();
+    await recordSignOff(alphaId, tip);
 
     const context = fixture.context(autoHandler());
     const coordinator = new Coordinator(context, { pollMs: 60_000 });

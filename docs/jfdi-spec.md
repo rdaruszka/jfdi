@@ -168,7 +168,7 @@ Per merge, the Integration agent:
 `integration.mode`:
 
 - **`auto`** — pipeline pass flows straight through Integration to done.
-- **`on-approval`** — finished cards land in **Ready to Merge** with the final report (summary, decision log, review verdicts) appended to the ticket note. The human either tells JFDI to merge (`jfdi merge <ticket>` / moving the card) or merges by hand — the coordinator closes the card without double-merging, on either evidence: a branch already contained in the target, or, once the branch has been deleted (how every merge ends), a merge already on record in `events.jsonl`. A card the human drags out of Ready to Merge is acknowledged with a closing event too, so derived state never keeps advertising an approval question the board has already answered.
+- **`on-approval`** — finished cards land in **Ready to Merge** with the final report (summary, decision log, review verdicts) appended to the ticket note. The human either tells JFDI to merge (`jfdi merge <ticket>` / moving the card) or merges by hand — the coordinator closes the card without double-merging. It accepts any evidence that the work landed: a branch already contained in the target, or — once the branch has been deleted, which is how every merge ends — a merge already on record in `events.jsonl`, or the commit the reviews signed off on already contained in the target. A card the human drags out of Ready to Merge is acknowledged with a closing event too, so derived state never keeps advertising an approval question the board has already answered.
 
 Merge target is local git only in this iteration; the merge-target abstraction (§12) carries GitHub/Bitbucket PR flows later.
 
