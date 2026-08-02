@@ -245,12 +245,12 @@ describe("runPipeline", () => {
   });
 
   it("a session that never writes a verdict burns a round with feedback", async () => {
-    let implCalls = 0;
+    let implementationCalls = 0;
     const context = fx.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       if (stage === "implementation") {
-        implCalls++;
-        if (implCalls === 1) return { ok: false, text: "crashed mid-flight" };
+        implementationCalls++;
+        if (implementationCalls === 1) return { ok: false, text: "crashed mid-flight" };
         expect(spec.prompt).toContain("crashed mid-flight");
         await commitFile(options.cwd, "impl.txt", "ok\n", "implement");
         await writeVerdict(spec.prompt, { status: "done" });
@@ -262,6 +262,6 @@ describe("runPipeline", () => {
     const ticket = await resolveTicket("Flaky session", fx.ticketsDir);
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
-    expect(implCalls).toBe(2);
+    expect(implementationCalls).toBe(2);
   });
 });

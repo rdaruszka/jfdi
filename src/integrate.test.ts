@@ -81,7 +81,7 @@ describe("integrateTicket", () => {
     await commitFile(fx.repo, "README.md", "main version\n", "main edit");
 
     // Swap in a proper conflict-resolving integration handler.
-    const ctx2 = fx.context(async (spec, options) => {
+    const integrationContext = fx.context(async (spec, options) => {
       expect(stageOf(spec.prompt)).toBe("integration");
       await fs.writeFile(path.join(options.cwd, "README.md"), "merged version\n");
       await git(options.cwd, "add", "README.md");
@@ -89,7 +89,12 @@ describe("integrateTicket", () => {
       await writeVerdict(spec.prompt, { resolution: "clean", notes: "kept both edits" });
       return { ok: true, text: "" };
     });
-    const result = await integrateTicket(ctx2, ticket, outcome.worktree, outcome.report);
+    const result = await integrateTicket(
+      integrationContext,
+      ticket,
+      outcome.worktree,
+      outcome.report,
+    );
     expect(result.status).toBe("merged");
     expect(await fs.readFile(path.join(fx.repo, "README.md"), "utf8")).toBe("merged version\n");
   });
@@ -103,7 +108,7 @@ describe("integrateTicket", () => {
     await commitFile(fx.repo, "feat2.txt", "main took the name\n", "collide");
 
     const stages: string[] = [];
-    const ctx2 = fx.context(async (spec, options) => {
+    const integrationContext = fx.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       stages.push(stage);
       if (stage === "integration") {
@@ -119,7 +124,12 @@ describe("integrateTicket", () => {
       }
       return { ok: true, text: "" };
     });
-    const result = await integrateTicket(ctx2, ticket, outcome.worktree, outcome.report);
+    const result = await integrateTicket(
+      integrationContext,
+      ticket,
+      outcome.worktree,
+      outcome.report,
+    );
     expect(result.status).toBe("merged");
     expect(stages).toEqual(["integration", "qa"]);
     expect(await fs.readFile(path.join(fx.repo, "feat2.txt"), "utf8")).toBe("reconciled\n");
@@ -132,7 +142,7 @@ describe("integrateTicket", () => {
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
     await commitFile(fx.repo, "feat3.txt", "collision\n", "collide");
 
-    const ctx2 = fx.context(async (spec, options) => {
+    const integrationContext = fx.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       if (stage === "integration") {
         await fs.writeFile(path.join(options.cwd, "feat3.txt"), "broken reconcile\n");
@@ -144,7 +154,12 @@ describe("integrateTicket", () => {
       }
       return { ok: true, text: "" };
     });
-    const result = await integrateTicket(ctx2, ticket, outcome.worktree, outcome.report);
+    const result = await integrateTicket(
+      integrationContext,
+      ticket,
+      outcome.worktree,
+      outcome.report,
+    );
     expect(result.status).toBe("blocked");
     expect(await isAncestor(fx.repo, outcome.worktree.branch, "main")).toBe(false);
     const note = await fs.readFile(path.join(fx.ticketsDir, `${ticket.id}.md`), "utf8");
