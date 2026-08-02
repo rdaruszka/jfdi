@@ -63,7 +63,21 @@ export function emptyState(): CoordinatorState {
   return { updatedAt: "", tickets: {}, integrationQueue: [] };
 }
 
-const STAGE_NAMES: readonly string[] = ["implementation", "code-review", "qa", "integration"];
+/** Longest excerpt of a rejected line quoted back in an error. */
+const MAX_BAD_LINE_CHARS = 200;
+
+/**
+ * Every `StageName`, as a runtime lookup. Keyed by the union rather than
+ * listed as an array so the compiler enforces the pairing: adding a stage
+ * without adding it here fails the build, instead of silently making
+ * `stageField` reject it.
+ */
+const STAGE_NAMES: Record<StageName, true> = {
+  implementation: true,
+  "code-review": true,
+  qa: true,
+  integration: true,
+};
 
 // An event's `data` is untyped by design (each event type carries its own
 // shape) and reaches us re-parsed from events.jsonl, so every field read out
@@ -80,7 +94,9 @@ function numberField(data: Record<string, unknown> | undefined, key: string): nu
 
 function stageField(data: Record<string, unknown> | undefined): StageName | undefined {
   const value = data?.stage;
-  return typeof value === "string" && STAGE_NAMES.includes(value)
+  // `hasOwn`, not `in`: `in` walks the prototype chain, so a corrupt event
+  // carrying stage "toString" would pass.
+  return typeof value === "string" && Object.hasOwn(STAGE_NAMES, value)
     ? (value as StageName)
     : undefined;
 }
@@ -278,9 +294,6 @@ export class EventLog {
     return state;
   }
 }
-
-/** Longest excerpt of a rejected line quoted back in an error. */
-const MAX_BAD_LINE_CHARS = 200;
 
 // events.jsonl and state.json are files on disk: another process, a crashed
 // write, or a hand edit can leave anything there. Both are checked before the

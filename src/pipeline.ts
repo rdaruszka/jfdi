@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { JfdiConfig } from "./config.js";
 import type { EventLog, StageName } from "./events.js";
-import { formatGateFailure, runGate } from "./gate.js";
+import { formatGateFailure, type GateResult, runGate } from "./gate.js";
 import { commitAllIfDirty, createWorktree, git, revParse, type Worktree } from "./git.js";
 import type { Harness } from "./harness/index.js";
 import { formatGateCommands, loadPrompt, type PromptName, renderPrompt } from "./prompts.js";
@@ -341,7 +341,11 @@ interface RoundResult {
 }
 
 /** The mechanical gate, with its start/result events. Cheapest reviewer, runs first, always. */
-async function runGateStage(context: PipelineContext, ticket: Ticket, worktree: Worktree) {
+async function runGateStage(
+  context: PipelineContext,
+  ticket: Ticket,
+  worktree: Worktree,
+): Promise<GateResult> {
   context.log.emit("gate_start", ticket.id);
   const gate = await runGate(context.config.gate, worktree.path, (name) =>
     context.log.emit("session_activity", ticket.id, { text: `gate: ${name}` }),
@@ -370,7 +374,10 @@ async function runRound(
 ): Promise<RoundResult> {
   const decisions: string[] = [];
   const observations: string[] = [];
-  const soFar = { decisions, observations, summary: undefined };
+  // Nothing has been collected until Implementation returns, so the two exits
+  // below report empty rather than sharing the arrays the rest of the function
+  // pushes into.
+  const nothingCollected = { decisions: [], observations: [], summary: undefined };
 
   const implementation = await runImplementationStage(
     context,
@@ -383,7 +390,7 @@ async function runRound(
   );
   if (implementation.kind === "retry") {
     const { feedback } = implementation;
-    return { ...soFar, step: { kind: "retry", source: "implementation", feedback } };
+    return { ...nothingCollected, step: { kind: "retry", source: "implementation", feedback } };
   }
   if (implementation.kind === "escalate") {
     const { question, recommendation } = implementation;
@@ -391,7 +398,7 @@ async function runRound(
     context.log.emit("blocked", ticket.id, {
       reason: `escalated: ${question.slice(0, MAX_REASON_CHARS)}`,
     });
-    return { ...soFar, step: { kind: "blocked", reason: question } };
+    return { ...nothingCollected, step: { kind: "blocked", reason: question } };
   }
   decisions.push(...implementation.decisions);
   observations.push(...implementation.observations);
