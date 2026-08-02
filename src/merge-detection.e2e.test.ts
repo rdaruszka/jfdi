@@ -24,6 +24,9 @@ import * as path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { git } from "./git.js";
+// The card-to-ticket-id rule is the product's own; a test that reimplemented
+// it would be pinning its own copy, not the one the coordinator looks up.
+import { ticketIdFromCard } from "./util/ids.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -260,6 +263,26 @@ async function seedBegin(sandbox: Sandbox, cardTexts: string[]): Promise<void> {
   await fs.writeFile(sandbox.boardPath, board.replace("## Ready\n", `## Ready\n\n${cards}\n`));
 }
 
+/**
+ * A report.json on record for a card that never ran in this sandbox, naming
+ * the commit its reviews signed off on — the state a run leaves behind.
+ */
+async function writeReport(sandbox: Sandbox, cardText: string, commit: string): Promise<void> {
+  const runDir = path.join(sandbox.stateDir, "runs", ticketIdFromCard(cardText));
+  await fs.mkdir(runDir, { recursive: true });
+  await fs.writeFile(
+    path.join(runDir, "report.json"),
+    JSON.stringify({
+      summary: "signed off",
+      decisions: [],
+      observations: [],
+      testsAdded: "",
+      rounds: 1,
+      commit,
+    }),
+  );
+}
+
 /** The id of the only ticket the coordinator has run so far. */
 async function soleTicketId(sandbox: Sandbox, cardText: string): Promise<string> {
   const tickets = await statusTickets(sandbox);
@@ -448,6 +471,56 @@ describe("a running coordinator and merges it did not perform", () => {
       expect(await columnCards(sandbox, "Ready to Merge")).toEqual(["- [ ] Add feature gamma"]);
       expect(await columnCards(sandbox, "Done")).toEqual([]);
       expect(coordinator.output()).not.toContain("merged");
+
+      stopCoordinator(coordinator);
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
+    "asks git about the sign-off commit without trusting the report or stalling on it",
+    async () => {
+      const sandbox = await makeSandbox();
+      expect((await runCli(sandbox, ["init", "--bare"])).code).toBe(0);
+      // Two cards waiting for approval, each with a report on record and no
+      // branch left, and one card waiting to be dispatched behind them.
+      const board = await readBoard(sandbox);
+      await fs.writeFile(
+        sandbox.boardPath,
+        board
+          .replace(
+            "## Ready to Merge\n",
+            "## Ready to Merge\n\n- [ ] Add feature ghost\n- [ ] Add feature sidetrack\n",
+          )
+          .replace("## Ready\n", "## Ready\n\n- [ ] Add feature zulu\n"),
+      );
+      // sidetrack's sign-off commit is real but never reached the target;
+      // ghost's is a sha git cannot resolve at all, which `git merge-base` errors
+      // on rather than answering. Neither is evidence that the work landed.
+      await git(sandbox.project, "checkout", "-b", "sidetrack");
+      await fs.writeFile(path.join(sandbox.project, "side.txt"), "side\n");
+      await git(sandbox.project, "add", "-A");
+      await git(sandbox.project, "commit", "-m", "side work");
+      const parked = (await git(sandbox.project, "rev-parse", "HEAD")).trim();
+      await git(sandbox.project, "checkout", "main");
+      await writeReport(sandbox, "Add feature ghost", "d".repeat(40));
+      await writeReport(sandbox, "Add feature sidetrack", parked);
+
+      const coordinator = await startCoordinator(sandbox);
+      // The scan that swept those two also has a card to dispatch: an
+      // unanswerable question must not take the rest of the scan down with it.
+      await waitFor(
+        async () => (await columnCards(sandbox, "Ready to Merge")).some((c) => c.includes("zulu")),
+        async () => `zulu never ran; board:\n${await readBoard(sandbox)}`,
+      );
+
+      expect(await columnCards(sandbox, "Ready to Merge")).toEqual(
+        expect.arrayContaining(["- [ ] Add feature ghost", "- [ ] Add feature sidetrack"]),
+      );
+      expect(await columnCards(sandbox, "Done")).toEqual([]);
+      const events = await readEvents(sandbox);
+      expect(events.filter((e) => e.type === "merged")).toEqual([]);
+      expect(events.filter((e) => e.type === "error")).toEqual([]);
 
       stopCoordinator(coordinator);
     },
