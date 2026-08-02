@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { EventLog, loadState } from "./events.js";
+import { EventLog, loadState, mergedTicketIds } from "./events.js";
 
 let dir: string;
 
@@ -81,6 +81,75 @@ describe("EventLog", () => {
     const rebuilt = await EventLog.rebuild(dir);
     expect(rebuilt.tickets.t1?.status).toBe("merge-queued");
     expect(rebuilt.integrationQueue).toEqual(["t1"]);
+  });
+
+  it("folds in another process's events and skips its own", async () => {
+    const log = new EventLog(dir);
+    log.emit("dispatch", "t1", { title: "T1" });
+    await log.followFromEnd();
+    log.emit("merge_ready", "t1");
+    // A second process — `jfdi merge` in another terminal — on the same stream.
+    const other = new EventLog(dir);
+    other.emit("merged", "t1");
+    await Promise.all([log.flush(), other.flush()]);
+
+    const seen: string[] = [];
+    log.on((event) => seen.push(event.type));
+    const foreign = await log.pullForeignEvents();
+
+    expect(foreign.map((event) => event.type)).toEqual(["merged"]);
+    expect(seen).toEqual(["merged"]);
+    expect(log.snapshot().tickets.t1?.status).toBe("done");
+  });
+
+  it("does not re-fold its own events on a second pull", async () => {
+    const log = new EventLog(dir);
+    await log.followFromEnd();
+    log.emit("round_start", "r1");
+    log.emit("round_start", "r1");
+    await log.flush();
+
+    expect(await log.pullForeignEvents()).toEqual([]);
+    // Two rounds emitted, two rounds counted — the tail added nothing.
+    expect(log.snapshot().tickets.r1?.round).toBe(2);
+  });
+
+  it("keeps following past a line that is not an event", async () => {
+    const log = new EventLog(dir, false);
+    await log.followFromEnd();
+    const other = new EventLog(dir);
+    other.emit("dispatch", "t1", { title: "T1" });
+    await other.flush();
+    await fs.appendFile(path.join(dir, "events.jsonl"), "not json at all\n", "utf8");
+    other.emit("merged", "t1");
+    await other.flush();
+
+    const foreign = await log.pullForeignEvents();
+    expect(foreign.map((event) => event.type)).toEqual(["dispatch", "merged"]);
+    expect(log.snapshot().tickets.t1?.status).toBe("done");
+  });
+
+  it("leaves a half-written trailing line for the next pull", async () => {
+    const log = new EventLog(dir, false);
+    await log.followFromEnd();
+    const complete = JSON.stringify({ ts: "2020-01-01T00:00:00.000Z", type: "dispatch" });
+    const partial = `{"ts":"2020-01-01T00:00:01.000Z","type":"mer`;
+    const eventsPath = path.join(dir, "events.jsonl");
+    await fs.writeFile(eventsPath, `${complete}\n${partial}`, "utf8");
+    expect(await log.pullForeignEvents()).toHaveLength(1);
+
+    await fs.appendFile(eventsPath, `ged","ticketId":"t1"}\n`, "utf8");
+    const rest = await log.pullForeignEvents();
+    expect(rest.map((event) => event.type)).toEqual(["merged"]);
+  });
+
+  it("mergedTicketIds reports every ticket with a merge on record", async () => {
+    const log = new EventLog(dir);
+    log.emit("dispatch", "a");
+    log.emit("merged", "a");
+    log.emit("merge_ready", "b");
+    await log.flush();
+    expect([...(await mergedTicketIds(dir))]).toEqual(["a"]);
   });
 
   it("loadState falls back to rebuild when state.json is missing", async () => {

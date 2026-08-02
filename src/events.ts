@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -31,6 +32,12 @@ export interface JfdiEvent {
   ts: string;
   type: EventType;
   ticketId?: string;
+  /**
+   * Which `EventLog` instance appended this line. Several processes share one
+   * events.jsonl (`jfdi start` while `jfdi merge` runs in another terminal), so
+   * a log tailing the file needs to tell its own lines from theirs.
+   */
+  origin?: string;
   data?: Record<string, unknown>;
 }
 
@@ -66,6 +73,13 @@ export function emptyState(): CoordinatorState {
 
 /** Longest excerpt of a rejected line quoted back in an error. */
 const MAX_BAD_LINE_CHARS = 200;
+
+/**
+ * Most events.jsonl bytes one tail pull reads. The rest waits for the next
+ * pull, so a log that grew hugely between polls is read in bounded chunks
+ * rather than allocated whole.
+ */
+const MAX_TAIL_READ_BYTES = 1_048_576;
 
 /**
  * Every `StageName`, as a runtime lookup. Keyed by the union rather than
@@ -226,6 +240,7 @@ function applyTicketEvent(
     case "done":
       ticket.status = "done";
       ticket.stage = null;
+      ticket.lastActivity = "done";
       break;
     case "failed":
       ticket.status = "failed";
@@ -269,6 +284,9 @@ export class EventLog {
   private readonly emitter = new EventEmitter();
   private state: CoordinatorState = emptyState();
   private writeChain: Promise<void> = Promise.resolve();
+  /** Stamped on every emitted event so `pullForeignEvents` can skip our own. */
+  readonly origin = randomUUID();
+  private tailOffsetBytes = 0;
 
   constructor(
     private readonly stateDir: string,
@@ -296,6 +314,7 @@ export class EventLog {
       ts: new Date().toISOString(),
       type,
       ...(ticketId !== undefined ? { ticketId } : {}),
+      origin: this.origin,
       ...(data !== undefined ? { data } : {}),
     };
     this.state = reduceEvent(this.state, event);
@@ -316,22 +335,137 @@ export class EventLog {
     await this.writeChain;
   }
 
+  /**
+   * Begin following events.jsonl at its current end: everything already on
+   * disk belongs to earlier runs and stays out of this instance's state.
+   */
+  async followFromEnd(): Promise<void> {
+    await this.flush();
+    this.tailOffsetBytes = await fileSizeBytes(this.eventsPath);
+  }
+
+  /**
+   * Fold in the events another process appended since the last pull and
+   * notify listeners, so a running renderer converges on work done elsewhere
+   * (a `jfdi merge` in a second terminal). Lines we wrote ourselves are
+   * skipped by origin — they are already in this instance's state.
+   */
+  async pullForeignEvents(): Promise<JfdiEvent[]> {
+    const appended = await readAppendedLines(this.eventsPath, this.tailOffsetBytes);
+    this.tailOffsetBytes = appended.nextOffsetBytes;
+    const foreign: JfdiEvent[] = [];
+    for (const line of appended.lines) {
+      const event = parseEventLine(line);
+      if (event === null) {
+        this.emit("error", undefined, {
+          message: `ignored a line in ${this.eventsPath} that is not a JFDI event: ${line.slice(0, MAX_BAD_LINE_CHARS)}`,
+        });
+        continue;
+      }
+      if (event.origin === this.origin) continue;
+      this.state = reduceEvent(this.state, event);
+      this.emitter.emit("event", event, this.state);
+      foreign.push(event);
+    }
+    return foreign;
+  }
+
   /** Rebuild state purely from events.jsonl. */
   static async rebuild(stateDir: string): Promise<CoordinatorState> {
-    const eventsPath = path.join(stateDir, "events.jsonl");
-    const content = await readIfExists(eventsPath);
     let state = emptyState();
-    if (content === null) return state;
-    for (const line of content.split("\n")) {
-      if (!line.trim()) continue;
-      const parsed: unknown = JSON.parse(line);
-      if (!isJfdiEvent(parsed))
-        throw new Error(
-          `${eventsPath} contains a line that is not a JFDI event: ${line.slice(0, MAX_BAD_LINE_CHARS)}`,
-        );
-      state = reduceEvent(state, parsed);
+    for (const event of await readEventFile(path.join(stateDir, "events.jsonl"))) {
+      state = reduceEvent(state, event);
     }
     return state;
+  }
+}
+
+/**
+ * Ticket ids with a `merged` event on record. This is the evidence of a merge
+ * that outlives the branch: `jfdi merge` deletes the branch as its last step,
+ * and a human tidying up after a hand-merge does the same, so branch absence
+ * says nothing about whether the work landed.
+ */
+export async function mergedTicketIds(stateDir: string): Promise<Set<string>> {
+  const ids = new Set<string>();
+  for (const event of await readEventFile(path.join(stateDir, "events.jsonl"))) {
+    if (event.type === "merged" && event.ticketId) ids.add(event.ticketId);
+  }
+  return ids;
+}
+
+/** Every event in an events.jsonl file. Strict: an unrecognizable line is a corrupt log. */
+async function readEventFile(eventsPath: string): Promise<JfdiEvent[]> {
+  const content = await readIfExists(eventsPath);
+  if (content === null) return [];
+  const events: JfdiEvent[] = [];
+  for (const line of content.split("\n")) {
+    if (!line.trim()) continue;
+    const parsed: unknown = JSON.parse(line);
+    if (!isJfdiEvent(parsed))
+      throw new Error(
+        `${eventsPath} contains a line that is not a JFDI event: ${line.slice(0, MAX_BAD_LINE_CHARS)}`,
+      );
+    events.push(parsed);
+  }
+  return events;
+}
+
+/**
+ * A live tail reads a file other processes are appending to, so it meets
+ * shapes the offline reader never does: a half-written line, or a hand edit.
+ * Returning null lets the caller report the line and keep following, where
+ * `readEventFile` refuses the whole stream.
+ */
+function parseEventLine(line: string): JfdiEvent | null {
+  try {
+    const parsed: unknown = JSON.parse(line);
+    return isJfdiEvent(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fileSizeBytes(filePath: string): Promise<number> {
+  try {
+    return (await fs.stat(filePath)).size;
+  } catch {
+    // Nothing written yet — following from byte zero is following from the end.
+    return 0;
+  }
+}
+
+/**
+ * Whole lines appended to `filePath` after `offsetBytes`. A trailing partial
+ * line — another process caught mid-append — is left for the next call, and a
+ * file that shrank (truncated or replaced) resyncs to its new end.
+ */
+async function readAppendedLines(
+  filePath: string,
+  offsetBytes: number,
+): Promise<{ lines: string[]; nextOffsetBytes: number }> {
+  let handle: fs.FileHandle;
+  try {
+    handle = await fs.open(filePath, "r");
+  } catch {
+    // No log on disk: by definition nothing has been appended to it.
+    return { lines: [], nextOffsetBytes: offsetBytes };
+  }
+  try {
+    const { size } = await handle.stat();
+    if (size <= offsetBytes) return { lines: [], nextOffsetBytes: Math.min(size, offsetBytes) };
+    const buffer = Buffer.alloc(Math.min(size - offsetBytes, MAX_TAIL_READ_BYTES));
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, offsetBytes);
+    const text = buffer.subarray(0, bytesRead).toString("utf8");
+    const lastBreak = text.lastIndexOf("\n");
+    if (lastBreak === -1) return { lines: [], nextOffsetBytes: offsetBytes };
+    const complete = text.slice(0, lastBreak + 1);
+    return {
+      lines: complete.split("\n").filter((line) => line.trim() !== ""),
+      nextOffsetBytes: offsetBytes + Buffer.byteLength(complete, "utf8"),
+    };
+  } finally {
+    await handle.close();
   }
 }
 
@@ -341,7 +475,11 @@ export class EventLog {
 function isJfdiEvent(value: unknown): value is JfdiEvent {
   if (typeof value !== "object" || value === null) return false;
   const record = value as Record<string, unknown>;
-  return typeof record.ts === "string" && typeof record.type === "string";
+  return (
+    typeof record.ts === "string" &&
+    typeof record.type === "string" &&
+    (record.origin === undefined || typeof record.origin === "string")
+  );
 }
 
 function isCoordinatorState(value: unknown): value is CoordinatorState {

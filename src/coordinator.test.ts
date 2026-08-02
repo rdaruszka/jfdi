@@ -3,7 +3,8 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { findColumn, moveCard, parseBoard } from "./board.js";
 import { Coordinator } from "./coordinator.js";
-import { git } from "./git.js";
+import { EventLog } from "./events.js";
+import { branchExists, deleteBranch, git } from "./git.js";
 import { worktreesDir } from "./pipeline.js";
 import { commitFile, type Fixture, makeFixture, stageOf, writeVerdict } from "./test-helpers.js";
 import { ticketIdFromCard } from "./util/ids.js";
@@ -27,6 +28,25 @@ kanban-plugin: board
 
 `;
 
+/** A board an earlier session left behind: one card waiting for approval. */
+const STRANDED_BOARD = `---
+
+kanban-plugin: board
+
+---
+
+## Ready
+
+## In Progress
+
+## Done
+
+## Ready to Merge
+
+- [ ] Add feature alpha
+
+`;
+
 async function readBoard(): Promise<ReturnType<typeof parseBoard>> {
   return parseBoard(await fs.readFile(path.join(fixture.jfdiDir, "board.md"), "utf8"));
 }
@@ -39,6 +59,54 @@ beforeEach(async () => {
 afterEach(async () => {
   await fixture.cleanup();
 });
+
+/** Attempts and spacing for the poll-until helpers below. */
+const WAIT_ATTEMPTS = 100;
+const WAIT_STEP_MS = 20;
+/** Slack for the async board edits a scan makes after it is requested. */
+const SCAN_SETTLE_MS = 200;
+
+function sleep(durationMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, durationMs));
+}
+
+/** Trigger a scan, let it reach dispatch, then give its board edits time to land. */
+async function rescan(coordinator: Coordinator): Promise<void> {
+  coordinator.requestScan();
+  await sleep(SCAN_SETTLE_MS);
+  await coordinator.drain();
+  await sleep(SCAN_SETTLE_MS);
+}
+
+/** Poll a condition to a fixed attempt cap — never an unbounded wait. */
+async function waitUntil(isSatisfied: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < WAIT_ATTEMPTS; attempt++) {
+    if (isSatisfied()) return;
+    await sleep(WAIT_STEP_MS);
+  }
+  throw new Error(`condition never held after ${WAIT_ATTEMPTS} attempts`);
+}
+
+/**
+ * Put a single card in Ready to Merge with no branch behind it and no run
+ * history — the board a coordinator inherits from an earlier session.
+ * Returns the card's ticket id.
+ */
+async function strandCard(): Promise<string> {
+  await fs.writeFile(path.join(fixture.jfdiDir, "board.md"), STRANDED_BOARD);
+  return ticketIdFromCard("Add feature alpha");
+}
+
+/** Merge a ticket branch into the target and delete it, as `jfdi merge` does. */
+async function landAndDeleteBranch(ticketId: string): Promise<void> {
+  const branch = `jfdi/${ticketId}`;
+  await git(fixture.repo, "checkout", "-b", branch);
+  await commitFile(fixture.repo, "alpha.txt", "alpha\n", "implement alpha");
+  await git(fixture.repo, "checkout", "main");
+  await git(fixture.repo, "merge", "--ff-only", branch);
+  await deleteBranch(fixture.repo, branch);
+  expect(await branchExists(fixture.repo, branch)).toBe(false);
+}
 
 /** Handler that implements each ticket by writing a file named for its card. */
 function autoHandler() {
@@ -111,14 +179,6 @@ async function runToMergeReady(stages: string[]): Promise<Coordinator> {
   await coordinator.start();
   await coordinator.drain();
   return coordinator;
-}
-
-/** Board edits are picked up asynchronously — let the scan reach dispatch before draining. */
-async function rescan(coordinator: Coordinator): Promise<void> {
-  coordinator.requestScan();
-  await new Promise((r) => setTimeout(r, 100));
-  await coordinator.drain();
-  await new Promise((r) => setTimeout(r, 100));
 }
 
 describe("Coordinator", () => {
@@ -211,6 +271,88 @@ describe("Coordinator", () => {
     const doneCards = findColumn(board, "Done")?.cards ?? [];
     expect(doneCards.some((c) => c.text.includes("alpha"))).toBe(true);
     expect(findColumn(board, "Ready to Merge")?.cards).toHaveLength(1);
+  });
+
+  it("closes a Ready-to-Merge card whose merged branch was deleted", async () => {
+    // The state `jfdi merge` leaves behind: the work is in the target, the
+    // branch that carried it is gone, and the merge is on the event stream.
+    const alphaId = await strandCard();
+    await landAndDeleteBranch(alphaId);
+    const merger = new EventLog(fixture.stateDir);
+    merger.emit("merged", alphaId);
+    await merger.flush();
+
+    const context = fixture.context(autoHandler());
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+    await coordinator.start();
+    coordinator.stop();
+
+    const board = await readBoard();
+    expect(findColumn(board, "Done")?.cards.map((c) => [c.text, c.checked])).toEqual([
+      ["Add feature alpha", true],
+    ]);
+    expect(findColumn(board, "Ready to Merge")?.cards).toHaveLength(0);
+    expect(context.log.snapshot().tickets[alphaId]?.status).toBe("done");
+  });
+
+  it("leaves a Ready-to-Merge card alone when the branch vanished unmerged", async () => {
+    // Branch gone with nothing on record: no evidence the work ever landed.
+    await strandCard();
+
+    const context = fixture.context(autoHandler());
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+    await coordinator.start();
+    coordinator.stop();
+
+    const board = await readBoard();
+    expect(findColumn(board, "Ready to Merge")?.cards).toHaveLength(1);
+    expect(findColumn(board, "Done")?.cards).toHaveLength(0);
+  });
+
+  it("acknowledges a card a human drags from Ready to Merge to Done", async () => {
+    const context = fixture.context(autoHandler());
+    fixture.config.integration.mode = "on-approval";
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+    await coordinator.start();
+    await coordinator.drain();
+
+    const alphaId = ticketIdFromCard("Add feature alpha");
+    expect(context.log.snapshot().tickets[alphaId]?.status).toBe("merge-ready");
+
+    const card = findColumn(await readBoard(), "Ready to Merge")?.cards.find((c) =>
+      c.text.includes("alpha"),
+    );
+    if (!card) throw new Error("alpha card is not in Ready to Merge");
+    await moveCard(path.join(fixture.jfdiDir, "board.md"), card.raw, "Ready to Merge", "Done");
+
+    await rescan(coordinator);
+    coordinator.stop();
+
+    expect(context.log.snapshot().tickets[alphaId]?.status).toBe("done");
+    // Only the dragged card was acknowledged; the other still awaits approval.
+    const betaId = ticketIdFromCard("Add feature beta");
+    expect(context.log.snapshot().tickets[betaId]?.status).toBe("merge-ready");
+  });
+
+  it("reflects a merge another process performed while it is running", async () => {
+    const context = fixture.context(autoHandler(), { shouldPersistEvents: true });
+    fixture.config.integration.mode = "on-approval";
+    const coordinator = new Coordinator(context, { pollMs: 20 });
+    await coordinator.start();
+    await coordinator.drain();
+
+    const alphaId = ticketIdFromCard("Add feature alpha");
+    expect(context.log.snapshot().tickets[alphaId]?.status).toBe("merge-ready");
+
+    // A `jfdi merge` in another terminal: its own EventLog, the same stream.
+    const merger = new EventLog(fixture.stateDir);
+    merger.emit("merge_start", alphaId);
+    merger.emit("merged", alphaId);
+    await merger.flush();
+
+    // No restart and no board edit — the running coordinator picks it up on poll.
+    await waitUntil(() => context.log.snapshot().tickets[alphaId]?.status === "done");
+    coordinator.stop();
   });
 
   it("materializes stage observations as inbox cards and never dispatches them", async () => {

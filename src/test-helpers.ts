@@ -17,8 +17,16 @@ export interface Fixture {
   stateDir: string;
   ticketsDir: string;
   config: JfdiConfig;
-  context: (handler: FakeHandler) => PipelineContext & { harness: FakeHarness };
+  context: (
+    handler: FakeHandler,
+    options?: ContextOptions,
+  ) => PipelineContext & { harness: FakeHarness };
   cleanup: () => Promise<void>;
+}
+
+export interface ContextOptions {
+  /** Write events.jsonl/state.json, as a real run does — for cross-process tests. */
+  shouldPersistEvents?: boolean;
 }
 
 /** Scratch repo under the OS temp dir — never inside a parent git repo. */
@@ -46,7 +54,7 @@ export async function makeFixture(configOverrides: Partial<JfdiConfig> = {}): Pr
     stateDir,
     ticketsDir,
     config,
-    context: (handler) => {
+    context: (handler, options = {}) => {
       const harness = new FakeHarness(handler);
       return {
         repoRoot: repo,
@@ -54,7 +62,7 @@ export async function makeFixture(configOverrides: Partial<JfdiConfig> = {}): Pr
         stateDir,
         config,
         harness,
-        log: new EventLog(stateDir, false),
+        log: new EventLog(stateDir, options.shouldPersistEvents ?? false),
       };
     },
     cleanup: () => fs.rm(root, { recursive: true, force: true }),
