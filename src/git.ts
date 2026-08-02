@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { promisify } from "node:util";
 
-const execFileP = promisify(execFile);
+const execFileAsync = promisify(execFile);
 
 /** 16 MiB — a full-branch `git diff` for review has to fit in one buffer. */
 const MAX_GIT_OUTPUT_BYTES = 16_777_216;
@@ -20,21 +20,24 @@ export class GitError extends Error {
 
 export async function git(cwd: string, ...args: string[]): Promise<string> {
   try {
-    const { stdout } = await execFileP("git", args, { cwd, maxBuffer: MAX_GIT_OUTPUT_BYTES });
+    const { stdout } = await execFileAsync("git", args, { cwd, maxBuffer: MAX_GIT_OUTPUT_BYTES });
     return stdout.trimEnd();
-  } catch (err) {
-    const e = err as { stderr?: string; message: string };
-    throw new GitError(`git ${args.join(" ")} failed: ${e.stderr ?? e.message}`, e.stderr ?? "");
+  } catch (error) {
+    const failure = error as { stderr?: string; message: string };
+    throw new GitError(
+      `git ${args.join(" ")} failed: ${failure.stderr ?? failure.message}`,
+      failure.stderr ?? "",
+    );
   }
 }
 
 /** git that may fail without throwing; returns exit ok + combined output. */
 async function gitTry(cwd: string, ...args: string[]): Promise<{ ok: boolean; output: string }> {
   try {
-    const out = await git(cwd, ...args);
-    return { ok: true, output: out };
-  } catch (err) {
-    return { ok: false, output: (err as GitError).message };
+    const output = await git(cwd, ...args);
+    return { ok: true, output };
+  } catch (error) {
+    return { ok: false, output: (error as GitError).message };
   }
 }
 
@@ -51,8 +54,8 @@ export function revParse(repo: string, ref: string): Promise<string> {
 }
 
 export async function branchExists(repo: string, branch: string): Promise<boolean> {
-  const r = await gitTry(repo, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`);
-  return r.ok;
+  const result = await gitTry(repo, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`);
+  return result.ok;
 }
 
 export async function isWorkingTreeClean(repo: string): Promise<boolean> {
@@ -70,8 +73,8 @@ export async function hasTrackedChanges(repo: string): Promise<boolean> {
 
 /** True if `ancestor` is contained in `ref` (already-merged detection). */
 export async function isAncestor(repo: string, ancestor: string, ref: string): Promise<boolean> {
-  const r = await gitTry(repo, "merge-base", "--is-ancestor", ancestor, ref);
-  return r.ok;
+  const result = await gitTry(repo, "merge-base", "--is-ancestor", ancestor, ref);
+  return result.ok;
 }
 
 export interface Worktree {
@@ -94,32 +97,32 @@ export async function createWorktree(
   baseBranch: string,
 ): Promise<Worktree> {
   const branch = ticketBranch(ticketId);
-  const wtPath = path.join(worktreesDir, ticketId);
+  const worktreePath = path.join(worktreesDir, ticketId);
   await fs.mkdir(worktreesDir, { recursive: true });
   // Clean up a stale registration for this path if the dir vanished.
   await gitTry(repo, "worktree", "prune");
   try {
-    await fs.access(wtPath);
+    await fs.access(worktreePath);
     // Worktree dir already exists — reuse it (resume case).
-    return { path: wtPath, branch };
+    return { path: worktreePath, branch };
   } catch {
     // continue to create
   }
   if (await branchExists(repo, branch)) {
-    await git(repo, "worktree", "add", wtPath, branch);
+    await git(repo, "worktree", "add", worktreePath, branch);
   } else {
-    await git(repo, "worktree", "add", "-b", branch, wtPath, baseBranch);
+    await git(repo, "worktree", "add", "-b", branch, worktreePath, baseBranch);
   }
-  return { path: wtPath, branch };
+  return { path: worktreePath, branch };
 }
 
 export async function removeWorktree(
   repo: string,
-  wtPath: string,
-  opts: { force?: boolean } = {},
+  worktreePath: string,
+  options: { force?: boolean } = {},
 ): Promise<void> {
-  const args = ["worktree", "remove", wtPath];
-  if (opts.force) args.push("--force");
+  const args = ["worktree", "remove", worktreePath];
+  if (options.force) args.push("--force");
   await gitTry(repo, ...args);
   await gitTry(repo, "worktree", "prune");
 }
@@ -136,19 +139,19 @@ export interface RebaseResult {
 
 /** Rebase the worktree's branch onto `target`. On conflict the rebase is left in progress. */
 export async function rebaseOnto(worktree: string, target: string): Promise<RebaseResult> {
-  const r = await gitTry(worktree, "rebase", target);
-  if (r.ok) return { ok: true, conflict: false, output: r.output };
-  const conflict = /CONFLICT|could not apply|needs merge/i.test(r.output);
+  const result = await gitTry(worktree, "rebase", target);
+  if (result.ok) return { ok: true, conflict: false, output: result.output };
+  const conflict = /CONFLICT|could not apply|needs merge/i.test(result.output);
   if (!conflict) await gitTry(worktree, "rebase", "--abort");
-  return { ok: false, conflict, output: r.output };
+  return { ok: false, conflict, output: result.output };
 }
 
 export async function rebaseInProgress(worktree: string): Promise<boolean> {
   const gitDir = await git(worktree, "rev-parse", "--git-dir");
-  const abs = path.isAbsolute(gitDir) ? gitDir : path.join(worktree, gitDir);
+  const gitDirPath = path.isAbsolute(gitDir) ? gitDir : path.join(worktree, gitDir);
   for (const d of ["rebase-merge", "rebase-apply"]) {
     try {
-      await fs.access(path.join(abs, d));
+      await fs.access(path.join(gitDirPath, d));
       return true;
     } catch {
       // not present
@@ -188,8 +191,8 @@ export function branchDiff(worktree: string, target: string): Promise<string> {
 }
 
 export async function commitCount(worktree: string, target: string): Promise<number> {
-  const out = await git(worktree, "rev-list", "--count", `${target}..HEAD`);
-  return Number.parseInt(out, 10);
+  const output = await git(worktree, "rev-list", "--count", `${target}..HEAD`);
+  return Number.parseInt(output, 10);
 }
 
 /** Commit anything left uncommitted in the worktree (agent safety net). */

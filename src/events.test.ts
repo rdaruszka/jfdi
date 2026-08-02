@@ -55,7 +55,7 @@ describe("EventLog", () => {
   it("notifies in-process listeners (renderer contract)", () => {
     const log = new EventLog(dir, false);
     const seen: string[] = [];
-    const off = log.on((evt) => seen.push(evt.type));
+    const off = log.on((event) => seen.push(event.type));
     log.emit("dispatch", "t");
     off();
     log.emit("merged", "t");

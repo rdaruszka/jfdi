@@ -9,8 +9,8 @@ const RUN_DIR_PREFIX_LENGTH = "run-".length;
 
 /** `jfdi logs <ticket>` — dump the latest run's raw session logs. */
 export async function logsCommand(ticketId: string): Promise<number> {
-  const ctx = await buildContext();
-  const base = runsDir(ctx.stateDir, ticketId);
+  const context = await buildContext();
+  const base = runsDir(context.stateDir, ticketId);
   let entries: string[];
   try {
     entries = await fs.readdir(base);
@@ -39,7 +39,7 @@ export async function logsCommand(ticketId: string): Promise<number> {
     }
     for (const file of files) {
       const full = path.join(dir, file);
-      console.log(`\n===== ${path.relative(ctx.stateDir, full)} =====`);
+      console.log(`\n===== ${path.relative(context.stateDir, full)} =====`);
       console.log(await fs.readFile(full, "utf8"));
       printed = true;
     }

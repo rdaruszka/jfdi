@@ -233,8 +233,8 @@ Report what you set up and anything the human should tune.
 };
 
 /** Render a template, replacing {{VAR}} placeholders. */
-export function renderPrompt(template: string, vars: Record<string, string>): string {
-  return template.replace(/\{\{([A-Z_]+)\}\}/g, (_, name: string) => vars[name] ?? "");
+export function renderPrompt(template: string, variables: Record<string, string>): string {
+  return template.replace(/\{\{([A-Z_]+)\}\}/g, (_, name: string) => variables[name] ?? "");
 }
 
 export function promptsDir(jfdiDir: string): string {

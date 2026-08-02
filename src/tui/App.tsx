@@ -59,16 +59,16 @@ export interface AppProps {
 export function App({ log, boardName, targetBranch, onQuit }: AppProps) {
   const { exit } = useApp();
   const [state, setState] = useState<CoordinatorState>(log.snapshot());
-  const [recent, setRecent] = useState<Array<{ seq: number; evt: JfdiEvent }>>([]);
+  const [recent, setRecent] = useState<Array<{ seq: number; event: JfdiEvent }>>([]);
 
   useEffect(() => {
     let seq = 0;
-    return log.on((evt, snapshot) => {
+    return log.on((event, snapshot) => {
       setState(snapshot);
-      if (evt.type === "session_activity" || evt.type === "card_moved") return;
+      if (event.type === "session_activity" || event.type === "card_moved") return;
       seq += 1;
-      const entry = { seq, evt };
-      setRecent((prev) => [...prev.slice(-(MAX_RECENT_EVENTS - 1)), entry]);
+      const entry = { seq, event };
+      setRecent((previous) => [...previous.slice(-(MAX_RECENT_EVENTS - 1)), entry]);
     });
   }, [log]);
 
@@ -141,13 +141,14 @@ export function App({ log, boardName, targetBranch, onQuit }: AppProps) {
         <Text bold underline>
           Events
         </Text>
-        {recent.map(({ seq, evt }) => (
+        {recent.map(({ seq, event }) => (
           <Text key={seq} dimColor wrap="truncate">
-            {evt.ts.slice(ISO_TIME_START, ISO_TIME_END)} {evt.ticketId ? `[${evt.ticketId}] ` : ""}
-            {evt.type}
-            {evt.data?.stage ? ` ${String(evt.data.stage)}` : ""}
-            {evt.data?.verdict ? ` → ${String(evt.data.verdict)}` : ""}
-            {evt.data?.reason ? `: ${String(evt.data.reason)}` : ""}
+            {event.ts.slice(ISO_TIME_START, ISO_TIME_END)}{" "}
+            {event.ticketId ? `[${event.ticketId}] ` : ""}
+            {event.type}
+            {event.data?.stage ? ` ${String(event.data.stage)}` : ""}
+            {event.data?.verdict ? ` → ${String(event.data.verdict)}` : ""}
+            {event.data?.reason ? `: ${String(event.data.reason)}` : ""}
           </Text>
         ))}
       </Box>

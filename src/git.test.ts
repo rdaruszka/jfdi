@@ -52,25 +52,25 @@ afterEach(async () => {
 
 describe("worktrees", () => {
   it("creates a worktree on a fresh jfdi/<id> branch from the base", async () => {
-    const wt = await createWorktree(repo, worktreesDir, "my-ticket", "main");
-    expect(wt.branch).toBe(ticketBranch("my-ticket"));
-    expect(await currentBranch(wt.path)).toBe("jfdi/my-ticket");
-    expect(await fs.readFile(path.join(wt.path, "README.md"), "utf8")).toBe("hello\n");
+    const worktree = await createWorktree(repo, worktreesDir, "my-ticket", "main");
+    expect(worktree.branch).toBe(ticketBranch("my-ticket"));
+    expect(await currentBranch(worktree.path)).toBe("jfdi/my-ticket");
+    expect(await fs.readFile(path.join(worktree.path, "README.md"), "utf8")).toBe("hello\n");
   });
 
   it("reuses an existing branch and worktree on resume", async () => {
-    const wt1 = await createWorktree(repo, worktreesDir, "t", "main");
-    await write(wt1.path, "work.txt", "wip\n");
-    await commit(wt1.path, "wip");
-    const wt2 = await createWorktree(repo, worktreesDir, "t", "main");
-    expect(wt2.path).toBe(wt1.path);
-    expect(await fs.readFile(path.join(wt2.path, "work.txt"), "utf8")).toBe("wip\n");
+    const worktree1 = await createWorktree(repo, worktreesDir, "t", "main");
+    await write(worktree1.path, "work.txt", "wip\n");
+    await commit(worktree1.path, "wip");
+    const worktree2 = await createWorktree(repo, worktreesDir, "t", "main");
+    expect(worktree2.path).toBe(worktree1.path);
+    expect(await fs.readFile(path.join(worktree2.path, "work.txt"), "utf8")).toBe("wip\n");
   });
 
   it("removes a worktree", async () => {
-    const wt = await createWorktree(repo, worktreesDir, "gone", "main");
-    await removeWorktree(repo, wt.path, { force: true });
-    await expect(fs.access(wt.path)).rejects.toThrow();
+    const worktree = await createWorktree(repo, worktreesDir, "gone", "main");
+    await removeWorktree(repo, worktree.path, { force: true });
+    await expect(fs.access(worktree.path)).rejects.toThrow();
     // Branch survives removal (kept for inspection until merged).
     expect(await branchExists(repo, "jfdi/gone")).toBe(true);
   });
@@ -78,16 +78,16 @@ describe("worktrees", () => {
 
 describe("rebase and merge", () => {
   it("clean rebase onto a moved target, then fast-forward when target not checked out elsewhere", async () => {
-    const wt = await createWorktree(repo, worktreesDir, "feat", "main");
-    await write(wt.path, "feat.txt", "feature\n");
-    await commit(wt.path, "feat");
+    const worktree = await createWorktree(repo, worktreesDir, "feat", "main");
+    await write(worktree.path, "feat.txt", "feature\n");
+    await commit(worktree.path, "feat");
     // Move main forward with a non-conflicting change.
     await write(repo, "other.txt", "other\n");
     await commit(repo, "other");
 
-    const rebase = await rebaseOnto(wt.path, "main");
+    const rebase = await rebaseOnto(worktree.path, "main");
     expect(rebase).toMatchObject({ ok: true, conflict: false });
-    expect(await commitCount(wt.path, "main")).toBe(1);
+    expect(await commitCount(worktree.path, "main")).toBe(1);
 
     // main is checked out in the primary worktree and clean → ff merge.
     await fastForward(repo, "main", "jfdi/feat");
@@ -96,36 +96,36 @@ describe("rebase and merge", () => {
   });
 
   it("detects conflicts and leaves the rebase in progress for the agent", async () => {
-    const wt = await createWorktree(repo, worktreesDir, "clash", "main");
-    await write(wt.path, "README.md", "branch version\n");
-    await commit(wt.path, "branch edit");
+    const worktree = await createWorktree(repo, worktreesDir, "clash", "main");
+    await write(worktree.path, "README.md", "branch version\n");
+    await commit(worktree.path, "branch edit");
     await write(repo, "README.md", "main version\n");
     await commit(repo, "main edit");
 
-    const rebase = await rebaseOnto(wt.path, "main");
+    const rebase = await rebaseOnto(worktree.path, "main");
     expect(rebase.ok).toBe(false);
     expect(rebase.conflict).toBe(true);
-    expect(await rebaseInProgress(wt.path)).toBe(true);
+    expect(await rebaseInProgress(worktree.path)).toBe(true);
     // Resolve as the integration agent would.
-    await write(wt.path, "README.md", "merged version\n");
-    await git(wt.path, "add", "README.md");
-    await git(wt.path, "-c", "core.editor=true", "rebase", "--continue");
-    expect(await rebaseInProgress(wt.path)).toBe(false);
+    await write(worktree.path, "README.md", "merged version\n");
+    await git(worktree.path, "add", "README.md");
+    await git(worktree.path, "-c", "core.editor=true", "rebase", "--continue");
+    expect(await rebaseInProgress(worktree.path)).toBe(false);
   });
 
   it("fastForward refuses non-descendants", async () => {
-    const wt = await createWorktree(repo, worktreesDir, "diverged", "main");
-    await write(wt.path, "a.txt", "a\n");
-    await commit(wt.path, "a");
+    const worktree = await createWorktree(repo, worktreesDir, "diverged", "main");
+    await write(worktree.path, "a.txt", "a\n");
+    await commit(worktree.path, "a");
     await write(repo, "b.txt", "b\n");
     await commit(repo, "b");
     await expect(fastForward(repo, "main", "jfdi/diverged")).rejects.toThrow(GitError);
   });
 
   it("fastForward refuses when target checkout is dirty", async () => {
-    const wt = await createWorktree(repo, worktreesDir, "clean-req", "main");
-    await write(wt.path, "c.txt", "c\n");
-    await commit(wt.path, "c");
+    const worktree = await createWorktree(repo, worktreesDir, "clean-req", "main");
+    await write(worktree.path, "c.txt", "c\n");
+    await commit(worktree.path, "c");
     await write(repo, "README.md", "uncommitted local edit\n");
     await expect(fastForward(repo, "main", "jfdi/clean-req")).rejects.toThrow(
       /uncommitted changes/,
@@ -133,9 +133,9 @@ describe("rebase and merge", () => {
   });
 
   it("already-merged detection via isAncestor", async () => {
-    const wt = await createWorktree(repo, worktreesDir, "dup", "main");
-    await write(wt.path, "d.txt", "d\n");
-    await commit(wt.path, "d");
+    const worktree = await createWorktree(repo, worktreesDir, "dup", "main");
+    await write(worktree.path, "d.txt", "d\n");
+    await commit(worktree.path, "d");
     await fastForward(repo, "main", "jfdi/dup");
     // A second merge attempt would see the branch already contained.
     expect(await isAncestor(repo, "jfdi/dup", "main")).toBe(true);
@@ -144,9 +144,9 @@ describe("rebase and merge", () => {
 
 describe("commitAllIfDirty", () => {
   it("commits leftover changes and reports true", async () => {
-    const wt = await createWorktree(repo, worktreesDir, "dirty", "main");
-    await write(wt.path, "left.txt", "over\n");
-    expect(await commitAllIfDirty(wt.path, "jfdi: checkpoint")).toBe(true);
-    expect(await commitAllIfDirty(wt.path, "jfdi: checkpoint")).toBe(false);
+    const worktree = await createWorktree(repo, worktreesDir, "dirty", "main");
+    await write(worktree.path, "left.txt", "over\n");
+    expect(await commitAllIfDirty(worktree.path, "jfdi: checkpoint")).toBe(true);
+    expect(await commitAllIfDirty(worktree.path, "jfdi: checkpoint")).toBe(false);
   });
 });

@@ -2,10 +2,10 @@ import { loadState } from "../events.js";
 import { buildContext } from "./context.js";
 
 /** `jfdi status` — snapshot of state.json for scripts and quick checks. */
-export async function statusCommand(opts: { json?: boolean } = {}): Promise<number> {
-  const ctx = await buildContext();
-  const state = await loadState(ctx.stateDir);
-  if (opts.json) {
+export async function statusCommand(options: { json?: boolean } = {}): Promise<number> {
+  const context = await buildContext();
+  const state = await loadState(context.stateDir);
+  if (options.json) {
     console.log(JSON.stringify(state, null, 2));
     return 0;
   }
@@ -15,10 +15,10 @@ export async function statusCommand(opts: { json?: boolean } = {}): Promise<numb
     return 0;
   }
   console.log(`updated: ${state.updatedAt || "never"}\n`);
-  for (const t of tickets) {
-    const stage = t.stage ? ` · ${t.stage}` : "";
-    const round = t.round > 0 ? ` (round ${t.round})` : "";
-    console.log(`  ${t.id}  [${t.status}${stage}${round}]  ${t.lastActivity}`);
+  for (const ticket of tickets) {
+    const stage = ticket.stage ? ` · ${ticket.stage}` : "";
+    const round = ticket.round > 0 ? ` (round ${ticket.round})` : "";
+    console.log(`  ${ticket.id}  [${ticket.status}${stage}${round}]  ${ticket.lastActivity}`);
   }
   if (state.integrationQueue.length > 0)
     console.log(`\nintegration queue: ${state.integrationQueue.join(" → ")}`);

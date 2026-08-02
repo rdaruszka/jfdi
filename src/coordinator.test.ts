@@ -41,12 +41,12 @@ afterEach(async () => {
 
 /** Handler that implements each ticket by writing a file named for its card. */
 function autoHandler() {
-  return async (spec: { prompt: string }, opts: { cwd: string }) => {
+  return async (spec: { prompt: string }, options: { cwd: string }) => {
     const stage = stageOf(spec.prompt);
     if (stage === "implementation") {
       const m = /feature (\w+)/.exec(spec.prompt);
       const name = m?.[1] ?? "unknown";
-      await commitFile(opts.cwd, `${name}.txt`, `${name}\n`, `implement ${name}`);
+      await commitFile(options.cwd, `${name}.txt`, `${name}\n`, `implement ${name}`);
       await writeVerdict(spec.prompt, { status: "done", summary: `built ${name}` });
     } else if (stage === "integration") {
       await writeVerdict(spec.prompt, { resolution: "clean" });
@@ -59,9 +59,9 @@ function autoHandler() {
 
 describe("Coordinator", () => {
   it("auto mode: dispatches board cards, runs pipelines, merges, moves cards to Done", async () => {
-    const ctx = fx.ctx(autoHandler());
+    const context = fx.context(autoHandler());
     fx.config.integration.mode = "auto";
-    const coordinator = new Coordinator(ctx, { pollMs: 60_000 });
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
     await coordinator.start();
     await coordinator.drain();
     coordinator.stop();
@@ -86,9 +86,9 @@ describe("Coordinator", () => {
   });
 
   it("on-approval mode: cards land in Ready to Merge with a report", async () => {
-    const ctx = fx.ctx(autoHandler());
+    const context = fx.context(autoHandler());
     fx.config.integration.mode = "on-approval";
-    const coordinator = new Coordinator(ctx, { pollMs: 60_000 });
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
     await coordinator.start();
     await coordinator.drain();
     coordinator.stop();
@@ -106,7 +106,7 @@ describe("Coordinator", () => {
   });
 
   it("blocked tickets move to the Blocked column", async () => {
-    const ctx = fx.ctx(async (spec) => {
+    const context = fx.context(async (spec) => {
       await writeVerdict(spec.prompt, {
         status: "escalate",
         question: "which db?",
@@ -114,7 +114,7 @@ describe("Coordinator", () => {
       });
       return { ok: true, text: "" };
     });
-    const coordinator = new Coordinator(ctx, { pollMs: 60_000 });
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
     await coordinator.start();
     await coordinator.drain();
     coordinator.stop();
@@ -125,9 +125,9 @@ describe("Coordinator", () => {
   });
 
   it("closes hand-merged Ready-to-Merge cards without double-merging", async () => {
-    const ctx = fx.ctx(autoHandler());
+    const context = fx.context(autoHandler());
     fx.config.integration.mode = "on-approval";
-    const coordinator = new Coordinator(ctx, { pollMs: 60_000 });
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
     await coordinator.start();
     await coordinator.drain();
 
@@ -150,11 +150,11 @@ describe("Coordinator", () => {
   });
 
   it("materializes stage observations as inbox cards and never dispatches them", async () => {
-    const ctx = fx.ctx(async (spec, opts) => {
+    const context = fx.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       if (stage === "implementation") {
         const m = /feature (\w+)/.exec(spec.prompt);
-        await commitFile(opts.cwd, `${m?.[1]}.txt`, "x\n", "impl");
+        await commitFile(options.cwd, `${m?.[1]}.txt`, "x\n", "impl");
         await writeVerdict(spec.prompt, {
           status: "done",
           observations: ["Dead code in legacy module"],
@@ -171,7 +171,7 @@ describe("Coordinator", () => {
       return { ok: true, text: "" };
     });
     fx.config.integration.mode = "auto";
-    const coordinator = new Coordinator(ctx, { pollMs: 60_000 });
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
     await coordinator.start();
     await coordinator.drain();
     // Inbox cards trigger a board change; make sure a rescan does not dispatch them.
@@ -195,7 +195,7 @@ describe("Coordinator", () => {
   it("respects max_concurrent", async () => {
     let peak = 0;
     let current = 0;
-    const ctx = fx.ctx(async (spec, opts) => {
+    const context = fx.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       if (stage === "implementation") {
         current++;
@@ -203,7 +203,7 @@ describe("Coordinator", () => {
         await new Promise((r) => setTimeout(r, 50));
         current--;
         const m = /feature (\w+)/.exec(spec.prompt);
-        await commitFile(opts.cwd, `${m?.[1]}.txt`, "x\n", "impl");
+        await commitFile(options.cwd, `${m?.[1]}.txt`, "x\n", "impl");
         await writeVerdict(spec.prompt, { status: "done" });
       } else if (stage === "integration") {
         await writeVerdict(spec.prompt, { resolution: "clean" });
@@ -214,7 +214,7 @@ describe("Coordinator", () => {
     });
     fx.config.max_concurrent = 1;
     fx.config.integration.mode = "auto";
-    const coordinator = new Coordinator(ctx, { pollMs: 60_000 });
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
     await coordinator.start();
     await coordinator.drain();
     // Second card dispatches on the completion rescan.

@@ -25,12 +25,12 @@ export async function atomicWrite(filePath: string, content: string): Promise<vo
   const target = await realWriteTarget(filePath);
   const dir = path.dirname(target);
   await ensureDir(dir);
-  const tmp = path.join(
+  const tempPath = path.join(
     dir,
     `.${path.basename(target)}.${randomBytes(TEMP_SUFFIX_BYTES).toString("hex")}.tmp`,
   );
-  await fs.writeFile(tmp, content, "utf8");
-  await fs.rename(tmp, target);
+  await fs.writeFile(tempPath, content, "utf8");
+  await fs.rename(tempPath, target);
 }
 
 /**
@@ -75,9 +75,9 @@ export async function fileExists(filePath: string): Promise<boolean> {
 export async function readIfExists(filePath: string): Promise<string | null> {
   try {
     return await fs.readFile(filePath, "utf8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw err;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
   }
 }
 
@@ -92,8 +92,8 @@ export class MtimeConflictError extends Error {
 const fileLocks = new Map<string, Promise<unknown>>();
 
 function withFileLock<T>(filePath: string, job: () => Promise<T>): Promise<T> {
-  const prev = fileLocks.get(filePath) ?? Promise.resolve();
-  const run = prev.then(job, job);
+  const previous = fileLocks.get(filePath) ?? Promise.resolve();
+  const run = previous.then(job, job);
   fileLocks.set(
     filePath,
     run.then(
@@ -114,10 +114,10 @@ function withFileLock<T>(filePath: string, job: () => Promise<T>): Promise<T> {
 export function readModifyWrite(
   filePath: string,
   modify: (content: string) => string | null,
-  opts: { retries?: number; retryDelayMs?: number } = {},
+  options: { retries?: number; retryDelayMs?: number } = {},
 ): Promise<boolean> {
-  const retries = opts.retries ?? DEFAULT_RETRIES;
-  const retryDelayMs = opts.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+  const retries = options.retries ?? DEFAULT_RETRIES;
+  const retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
   return withFileLock(filePath, async () => {
     for (let attempt = 0; ; attempt++) {
       const content = await fs.readFile(filePath, "utf8");

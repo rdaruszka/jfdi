@@ -59,8 +59,8 @@ describe("runGate", () => {
 describe("formatGateFailure", () => {
   it("names the failing step and includes output", async () => {
     const result = await runGate([{ name: "lint", cmd: "echo bad style; exit 1" }], dir);
-    const msg = formatGateFailure(result);
-    expect(msg).toContain('failed at step "lint"');
-    expect(msg).toContain("bad style");
+    const message = formatGateFailure(result);
+    expect(message).toContain('failed at step "lint"');
+    expect(message).toContain("bad style");
   });
 });

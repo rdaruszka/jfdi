@@ -2,6 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { createWriteStream, mkdirSync } from "node:fs";
 import * as path from "node:path";
 import * as readline from "node:readline";
+import { EXIT_COMMAND_NOT_EXECUTABLE } from "../util/exit-codes.js";
 import type {
   Harness,
   HarnessEvent,
@@ -72,13 +73,13 @@ export function mapClaudeLine(line: string): HarnessEvent[] {
 
 function summarizeInput(input: unknown): string | undefined {
   if (typeof input !== "object" || input === null) return undefined;
-  const rec = input as Record<string, unknown>;
+  const fields = input as Record<string, unknown>;
   for (const key of ["file_path", "command", "path", "pattern", "description"]) {
-    const v = rec[key];
-    if (typeof v === "string")
-      return v.length > MAX_TOOL_DETAIL_CHARS
-        ? `${v.slice(0, MAX_TOOL_DETAIL_CHARS - ELLIPSIS.length)}${ELLIPSIS}`
-        : v;
+    const value = fields[key];
+    if (typeof value === "string")
+      return value.length > MAX_TOOL_DETAIL_CHARS
+        ? `${value.slice(0, MAX_TOOL_DETAIL_CHARS - ELLIPSIS.length)}${ELLIPSIS}`
+        : value;
   }
   return undefined;
 }
@@ -95,27 +96,27 @@ export class ClaudeHarness implements Harness {
     private readonly executable: string = "claude",
   ) {}
 
-  spawn(spec: PromptSpec, opts: SpawnOptions): HarnessSession {
+  spawn(promptSpec: PromptSpec, options: SpawnOptions): HarnessSession {
     const args = [
       "-p",
-      spec.prompt,
+      promptSpec.prompt,
       "--output-format",
       "stream-json",
       "--verbose",
       ...this.extraArgs,
     ];
     const child: ChildProcess = spawn(this.executable, args, {
-      cwd: opts.cwd,
+      cwd: options.cwd,
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
     });
 
-    const log = opts.logPath ? openLog(opts.logPath) : null;
+    const log = options.logPath ? openLog(options.logPath) : null;
     let stderrTail = "";
     child.stderr?.on("data", (chunk: Buffer) => {
-      const s = chunk.toString();
-      stderrTail = (stderrTail + s).slice(-STDERR_TAIL_CHARS);
-      log?.write(s);
+      const text = chunk.toString();
+      stderrTail = (stderrTail + text).slice(-STDERR_TAIL_CHARS);
+      log?.write(text);
     });
 
     const queue: HarnessEvent[] = [];
@@ -123,30 +124,30 @@ export class ClaudeHarness implements Harness {
     let ended = false;
     let result: HarnessResult | null = null;
 
-    const push = (evt: HarnessEvent) => {
-      queue.push(evt);
+    const push = (event: HarnessEvent) => {
+      queue.push(event);
       notify?.();
     };
 
-    const rl = child.stdout
+    const stdoutLines = child.stdout
       ? readline.createInterface({ input: child.stdout, crlfDelay: Infinity })
       : null;
-    rl?.on("line", (line) => {
+    stdoutLines?.on("line", (line) => {
       log?.write(`${line}\n`);
-      for (const evt of mapClaudeLine(line)) {
-        if (evt.type === "result") result = { ok: evt.ok, text: evt.text, exitCode: 0 };
-        push(evt);
+      for (const event of mapClaudeLine(line)) {
+        if (event.type === "result") result = { ok: event.ok, text: event.text, exitCode: 0 };
+        push(event);
       }
     });
 
     const done = new Promise<HarnessResult>((resolve) => {
-      child.on("error", (err) => {
+      child.on("error", (error) => {
         ended = true;
         log?.end();
         resolve({
           ok: false,
-          text: `failed to spawn ${this.executable}: ${err.message}`,
-          exitCode: 127,
+          text: `failed to spawn ${this.executable}: ${error.message}`,
+          exitCode: EXIT_COMMAND_NOT_EXECUTABLE,
         });
         notify?.();
       });
@@ -173,8 +174,8 @@ export class ClaudeHarness implements Harness {
         return {
           async next(): Promise<IteratorResult<HarnessEvent>> {
             for (;;) {
-              const evt = queue.shift();
-              if (evt) return { value: evt, done: false };
+              const event = queue.shift();
+              if (event) return { value: event, done: false };
               if (ended) return { value: undefined, done: true };
               await new Promise<void>((r) => {
                 notify = r;

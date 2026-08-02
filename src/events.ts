@@ -85,34 +85,36 @@ function applyTicketEvent(
   next: CoordinatorState,
   ticket: TicketState,
   id: string,
-  evt: JfdiEvent,
+  event: JfdiEvent,
 ): void {
-  switch (evt.type) {
+  switch (event.type) {
     case "dispatch":
       ticket.status = "running";
-      ticket.title = (evt.data?.title as string) ?? id;
-      ticket.branch = (evt.data?.branch as string) ?? "";
+      ticket.title = (event.data?.title as string) ?? id;
+      ticket.branch = (event.data?.branch as string) ?? "";
       ticket.lastActivity = "dispatched";
       break;
     case "round_start":
-      ticket.round = (evt.data?.round as number) ?? ticket.round + 1;
+      ticket.round = (event.data?.round as number) ?? ticket.round + 1;
       ticket.lastActivity = `round ${ticket.round}`;
       break;
     case "stage_start":
-      ticket.stage = (evt.data?.stage as StageName) ?? ticket.stage;
+      ticket.stage = (event.data?.stage as StageName) ?? ticket.stage;
       ticket.lastActivity = `${ticket.stage} running`;
       break;
     case "stage_end":
-      ticket.lastActivity = `${(evt.data?.stage as string) ?? ticket.stage}: ${(evt.data?.verdict as string) ?? "done"}`;
+      ticket.lastActivity = `${(event.data?.stage as string) ?? ticket.stage}: ${(event.data?.verdict as string) ?? "done"}`;
       break;
     case "gate_start":
       ticket.lastActivity = "gate running";
       break;
     case "gate_result":
-      ticket.lastActivity = evt.data?.ok ? "gate passed" : `gate failed (${evt.data?.step ?? "?"})`;
+      ticket.lastActivity = event.data?.ok
+        ? "gate passed"
+        : `gate failed (${event.data?.step ?? "?"})`;
       break;
     case "session_activity":
-      ticket.lastActivity = (evt.data?.text as string) ?? ticket.lastActivity;
+      ticket.lastActivity = (event.data?.text as string) ?? ticket.lastActivity;
       break;
     case "escalation":
       ticket.lastActivity = "escalated";
@@ -120,7 +122,7 @@ function applyTicketEvent(
     case "blocked":
       ticket.status = "blocked";
       ticket.stage = null;
-      ticket.lastActivity = (evt.data?.reason as string) ?? "blocked";
+      ticket.lastActivity = (event.data?.reason as string) ?? "blocked";
       next.integrationQueue = next.integrationQueue.filter((queued) => queued !== id);
       break;
     case "merge_queued":
@@ -154,7 +156,7 @@ function applyTicketEvent(
     case "failed":
       ticket.status = "failed";
       ticket.stage = null;
-      ticket.lastActivity = (evt.data?.reason as string) ?? "failed";
+      ticket.lastActivity = (event.data?.reason as string) ?? "failed";
       next.integrationQueue = next.integrationQueue.filter((queued) => queued !== id);
       break;
     // card_moved, observation and error carry no ticket-state transition.
@@ -164,20 +166,20 @@ function applyTicketEvent(
 }
 
 /** Pure reducer: state.json is always rebuildable by folding events.jsonl. */
-export function reduceEvent(state: CoordinatorState, evt: JfdiEvent): CoordinatorState {
+export function reduceEvent(state: CoordinatorState, event: JfdiEvent): CoordinatorState {
   const next: CoordinatorState = {
-    updatedAt: evt.ts,
+    updatedAt: event.ts,
     tickets: { ...state.tickets },
     integrationQueue: [...state.integrationQueue],
   };
-  const id = evt.ticketId;
+  const id = event.ticketId;
   if (!id) return next;
   const ticket: TicketState = {
-    ...(next.tickets[id] ?? newTicketState(id, evt.ts)),
-    lastEventTs: evt.ts,
+    ...(next.tickets[id] ?? newTicketState(id, event.ts)),
+    lastEventTs: event.ts,
   };
   next.tickets[id] = ticket;
-  applyTicketEvent(next, ticket, id, evt);
+  applyTicketEvent(next, ticket, id, event);
   return next;
 }
 
@@ -206,29 +208,29 @@ export class EventLog {
     return this.state;
   }
 
-  on(listener: (evt: JfdiEvent, state: CoordinatorState) => void): () => void {
+  on(listener: (event: JfdiEvent, state: CoordinatorState) => void): () => void {
     this.emitter.on("event", listener);
     return () => this.emitter.off("event", listener);
   }
 
   emit(type: EventType, ticketId?: string, data?: Record<string, unknown>): JfdiEvent {
-    const evt: JfdiEvent = {
+    const event: JfdiEvent = {
       ts: new Date().toISOString(),
       type,
       ...(ticketId !== undefined ? { ticketId } : {}),
       ...(data !== undefined ? { data } : {}),
     };
-    this.state = reduceEvent(this.state, evt);
+    this.state = reduceEvent(this.state, event);
     if (this.persist) {
       const snapshot = this.state;
       this.writeChain = this.writeChain.then(async () => {
         await ensureDir(this.stateDir);
-        await fs.appendFile(this.eventsPath, `${JSON.stringify(evt)}\n`, "utf8");
+        await fs.appendFile(this.eventsPath, `${JSON.stringify(event)}\n`, "utf8");
         await atomicWrite(this.statePath, `${JSON.stringify(snapshot, null, 2)}\n`);
       });
     }
-    this.emitter.emit("event", evt, this.state);
-    return evt;
+    this.emitter.emit("event", event, this.state);
+    return event;
   }
 
   /** Wait for pending disk writes (tests, shutdown). */

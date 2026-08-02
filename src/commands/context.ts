@@ -43,23 +43,23 @@ const YELLOW = "\x1b[33m";
 
 /** Inline streaming renderer for single-ticket mode: plain lines over the event stream. */
 export function attachInlinePrinter(log: EventLog): () => void {
-  return log.on((evt: JfdiEvent) => {
-    const id = evt.ticketId ? `${DIM}[${evt.ticketId}]${RESET} ` : "";
-    switch (evt.type) {
+  return log.on((event: JfdiEvent) => {
+    const id = event.ticketId ? `${DIM}[${event.ticketId}]${RESET} ` : "";
+    switch (event.type) {
       case "dispatch":
-        console.log(`${id}${BOLD}dispatched${RESET} on ${evt.data?.branch}`);
+        console.log(`${id}${BOLD}dispatched${RESET} on ${event.data?.branch}`);
         break;
       case "round_start":
-        console.log(`${id}${BOLD}— round ${evt.data?.round} —${RESET}`);
+        console.log(`${id}${BOLD}— round ${event.data?.round} —${RESET}`);
         break;
       case "stage_start":
-        console.log(`${id}${BOLD}${evt.data?.stage}${RESET} started`);
+        console.log(`${id}${BOLD}${event.data?.stage}${RESET} started`);
         break;
       case "stage_end": {
-        const verdict = String(evt.data?.verdict ?? "");
+        const verdict = String(event.data?.verdict ?? "");
         const color =
           verdict === "pass" || verdict === "done" || verdict === "clean" ? GREEN : YELLOW;
-        console.log(`${id}${evt.data?.stage} → ${color}${verdict}${RESET}`);
+        console.log(`${id}${event.data?.stage} → ${color}${verdict}${RESET}`);
         break;
       }
       case "gate_start":
@@ -67,19 +67,19 @@ export function attachInlinePrinter(log: EventLog): () => void {
         break;
       case "gate_result":
         console.log(
-          evt.data?.ok
+          event.data?.ok
             ? `${id}gate ${GREEN}passed${RESET}`
-            : `${id}gate ${RED}failed${RESET} at ${evt.data?.step}`,
+            : `${id}gate ${RED}failed${RESET} at ${event.data?.step}`,
         );
         break;
       case "session_activity":
-        console.log(`${id}${DIM}${evt.data?.text}${RESET}`);
+        console.log(`${id}${DIM}${event.data?.text}${RESET}`);
         break;
       case "escalation":
-        console.log(`${id}${YELLOW}escalated:${RESET} ${evt.data?.question}`);
+        console.log(`${id}${YELLOW}escalated:${RESET} ${event.data?.question}`);
         break;
       case "blocked":
-        console.log(`${id}${RED}blocked:${RESET} ${evt.data?.reason}`);
+        console.log(`${id}${RED}blocked:${RESET} ${event.data?.reason}`);
         break;
       case "complicated_merge":
         console.log(`${id}${YELLOW}complicated merge — re-running QA${RESET}`);
@@ -89,7 +89,7 @@ export function attachInlinePrinter(log: EventLog): () => void {
         break;
       case "merge_ready":
         console.log(
-          `${id}${GREEN}ready to merge${RESET} — approve with: jfdi merge ${evt.ticketId}`,
+          `${id}${GREEN}ready to merge${RESET} — approve with: jfdi merge ${event.ticketId}`,
         );
         break;
       case "merged":

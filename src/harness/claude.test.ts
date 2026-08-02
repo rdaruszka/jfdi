@@ -73,7 +73,7 @@ describe("ClaudeHarness subprocess", () => {
     const harness = new ClaudeHarness([], exe);
     const session = harness.spawn({ prompt: "do it" }, { cwd: dir });
     const seen: HarnessEvent[] = [];
-    for await (const evt of session.events) seen.push(evt);
+    for await (const event of session.events) seen.push(event);
     const result = await session.done;
     expect(result.ok).toBe(true);
     expect(result.text).toBe("finished the work");

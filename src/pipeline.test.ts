@@ -20,12 +20,12 @@ afterEach(async () => {
 describe("runPipeline", () => {
   it("happy path: implementation → gate → code review → QA → passed", async () => {
     const stages: string[] = [];
-    const ctx = fx.ctx(async (spec, opts) => {
+    const context = fx.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       stages.push(stage);
       switch (stage) {
         case "implementation":
-          await commitFile(opts.cwd, "impl.txt", "the feature\n", "implement");
+          await commitFile(options.cwd, "impl.txt", "the feature\n", "implement");
           await writeVerdict(spec.prompt, {
             status: "done",
             summary: "implemented the feature",
@@ -36,7 +36,7 @@ describe("runPipeline", () => {
           await writeVerdict(spec.prompt, { verdict: "pass" });
           break;
         case "qa":
-          await commitFile(opts.cwd, "e2e.test.txt", "regression\n", "qa tests");
+          await commitFile(options.cwd, "e2e.test.txt", "regression\n", "qa tests");
           await writeVerdict(spec.prompt, {
             verdict: "pass",
             testsAdded: "one regression test",
@@ -49,7 +49,7 @@ describe("runPipeline", () => {
     });
 
     const ticket = await resolveTicket("Build the feature", fx.ticketsDir);
-    const outcome = await runPipeline(ctx, ticket);
+    const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     if (outcome.status !== "passed") return;
     expect(stages).toEqual(["implementation", "code-review", "qa"]);
@@ -69,10 +69,10 @@ describe("runPipeline", () => {
   });
 
   it("writes run artifacts to the state directory and worktrees to .jfdi/", async () => {
-    const ctx = fx.ctx(async (spec, opts) => {
+    const context = fx.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       if (stage === "implementation") {
-        await commitFile(opts.cwd, "impl.txt", "the feature\n", "implement");
+        await commitFile(options.cwd, "impl.txt", "the feature\n", "implement");
         await writeVerdict(spec.prompt, { status: "done", summary: "done" });
       } else {
         await writeVerdict(spec.prompt, { verdict: "pass" });
@@ -81,7 +81,7 @@ describe("runPipeline", () => {
     });
 
     const ticket = await resolveTicket("Build the feature", fx.ticketsDir);
-    const outcome = await runPipeline(ctx, ticket);
+    const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     if (outcome.status !== "passed") return;
 
@@ -96,25 +96,33 @@ describe("runPipeline", () => {
 
   it("code review failure skips QA and feeds back into round 2", async () => {
     const stages: string[] = [];
-    let implRounds = 0;
-    const ctx = fx.ctx(async (spec, opts) => {
+    let implementationRounds = 0;
+    const context = fx.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       stages.push(stage);
       switch (stage) {
         case "implementation":
-          implRounds++;
-          if (implRounds === 2) {
+          implementationRounds++;
+          if (implementationRounds === 2) {
             // The fix round must see the reviewer's feedback.
             expect(spec.prompt).toContain("Feedback on earlier attempts");
             expect(spec.prompt).toContain("rename the helper");
           }
-          await commitFile(opts.cwd, "impl.txt", `v${implRounds}\n`, `implement v${implRounds}`);
-          await writeVerdict(spec.prompt, { status: "done", summary: `round ${implRounds}` });
+          await commitFile(
+            options.cwd,
+            "impl.txt",
+            `v${implementationRounds}\n`,
+            `implement v${implementationRounds}`,
+          );
+          await writeVerdict(spec.prompt, {
+            status: "done",
+            summary: `round ${implementationRounds}`,
+          });
           break;
         case "code-review":
           await writeVerdict(
             spec.prompt,
-            implRounds === 1
+            implementationRounds === 1
               ? { verdict: "fail", feedback: "rename the helper; split the god function" }
               : { verdict: "pass" },
           );
@@ -129,7 +137,7 @@ describe("runPipeline", () => {
     });
 
     const ticket = await resolveTicket("Iterate on review", fx.ticketsDir);
-    const outcome = await runPipeline(ctx, ticket);
+    const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     // Round 1: CR fail → QA never ran. Round 2: full pass.
     expect(stages).toEqual([
@@ -143,20 +151,20 @@ describe("runPipeline", () => {
   });
 
   it("gate failure short-circuits reviews and feeds output back", async () => {
-    let implRounds = 0;
+    let implementationRounds = 0;
     const stages: string[] = [];
-    const ctx = fx.ctx(async (spec, opts) => {
+    const context = fx.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       stages.push(stage);
       if (stage === "implementation") {
-        implRounds++;
-        if (implRounds === 2) expect(spec.prompt).toContain("Mechanical gate failed");
+        implementationRounds++;
+        if (implementationRounds === 2) expect(spec.prompt).toContain("Mechanical gate failed");
         // Round 1 forgets impl.txt → gate fails; round 2 fixes it.
         await commitFile(
-          opts.cwd,
-          implRounds === 1 ? "wrong.txt" : "impl.txt",
+          options.cwd,
+          implementationRounds === 1 ? "wrong.txt" : "impl.txt",
           "x\n",
-          `attempt ${implRounds}`,
+          `attempt ${implementationRounds}`,
         );
         await writeVerdict(spec.prompt, { status: "done" });
       } else {
@@ -166,13 +174,13 @@ describe("runPipeline", () => {
     });
 
     const ticket = await resolveTicket("Gate learner", fx.ticketsDir);
-    const outcome = await runPipeline(ctx, ticket);
+    const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     expect(stages).toEqual(["implementation", "implementation", "code-review", "qa"]);
   });
 
   it("escalation blocks the ticket and writes Questions with a recommendation", async () => {
-    const ctx = fx.ctx(async (spec) => {
+    const context = fx.context(async (spec) => {
       await writeVerdict(spec.prompt, {
         status: "escalate",
         question: "Should auth use OAuth or magic links?",
@@ -182,21 +190,21 @@ describe("runPipeline", () => {
     });
 
     const ticket = await resolveTicket("Ambiguous auth ticket", fx.ticketsDir);
-    const outcome = await runPipeline(ctx, ticket);
+    const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("blocked");
     const note = await fs.readFile(path.join(fx.ticketsDir, `${ticket.id}.md`), "utf8");
     expect(note).toContain("## Questions");
     expect(note).toContain("OAuth or magic links");
     expect(note).toContain("Magic links — no third-party dependency.");
-    const blockedEvents = ctx.log.snapshot().tickets[ticket.id];
+    const blockedEvents = context.log.snapshot().tickets[ticket.id];
     expect(blockedEvents?.status).toBe("blocked");
   });
 
   it("exhausted rounds block with accumulated history in the note", async () => {
-    const ctx = fx.ctx(async (spec, opts) => {
+    const context = fx.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       if (stage === "implementation") {
-        await commitFile(opts.cwd, "impl.txt", `${Math.random()}\n`, "try");
+        await commitFile(options.cwd, "impl.txt", `${Math.random()}\n`, "try");
         await writeVerdict(spec.prompt, { status: "done" });
       } else if (stage === "code-review") {
         await writeVerdict(spec.prompt, { verdict: "fail", feedback: "still not good enough" });
@@ -205,7 +213,7 @@ describe("runPipeline", () => {
     });
 
     const ticket = await resolveTicket("Never good enough", fx.ticketsDir);
-    const outcome = await runPipeline(ctx, ticket);
+    const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("blocked");
     if (outcome.status === "blocked") expect(outcome.reason).toContain("retries exhausted");
     const note = await fs.readFile(path.join(fx.ticketsDir, `${ticket.id}.md`), "utf8");
@@ -219,11 +227,11 @@ describe("runPipeline", () => {
       "---\nmode: ask\n---\n\nDo the careful thing.\n",
     );
     let sawOverride = false;
-    const ctx = fx.ctx(async (spec, opts) => {
+    const context = fx.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       if (stage === "implementation") {
         sawOverride = spec.prompt.includes("Escalation override");
-        await commitFile(opts.cwd, "impl.txt", "done\n", "implement");
+        await commitFile(options.cwd, "impl.txt", "done\n", "implement");
         await writeVerdict(spec.prompt, { status: "done" });
       } else {
         await writeVerdict(spec.prompt, { verdict: "pass" });
@@ -231,20 +239,20 @@ describe("runPipeline", () => {
       return { ok: true, text: "" };
     });
     const ticket = await resolveTicket("[[careful]]", fx.ticketsDir);
-    const outcome = await runPipeline(ctx, ticket);
+    const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     expect(sawOverride).toBe(true);
   });
 
   it("a session that never writes a verdict burns a round with feedback", async () => {
     let implCalls = 0;
-    const ctx = fx.ctx(async (spec, opts) => {
+    const context = fx.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       if (stage === "implementation") {
         implCalls++;
         if (implCalls === 1) return { ok: false, text: "crashed mid-flight" };
         expect(spec.prompt).toContain("crashed mid-flight");
-        await commitFile(opts.cwd, "impl.txt", "ok\n", "implement");
+        await commitFile(options.cwd, "impl.txt", "ok\n", "implement");
         await writeVerdict(spec.prompt, { status: "done" });
       } else {
         await writeVerdict(spec.prompt, { verdict: "pass" });
@@ -252,7 +260,7 @@ describe("runPipeline", () => {
       return { ok: true, text: "" };
     });
     const ticket = await resolveTicket("Flaky session", fx.ticketsDir);
-    const outcome = await runPipeline(ctx, ticket);
+    const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     expect(implCalls).toBe(2);
   });

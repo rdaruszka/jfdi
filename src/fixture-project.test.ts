@@ -114,12 +114,12 @@ describe("half-app end-to-end (fake harness)", () => {
       gate: [{ name: "smoke", cmd: "test -f src/commands/list.ts" }],
     };
 
-    const harness = new FakeHarness(async (spec, opts) => {
+    const harness = new FakeHarness(async (spec, options) => {
       switch (stageOf(spec.prompt)) {
         case "implementation":
           expect(spec.prompt).toContain("case-insensitive");
           await commitFile(
-            opts.cwd,
+            options.cwd,
             "src/commands/list.ts.category-note",
             "pretend category filter\n",
             "feat: category filter on list",
@@ -143,7 +143,7 @@ describe("half-app end-to-end (fake harness)", () => {
     });
 
     const stateDir = path.join(root, "state");
-    const ctx: PipelineContext = {
+    const context: PipelineContext = {
       repoRoot: fx.repo,
       jfdiDir,
       stateDir,
@@ -156,13 +156,13 @@ describe("half-app end-to-end (fake harness)", () => {
       path.join(fx.repo, ".jfdi", "tickets"),
     );
 
-    const outcome = await runPipeline(ctx, ticket);
+    const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     if (outcome.status !== "passed") return;
 
     // Board and ticket notes are untracked (spec §2), so the run's churn to
     // them never dirties the target checkout — the merge lands directly.
-    const merged = await integrateTicket(ctx, ticket, outcome.worktree, outcome.report);
+    const merged = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
     expect(merged, JSON.stringify(merged)).toEqual({ status: "merged" });
 
     const subjects = await git(fx.repo, "log", "--format=%s", "main");

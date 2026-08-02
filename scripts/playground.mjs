@@ -24,20 +24,20 @@ function parseTicketSelector(value) {
 }
 
 function parseArgs(argv) {
-  const opts = { tickets: "all", dest: null, install: true };
+  const options = { tickets: "all", destination: null, shouldInstall: true };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--tickets") {
-      opts.tickets = parseTicketSelector(argv[++i]);
+      options.tickets = parseTicketSelector(argv[++i]);
     } else if (arg === "--dest") {
-      opts.dest = argv[++i] ?? fail("--dest expects a path");
+      options.destination = argv[++i] ?? fail("--dest expects a path");
     } else if (arg === "--no-install") {
-      opts.install = false;
+      options.shouldInstall = false;
     } else {
       fail(`unknown argument: ${arg}`);
     }
   }
-  return opts;
+  return options;
 }
 
 function fail(message) {
@@ -45,38 +45,38 @@ function fail(message) {
   process.exit(1);
 }
 
-const opts = parseArgs(process.argv.slice(2));
+const options = parseArgs(process.argv.slice(2));
 
-let dest;
-if (opts.dest) {
-  dest = path.resolve(opts.dest);
-  const existing = await fs.readdir(dest).catch(() => null);
-  if (existing && existing.length > 0) fail(`--dest exists and is not empty: ${dest}`);
+let destination;
+if (options.destination) {
+  destination = path.resolve(options.destination);
+  const existing = await fs.readdir(destination).catch(() => null);
+  if (existing && existing.length > 0) fail(`--dest exists and is not empty: ${destination}`);
 } else {
   // Outside any parent git repo — both git and Claude Code walk up the tree.
-  dest = await fs.mkdtemp(path.join(os.tmpdir(), "penny-playground-"));
+  destination = await fs.mkdtemp(path.join(os.tmpdir(), "penny-playground-"));
 }
 
 const { createProjectFixture } = await import(
   pathToFileURL(path.join(repoRoot, "dist", "fixture-project.js"))
 );
-const fixture = await createProjectFixture(templateDir, dest, { ready: opts.tickets });
+const fixture = await createProjectFixture(templateDir, destination, { ready: options.tickets });
 
-if (opts.install) {
+if (options.shouldInstall) {
   const install = spawnSync("pnpm", ["install", "--prefer-offline"], {
-    cwd: dest,
+    cwd: destination,
     stdio: "inherit",
   });
   if (install.status !== 0) fail("pnpm install failed in the playground");
 }
 
 const jfdi = path.join(repoRoot, "dist", "index.js");
-console.log(`\nPlayground ready: ${dest}\n`);
+console.log(`\nPlayground ready: ${destination}\n`);
 if (fixture.readyCards.length > 0) {
   console.log("In the Ready column:");
   for (const card of fixture.readyCards) console.log(`  ${card}`);
 } else {
   console.log("All cards left in Backlog (promote them in .jfdi/board.md).");
 }
-console.log(`\nNext:\n  cd ${dest}\n  node ${jfdi} start        # coordinator + TUI`);
+console.log(`\nNext:\n  cd ${destination}\n  node ${jfdi} start        # coordinator + TUI`);
 console.log(`  node ${jfdi} run "<card text>"   # or a single ticket`);

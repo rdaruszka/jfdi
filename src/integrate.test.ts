@@ -11,10 +11,10 @@ let fx: Fixture;
 
 /** Handler that sails a ticket through the pipeline (no gate configured). */
 function passingHandler(file: string) {
-  return async (spec: { prompt: string }, opts: { cwd: string }) => {
+  return async (spec: { prompt: string }, options: { cwd: string }) => {
     const stage = stageOf(spec.prompt);
     if (stage === "implementation") {
-      await commitFile(opts.cwd, file, "feature\n", `implement ${file}`);
+      await commitFile(options.cwd, file, "feature\n", `implement ${file}`);
       await writeVerdict(spec.prompt, { status: "done", summary: `built ${file}` });
     } else if (stage === "integration") {
       throw new Error("integration agent should not run for clean rebases");
@@ -35,16 +35,16 @@ afterEach(async () => {
 
 describe("integrateTicket", () => {
   it("clean rebase → merge, cleanup, report", async () => {
-    const ctx = fx.ctx(passingHandler("feat.txt"));
+    const context = fx.context(passingHandler("feat.txt"));
     const ticket = await resolveTicket("Ship feature", fx.ticketsDir);
-    const outcome = await runPipeline(ctx, ticket);
+    const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     if (outcome.status !== "passed") return;
 
     // Move main forward (non-conflicting) to force a real rebase.
     await commitFile(fx.repo, "other.txt", "other\n", "unrelated");
 
-    const result = await integrateTicket(ctx, ticket, outcome.worktree, outcome.report);
+    const result = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
     expect(result).toEqual({ status: "merged" });
     expect(await fs.readFile(path.join(fx.repo, "feat.txt"), "utf8")).toBe("feature\n");
     // Worktree removed.
@@ -57,14 +57,14 @@ describe("integrateTicket", () => {
   });
 
   it("conflicting rebase: agent resolves, clean verdict → merged", async () => {
-    const ctx = fx.ctx(async (spec, opts) => {
+    const context = fx.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       if (stage === "implementation") {
-        await commitFile(opts.cwd, "README.md", "branch version\n", "edit readme");
+        await commitFile(options.cwd, "README.md", "branch version\n", "edit readme");
         await writeVerdict(spec.prompt, { status: "done" });
       } else if (stage === "integration") {
         // Resolve the conflict like the real agent would.
-        await commitFile(opts.cwd, "README.md", "merged version\n", "never used");
+        await commitFile(options.cwd, "README.md", "merged version\n", "never used");
         // commitFile committed; but a rebase is in progress — emulate properly:
         return { ok: true, text: "" };
       } else {
@@ -73,7 +73,7 @@ describe("integrateTicket", () => {
       return { ok: true, text: "" };
     });
     const ticket = await resolveTicket("Conflicting edit", fx.ticketsDir);
-    const outcome = await runPipeline(ctx, ticket);
+    const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     if (outcome.status !== "passed") return;
 
@@ -81,11 +81,11 @@ describe("integrateTicket", () => {
     await commitFile(fx.repo, "README.md", "main version\n", "main edit");
 
     // Swap in a proper conflict-resolving integration handler.
-    const ctx2 = fx.ctx(async (spec, opts) => {
+    const ctx2 = fx.context(async (spec, options) => {
       expect(stageOf(spec.prompt)).toBe("integration");
-      await fs.writeFile(path.join(opts.cwd, "README.md"), "merged version\n");
-      await git(opts.cwd, "add", "README.md");
-      await git(opts.cwd, "-c", "core.editor=true", "rebase", "--continue");
+      await fs.writeFile(path.join(options.cwd, "README.md"), "merged version\n");
+      await git(options.cwd, "add", "README.md");
+      await git(options.cwd, "-c", "core.editor=true", "rebase", "--continue");
       await writeVerdict(spec.prompt, { resolution: "clean", notes: "kept both edits" });
       return { ok: true, text: "" };
     });
@@ -95,21 +95,21 @@ describe("integrateTicket", () => {
   });
 
   it("complicated resolution goes back through QA before landing", async () => {
-    const ctx = fx.ctx(passingHandler("feat2.txt"));
+    const context = fx.context(passingHandler("feat2.txt"));
     const ticket = await resolveTicket("Complicated landing", fx.ticketsDir);
-    const outcome = await runPipeline(ctx, ticket);
+    const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
     await commitFile(fx.repo, "feat2.txt", "main took the name\n", "collide");
 
     const stages: string[] = [];
-    const ctx2 = fx.ctx(async (spec, opts) => {
+    const ctx2 = fx.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       stages.push(stage);
       if (stage === "integration") {
-        await fs.writeFile(path.join(opts.cwd, "feat2.txt"), "reconciled\n");
-        await git(opts.cwd, "add", "-A");
-        await git(opts.cwd, "-c", "core.editor=true", "rebase", "--continue");
+        await fs.writeFile(path.join(options.cwd, "feat2.txt"), "reconciled\n");
+        await git(options.cwd, "add", "-A");
+        await git(options.cwd, "-c", "core.editor=true", "rebase", "--continue");
         await writeVerdict(spec.prompt, {
           resolution: "complicated",
           notes: "had to rework logic",
@@ -126,18 +126,18 @@ describe("integrateTicket", () => {
   });
 
   it("complicated resolution with failing re-QA blocks", async () => {
-    const ctx = fx.ctx(passingHandler("feat3.txt"));
+    const context = fx.context(passingHandler("feat3.txt"));
     const ticket = await resolveTicket("Bad landing", fx.ticketsDir);
-    const outcome = await runPipeline(ctx, ticket);
+    const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
     await commitFile(fx.repo, "feat3.txt", "collision\n", "collide");
 
-    const ctx2 = fx.ctx(async (spec, opts) => {
+    const ctx2 = fx.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       if (stage === "integration") {
-        await fs.writeFile(path.join(opts.cwd, "feat3.txt"), "broken reconcile\n");
-        await git(opts.cwd, "add", "-A");
-        await git(opts.cwd, "-c", "core.editor=true", "rebase", "--continue");
+        await fs.writeFile(path.join(options.cwd, "feat3.txt"), "broken reconcile\n");
+        await git(options.cwd, "add", "-A");
+        await git(options.cwd, "-c", "core.editor=true", "rebase", "--continue");
         await writeVerdict(spec.prompt, { resolution: "complicated" });
       } else if (stage === "qa") {
         await writeVerdict(spec.prompt, { verdict: "fail", feedback: "behavior regressed" });
@@ -152,16 +152,16 @@ describe("integrateTicket", () => {
   });
 
   it("detects a branch the human already merged and closes without double-merging", async () => {
-    const ctx = fx.ctx(passingHandler("feat4.txt"));
+    const context = fx.context(passingHandler("feat4.txt"));
     const ticket = await resolveTicket("Hand merged", fx.ticketsDir);
-    const outcome = await runPipeline(ctx, ticket);
+    const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
     // Human merges by hand.
     await git(fx.repo, "merge", "--ff-only", outcome.worktree.branch);
     const headBefore = await git(fx.repo, "rev-parse", "HEAD");
 
-    const result = await integrateTicket(ctx, ticket, outcome.worktree, outcome.report);
+    const result = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
     expect(result.status).toBe("already-merged");
     expect(await git(fx.repo, "rev-parse", "HEAD")).toBe(headBefore);
   });

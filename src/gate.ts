@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import type { GateCommand } from "./config.js";
+import { EXIT_COMMAND_NOT_EXECUTABLE } from "./util/exit-codes.js";
 
 export interface GateCommandResult {
   name: string;
@@ -17,8 +18,10 @@ export interface GateResult {
 
 const MAX_OUTPUT_CHARS = 20_000;
 
-function tail(s: string): string {
-  return s.length <= MAX_OUTPUT_CHARS ? s : `…(truncated)…\n${s.slice(-MAX_OUTPUT_CHARS)}`;
+function tail(output: string): string {
+  return output.length <= MAX_OUTPUT_CHARS
+    ? output
+    : `…(truncated)…\n${output.slice(-MAX_OUTPUT_CHARS)}`;
 }
 
 function runCommand(cmd: string, cwd: string): Promise<{ code: number; output: string }> {
@@ -30,7 +33,9 @@ function runCommand(cmd: string, cwd: string): Promise<{ code: number; output: s
     };
     child.stdout.on("data", collect);
     child.stderr.on("data", collect);
-    child.on("error", (err) => resolve({ code: 127, output: `${output}\n${err.message}` }));
+    child.on("error", (error) =>
+      resolve({ code: EXIT_COMMAND_NOT_EXECUTABLE, output: `${output}\n${error.message}` }),
+    );
     child.on("close", (code) => resolve({ code: code ?? 1, output }));
   });
 }

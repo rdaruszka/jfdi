@@ -72,27 +72,27 @@ async function promoteCards(
 
 export async function createProjectFixture(
   templateDir: string,
-  destDir: string,
-  opts: ProjectFixtureOptions = {},
+  destinationDir: string,
+  options: ProjectFixtureOptions = {},
 ): Promise<ProjectFixture> {
-  await fs.cp(templateDir, destDir, {
+  await fs.cp(templateDir, destinationDir, {
     recursive: true,
     filter: (src) => !SKIP_DIRS.has(path.basename(src)),
   });
-  await git(destDir, "init", "-b", "main");
-  await git(destDir, "config", "user.email", "fixture@jfdi.local");
-  await git(destDir, "config", "user.name", "JFDI Fixture");
+  await git(destinationDir, "init", "-b", "main");
+  await git(destinationDir, "config", "user.email", "fixture@jfdi.local");
+  await git(destinationDir, "config", "user.name", "JFDI Fixture");
 
   // Seed what the template can't carry: the canonical stage prompts, and the
   // .jfdi/.gitignore (a gitignore inside the template would hide the board and
   // tickets from THIS repo too, so scaffold it at mint time instead).
-  const jfdiDir = path.join(destDir, ".jfdi");
+  const jfdiDir = path.join(destinationDir, ".jfdi");
   await ensureJfdiGitignore(jfdiDir);
   await ensurePrompts(jfdiDir);
 
   // A short realistic history, not one blob commit — merges and rebases get a
   // deterministic baseline and `git log` archaeology has something to find.
-  await commitPaths(destDir, "chore: project tooling", [
+  await commitPaths(destinationDir, "chore: project tooling", [
     "package.json",
     "pnpm-lock.yaml",
     "tsconfig.json",
@@ -101,15 +101,17 @@ export async function createProjectFixture(
     ".gitignore",
     "README.md",
   ]);
-  await commitPaths(destDir, "feat: add, list, and total commands", ["src"]);
+  await commitPaths(destinationDir, "feat: add, list, and total commands", ["src"]);
 
   // Only config, sandbox, and prompts land in the commit — .jfdi/.gitignore
   // keeps the board, tickets, and runtime state out of product history
   // (spec §2: work tracking is external, like JIRA would be).
-  await commitPaths(destDir, "chore: adopt jfdi (config, sandbox contract, prompts)", [".jfdi"]);
+  await commitPaths(destinationDir, "chore: adopt jfdi (config, sandbox contract, prompts)", [
+    ".jfdi",
+  ]);
 
-  const boardPath = path.join(destDir, ".jfdi", "board.md");
-  const readyCards = await promoteCards(boardPath, opts.ready ?? "all");
+  const boardPath = path.join(destinationDir, ".jfdi", "board.md");
+  const readyCards = await promoteCards(boardPath, options.ready ?? "all");
 
-  return { repo: destDir, readyCards };
+  return { repo: destinationDir, readyCards };
 }

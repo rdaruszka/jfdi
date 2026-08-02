@@ -10,7 +10,7 @@ describe("parseConfig", () => {
   });
 
   it("accepts the spec example shape", () => {
-    const cfg = parseConfig({
+    const config = parseConfig({
       board: {
         path: ".jfdi/board.md",
         columns: { begin: "Ready", inProgress: "In Progress", done: "Done" },
@@ -25,10 +25,10 @@ describe("parseConfig", () => {
       max_concurrent: 4,
       harness: "claude",
     });
-    expect(cfg.integration).toEqual({ target_branch: "develop", mode: "auto" });
-    expect(cfg.gate).toHaveLength(2);
-    expect(cfg.max_concurrent).toBe(4);
-    expect(cfg.board.columns.blocked).toBe("Blocked");
+    expect(config.integration).toEqual({ target_branch: "develop", mode: "auto" });
+    expect(config.gate).toHaveLength(2);
+    expect(config.max_concurrent).toBe(4);
+    expect(config.board.columns.blocked).toBe("Blocked");
   });
 
   it("rejects a bad integration mode", () => {

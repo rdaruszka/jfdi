@@ -68,8 +68,8 @@ async function nextRunDir(stateDir: string, ticketId: string): Promise<string> {
   const base = runsDir(stateDir, ticketId);
   await ensureDir(base);
   const entries = await fs.readdir(base);
-  const runs = entries.filter((e) => /^run-\d+$/.test(e)).length;
-  const dir = path.join(base, `run-${runs + 1}`);
+  const runCount = entries.filter((e) => /^run-\d+$/.test(e)).length;
+  const dir = path.join(base, `run-${runCount + 1}`);
   await ensureDir(dir);
   return dir;
 }
@@ -81,7 +81,7 @@ interface StageOutcome {
 }
 
 async function runStageSession(
-  ctx: PipelineContext,
+  context: PipelineContext,
   ticket: Ticket,
   worktree: Worktree,
   stage: StageName,
@@ -90,19 +90,19 @@ async function runStageSession(
 ): Promise<StageOutcome> {
   const verdictPath = path.join(roundDir, `${stage}.verdict.json`);
   const logPath = path.join(roundDir, `${stage}.log.jsonl`);
-  ctx.log.emit("stage_start", ticket.id, { stage });
-  const session = ctx.harness.spawn({ prompt }, { cwd: worktree.path, logPath });
-  ctx.sessions?.add(session);
+  context.log.emit("stage_start", ticket.id, { stage });
+  const session = context.harness.spawn({ prompt }, { cwd: worktree.path, logPath });
+  context.sessions?.add(session);
   try {
-    for await (const evt of session.events) {
-      if (evt.type === "tool") {
-        ctx.log.emit("session_activity", ticket.id, {
-          text: `${stage}: ${evt.name}${evt.detail ? ` ${evt.detail}` : ""}`,
+    for await (const event of session.events) {
+      if (event.type === "tool") {
+        context.log.emit("session_activity", ticket.id, {
+          text: `${stage}: ${event.name}${event.detail ? ` ${event.detail}` : ""}`,
         });
-      } else if (evt.type === "text") {
-        const line = evt.text.split("\n")[0] ?? "";
+      } else if (event.type === "text") {
+        const line = event.text.split("\n")[0] ?? "";
         if (line.trim())
-          ctx.log.emit("session_activity", ticket.id, {
+          context.log.emit("session_activity", ticket.id, {
             text: `${stage}: ${line.slice(0, MAX_ACTIVITY_CHARS)}`,
           });
       }
@@ -110,21 +110,21 @@ async function runStageSession(
     const result = await session.done;
     return { ok: result.ok, resultText: result.text, verdictPath };
   } finally {
-    ctx.sessions?.delete(session);
+    context.sessions?.delete(session);
   }
 }
 
 async function stagePrompt(
-  ctx: PipelineContext,
+  context: PipelineContext,
   name: PromptName,
-  vars: Record<string, string>,
+  variables: Record<string, string>,
 ): Promise<string> {
-  const template = await loadPrompt(ctx.jfdiDir, name);
-  return renderPrompt(template, vars);
+  const template = await loadPrompt(context.jfdiDir, name);
+  return renderPrompt(template, variables);
 }
 
 function commonVars(
-  ctx: PipelineContext,
+  context: PipelineContext,
   ticket: Ticket,
   worktree: Worktree,
   verdictPath: string,
@@ -133,8 +133,8 @@ function commonVars(
     TICKET_ID: ticket.id,
     SPEC: ticket.spec,
     BRANCH: worktree.branch,
-    TARGET_BRANCH: ctx.config.integration.target_branch,
-    GATE_COMMANDS: formatGateCommands(ctx.config.gate),
+    TARGET_BRANCH: context.config.integration.target_branch,
+    GATE_COMMANDS: formatGateCommands(context.config.gate),
     VERDICT_PATH: verdictPath,
   };
 }
@@ -180,14 +180,14 @@ async function recordDecisions(
 }
 
 async function recordEscalation(
-  ctx: PipelineContext,
+  context: PipelineContext,
   ticket: Ticket,
   notePath: string,
   stage: string,
   question: string,
   recommendation: string,
 ): Promise<void> {
-  const beginColumn = ctx.config.board.columns.begin;
+  const beginColumn = context.config.board.columns.begin;
   await appendToSection(
     notePath,
     "Questions",
@@ -201,12 +201,12 @@ async function recordEscalation(
       `_Answer by editing this note, then move the card back to "${beginColumn}"._`,
     ].join("\n"),
   );
-  ctx.log.emit("escalation", ticket.id, { stage, question, recommendation });
+  context.log.emit("escalation", ticket.id, { stage, question, recommendation });
 }
 
 /** Run QA alone (used post-rebase on a complicated merge). */
 export async function runQaStage(
-  ctx: PipelineContext,
+  context: PipelineContext,
   ticket: Ticket,
   worktree: Worktree,
   roundDir: string,
@@ -214,17 +214,17 @@ export async function runQaStage(
   round: number,
 ): Promise<{ verdict: ReviewVerdict | null; outcome: StageOutcome }> {
   const sandbox =
-    (await readIfExists(path.join(ctx.jfdiDir, "sandbox.md"))) ??
+    (await readIfExists(path.join(context.jfdiDir, "sandbox.md"))) ??
     "(no sandbox contract found — exercise the artifact as best you can and say so in your feedback)";
   const verdictPath = path.join(roundDir, "qa.verdict.json");
-  const prompt = await stagePrompt(ctx, "qa", {
-    ...commonVars(ctx, ticket, worktree, verdictPath),
+  const prompt = await stagePrompt(context, "qa", {
+    ...commonVars(context, ticket, worktree, verdictPath),
     SANDBOX: sandbox,
   });
-  const outcome = await runStageSession(ctx, ticket, worktree, "qa", prompt, roundDir);
+  const outcome = await runStageSession(context, ticket, worktree, "qa", prompt, roundDir);
   const verdict = await readReviewVerdict(outcome.verdictPath, { allowEscalate: true });
   if (verdict) await recordDecisions(notePath, "qa", round, verdict.decisions);
-  ctx.log.emit("stage_end", ticket.id, {
+  context.log.emit("stage_end", ticket.id, {
     stage: "qa",
     verdict: verdict?.verdict ?? (outcome.ok ? "invalid-verdict" : "session-failed"),
   });
@@ -237,7 +237,7 @@ type ImplementationStep =
   | { kind: "escalate"; question: string; recommendation: string };
 
 async function runImplementationStage(
-  ctx: PipelineContext,
+  context: PipelineContext,
   ticket: Ticket,
   worktree: Worktree,
   roundDir: string,
@@ -246,13 +246,20 @@ async function runImplementationStage(
   history: FeedbackItem[],
 ): Promise<ImplementationStep> {
   const verdictPath = path.join(roundDir, "implementation.verdict.json");
-  const prompt = await stagePrompt(ctx, "implementation", {
-    ...commonVars(ctx, ticket, worktree, verdictPath),
+  const prompt = await stagePrompt(context, "implementation", {
+    ...commonVars(context, ticket, worktree, verdictPath),
     FEEDBACK_SECTION: formatFeedbackSection(history, ticket.mode),
   });
-  const outcome = await runStageSession(ctx, ticket, worktree, "implementation", prompt, roundDir);
+  const outcome = await runStageSession(
+    context,
+    ticket,
+    worktree,
+    "implementation",
+    prompt,
+    roundDir,
+  );
   const verdict = await readImplementationVerdict(outcome.verdictPath);
-  ctx.log.emit("stage_end", ticket.id, {
+  context.log.emit("stage_end", ticket.id, {
     stage: "implementation",
     verdict: verdict?.status ?? (outcome.ok ? "invalid-verdict" : "session-failed"),
   });
@@ -285,7 +292,7 @@ type CodeReviewStep =
   | { kind: "retry"; feedback: string };
 
 async function runCodeReviewStage(
-  ctx: PipelineContext,
+  context: PipelineContext,
   ticket: Ticket,
   worktree: Worktree,
   roundDir: string,
@@ -294,15 +301,15 @@ async function runCodeReviewStage(
 ): Promise<CodeReviewStep> {
   const verdictPath = path.join(roundDir, "code-review.verdict.json");
   const prompt = await stagePrompt(
-    ctx,
+    context,
     "code-review",
-    commonVars(ctx, ticket, worktree, verdictPath),
+    commonVars(context, ticket, worktree, verdictPath),
   );
-  const outcome = await runStageSession(ctx, ticket, worktree, "code-review", prompt, roundDir);
+  const outcome = await runStageSession(context, ticket, worktree, "code-review", prompt, roundDir);
   // Reviewers are read-only; discard any stray modifications.
   await git(worktree.path, "checkout", "--", ".");
   const verdict = await readReviewVerdict(outcome.verdictPath, { allowEscalate: false });
-  ctx.log.emit("stage_end", ticket.id, {
+  context.log.emit("stage_end", ticket.id, {
     stage: "code-review",
     verdict: verdict?.verdict ?? (outcome.ok ? "invalid-verdict" : "session-failed"),
   });
@@ -334,13 +341,13 @@ interface RoundResult {
 }
 
 /** The mechanical gate, with its start/result events. Cheapest reviewer, runs first, always. */
-async function runGateStage(ctx: PipelineContext, ticket: Ticket, worktree: Worktree) {
-  ctx.log.emit("gate_start", ticket.id);
-  const gate = await runGate(ctx.config.gate, worktree.path, (name) =>
-    ctx.log.emit("session_activity", ticket.id, { text: `gate: ${name}` }),
+async function runGateStage(context: PipelineContext, ticket: Ticket, worktree: Worktree) {
+  context.log.emit("gate_start", ticket.id);
+  const gate = await runGate(context.config.gate, worktree.path, (name) =>
+    context.log.emit("session_activity", ticket.id, { text: `gate: ${name}` }),
   );
   const failedStep = gate.results.at(-1)?.name;
-  ctx.log.emit("gate_result", ticket.id, {
+  context.log.emit("gate_result", ticket.id, {
     ok: gate.ok,
     ...(gate.ok ? {} : { step: failedStep }),
   });
@@ -353,7 +360,7 @@ async function runGateStage(ctx: PipelineContext, ticket: Ticket, worktree: Work
  * so a code-review failure never pays for a sandbox run.
  */
 async function runRound(
-  ctx: PipelineContext,
+  context: PipelineContext,
   ticket: Ticket,
   worktree: Worktree,
   roundDir: string,
@@ -366,7 +373,7 @@ async function runRound(
   const soFar = { decisions, observations, summary: undefined };
 
   const implementation = await runImplementationStage(
-    ctx,
+    context,
     ticket,
     worktree,
     roundDir,
@@ -380,8 +387,8 @@ async function runRound(
   }
   if (implementation.kind === "escalate") {
     const { question, recommendation } = implementation;
-    await recordEscalation(ctx, ticket, notePath, "implementation", question, recommendation);
-    ctx.log.emit("blocked", ticket.id, {
+    await recordEscalation(context, ticket, notePath, "implementation", question, recommendation);
+    context.log.emit("blocked", ticket.id, {
       reason: `escalated: ${question.slice(0, MAX_REASON_CHARS)}`,
     });
     return { ...soFar, step: { kind: "blocked", reason: question } };
@@ -391,7 +398,7 @@ async function runRound(
   const summary = implementation.summary;
   await commitAllIfDirty(worktree.path, `jfdi(${ticket.id}): checkpoint uncommitted work`);
 
-  const gate = await runGateStage(ctx, ticket, worktree);
+  const gate = await runGateStage(context, ticket, worktree);
   if (!gate.ok)
     return {
       decisions,
@@ -400,7 +407,7 @@ async function runRound(
       step: { kind: "retry", source: "gate", feedback: formatGateFailure(gate) },
     };
 
-  const review = await runCodeReviewStage(ctx, ticket, worktree, roundDir, notePath, round);
+  const review = await runCodeReviewStage(context, ticket, worktree, roundDir, notePath, round);
   if (review.kind === "retry") {
     const { feedback } = review;
     return {
@@ -413,8 +420,8 @@ async function runRound(
   decisions.push(...review.decisions);
   observations.push(...review.observations);
 
-  const qa = await runQaStage(ctx, ticket, worktree, roundDir, notePath, round);
-  const qaStep = await judgeQa(ctx, ticket, notePath, qa);
+  const qa = await runQaStage(context, ticket, worktree, roundDir, notePath, round);
+  const qaStep = await judgeQa(context, ticket, notePath, qa);
   if (qaStep.kind === "passed") {
     decisions.push(...(qa.verdict?.decisions ?? []));
     observations.push(...(qa.verdict?.observations ?? []));
@@ -425,7 +432,7 @@ async function runRound(
 
 /** Turn a QA outcome into the round's verdict, recording an escalation if that's what it is. */
 async function judgeQa(
-  ctx: PipelineContext,
+  context: PipelineContext,
   ticket: Ticket,
   notePath: string,
   qa: { verdict: ReviewVerdict | null; outcome: StageOutcome },
@@ -433,8 +440,8 @@ async function judgeQa(
   if (qa.verdict?.verdict === "escalate") {
     const question = qa.verdict.question ?? "QA escalated without a stated question.";
     const recommendation = qa.verdict.recommendation ?? "(no recommendation given)";
-    await recordEscalation(ctx, ticket, notePath, "qa", question, recommendation);
-    ctx.log.emit("blocked", ticket.id, {
+    await recordEscalation(context, ticket, notePath, "qa", question, recommendation);
+    context.log.emit("blocked", ticket.id, {
       reason: `QA escalated: ${question.slice(0, MAX_REASON_CHARS)}`,
     });
     return { kind: "blocked", reason: question };
@@ -456,26 +463,37 @@ async function judgeQa(
  * with feedback rounds. Reviews are sequential — Code Review gates QA — and both
  * sign-offs bind to a commit: any fix round re-enters at the gate and repeats both.
  */
-export async function runPipeline(ctx: PipelineContext, ticket: Ticket): Promise<PipelineOutcome> {
-  const target = ctx.config.integration.target_branch;
-  await ensureJfdiGitignore(ctx.jfdiDir);
-  const notePath = await ensureTicketNote(ticket, path.join(ctx.repoRoot, ctx.config.ticketsDir));
-  const worktree = await createWorktree(ctx.repoRoot, worktreesDir(ctx.jfdiDir), ticket.id, target);
-  const runDir = await nextRunDir(ctx.stateDir, ticket.id);
-  ctx.log.emit("dispatch", ticket.id, { title: ticket.cardText, branch: worktree.branch });
+export async function runPipeline(
+  context: PipelineContext,
+  ticket: Ticket,
+): Promise<PipelineOutcome> {
+  const target = context.config.integration.target_branch;
+  await ensureJfdiGitignore(context.jfdiDir);
+  const notePath = await ensureTicketNote(
+    ticket,
+    path.join(context.repoRoot, context.config.ticketsDir),
+  );
+  const worktree = await createWorktree(
+    context.repoRoot,
+    worktreesDir(context.jfdiDir),
+    ticket.id,
+    target,
+  );
+  const runDir = await nextRunDir(context.stateDir, ticket.id);
+  context.log.emit("dispatch", ticket.id, { title: ticket.cardText, branch: worktree.branch });
 
   const history: FeedbackItem[] = [];
   const allDecisions: string[] = [];
   const allObservations: string[] = [];
   let summary = "";
-  const maxRounds = ctx.config.pipeline.max_rounds;
+  const maxRounds = context.config.pipeline.max_rounds;
 
   for (let round = 1; round <= maxRounds; round++) {
-    ctx.log.emit("round_start", ticket.id, { round });
+    context.log.emit("round_start", ticket.id, { round });
     const roundDir = path.join(runDir, `round-${round}`);
     await ensureDir(roundDir);
 
-    const result = await runRound(ctx, ticket, worktree, roundDir, notePath, round, history);
+    const result = await runRound(context, ticket, worktree, roundDir, notePath, round, history);
     allDecisions.push(...result.decisions);
     allObservations.push(...result.observations);
     summary = result.summary ?? summary;
@@ -501,18 +519,18 @@ export async function runPipeline(ctx: PipelineContext, ticket: Ticket): Promise
     };
   }
 
-  return recordRoundsExhausted(ctx, ticket, notePath, history, maxRounds);
+  return recordRoundsExhausted(context, ticket, notePath, history, maxRounds);
 }
 
 /** Rounds exhausted → Blocked, with the accumulated round history in the note. */
 async function recordRoundsExhausted(
-  ctx: PipelineContext,
+  context: PipelineContext,
   ticket: Ticket,
   notePath: string,
   history: FeedbackItem[],
   maxRounds: number,
 ): Promise<PipelineOutcome> {
-  const historyMd = history
+  const historyMarkdown = history
     .map((h) => `- **round ${h.round} (${h.source}):** ${h.feedback.split("\n")[0]}`)
     .join("\n");
   await appendToSection(
@@ -523,11 +541,11 @@ async function recordRoundsExhausted(
       "",
       `All ${maxRounds} rounds failed. Round history:`,
       "",
-      historyMd,
+      historyMarkdown,
       "",
-      `_Full logs: ${runsDir(ctx.stateDir, ticket.id)}/. Adjust the ticket and move it back to "${ctx.config.board.columns.begin}" to retry._`,
+      `_Full logs: ${runsDir(context.stateDir, ticket.id)}/. Adjust the ticket and move it back to "${context.config.board.columns.begin}" to retry._`,
     ].join("\n"),
   );
-  ctx.log.emit("blocked", ticket.id, { reason: `retries exhausted after ${maxRounds} rounds` });
+  context.log.emit("blocked", ticket.id, { reason: `retries exhausted after ${maxRounds} rounds` });
   return { status: "blocked", reason: `retries exhausted after ${maxRounds} rounds` };
 }

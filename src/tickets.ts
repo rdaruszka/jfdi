@@ -18,9 +18,9 @@ export interface Ticket {
 const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---\n?/;
 
 function parseFrontmatterMode(content: string): "default" | "ask" {
-  const m = FRONTMATTER_RE.exec(content);
-  if (!m?.[1]) return "default";
-  const modeLine = m[1].split("\n").find((l) => /^mode\s*:/.test(l.trim()));
+  const match = FRONTMATTER_RE.exec(content);
+  if (!match?.[1]) return "default";
+  const modeLine = match[1].split("\n").find((l) => /^mode\s*:/.test(l.trim()));
   if (!modeLine) return "default";
   const value = modeLine.split(":", 2)[1]?.trim();
   return value === "ask" ? "ask" : "default";

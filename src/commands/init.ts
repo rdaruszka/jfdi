@@ -11,14 +11,14 @@ import { scaffoldJfdi } from "../scaffold.js";
  * contract), then hand off to an agent session that inspects the repo and gives
  * the mechanical gate teeth. `--bare` skips the agent step.
  */
-export async function initCommand(opts: { bare?: boolean } = {}): Promise<number> {
+export async function initCommand(options: { bare?: boolean } = {}): Promise<number> {
   const root = await repoRoot(process.cwd());
   const jfdiDir = path.join(root, JFDI_DIR);
   await scaffoldJfdi(root, jfdiDir);
   console.log(`scaffolded ${JFDI_DIR}/ (config, board, tickets, prompts, sandbox contract)`);
 
   const config = await loadConfig(root);
-  if (opts.bare || config.harness !== "claude") {
+  if (options.bare || config.harness !== "claude") {
     console.log("next: fill in the gate commands in .jfdi/config.json and .jfdi/sandbox.md");
     return 0;
   }
@@ -28,8 +28,8 @@ export async function initCommand(opts: { bare?: boolean } = {}): Promise<number
   const prompt = renderPrompt(template, { CODING_GUIDELINES });
   const child = spawn("claude", [prompt], { cwd: root, stdio: "inherit" });
   return new Promise<number>((resolve) => {
-    child.on("error", (err) => {
-      console.error(`failed to launch claude: ${err.message}`);
+    child.on("error", (error) => {
+      console.error(`failed to launch claude: ${error.message}`);
       console.error("scaffold is in place — fill in .jfdi/config.json's gate by hand");
       resolve(0);
     });

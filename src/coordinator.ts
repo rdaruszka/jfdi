@@ -38,29 +38,29 @@ export class Coordinator {
   readonly sessions = new Set<{ kill(): void }>();
 
   constructor(
-    private readonly ctx: PipelineContext,
-    opts: CoordinatorOptions = {},
+    private readonly context: PipelineContext,
+    options: CoordinatorOptions = {},
   ) {
-    this.pollMs = opts.pollMs ?? DEFAULT_POLL_INTERVAL_MS;
-    ctx.sessions = this.sessions;
+    this.pollMs = options.pollMs ?? DEFAULT_POLL_INTERVAL_MS;
+    context.sessions = this.sessions;
   }
 
   private get boardPath(): string {
-    return path.join(this.ctx.repoRoot, this.ctx.config.board.path);
+    return path.join(this.context.repoRoot, this.context.config.board.path);
   }
 
   /** Set up board + watchers and run the initial scan. Resolves once watching. */
   async start(): Promise<void> {
-    await ensureJfdiGitignore(this.ctx.jfdiDir);
-    const cols = this.ctx.config.board.columns;
+    await ensureJfdiGitignore(this.context.jfdiDir);
+    const columns = this.context.config.board.columns;
     if (!(await fileExists(this.boardPath)))
       throw new Error(
-        `board not found at ${this.ctx.config.board.path} — run \`jfdi init\` or create it first`,
+        `board not found at ${this.context.config.board.path} — run \`jfdi init\` or create it first`,
       );
     // The coordinator manages its own well-known columns, created if absent.
     // Inbox is agent-proposal-only: cards land there via recordObservations and
     // are never dispatched — only a human moves them out.
-    await ensureColumns(this.boardPath, [cols.blocked, cols.readyToMerge, cols.inbox]);
+    await ensureColumns(this.boardPath, [columns.blocked, columns.readyToMerge, columns.inbox]);
 
     try {
       this.watcher = watch(this.boardPath, { persistent: false }, () => this.requestScan());
@@ -125,8 +125,8 @@ export class Coordinator {
         this.rescanWanted = false;
         await this.scanOnce();
       } while (this.rescanWanted && !this.stopped);
-    } catch (err) {
-      this.ctx.log.emit("error", undefined, { message: (err as Error).message });
+    } catch (error) {
+      this.context.log.emit("error", undefined, { message: (error as Error).message });
     } finally {
       this.scanning = false;
     }
@@ -136,25 +136,29 @@ export class Coordinator {
     const content = await readIfExists(this.boardPath);
     if (content === null) return;
     const board = parseBoard(content);
-    const cols = this.ctx.config.board.columns;
+    const columns = this.context.config.board.columns;
 
     // Hand-merged Ready-to-Merge cards: close without double-merging.
-    for (const card of findColumn(board, cols.readyToMerge)?.cards ?? []) {
+    for (const card of findColumn(board, columns.readyToMerge)?.cards ?? []) {
       const id = ticketIdFromCard(card.text);
       if (this.active.has(id)) continue;
       const branch = ticketBranch(id);
       if (
-        (await branchExists(this.ctx.repoRoot, branch)) &&
-        (await isAncestor(this.ctx.repoRoot, branch, this.ctx.config.integration.target_branch))
+        (await branchExists(this.context.repoRoot, branch)) &&
+        (await isAncestor(
+          this.context.repoRoot,
+          branch,
+          this.context.config.integration.target_branch,
+        ))
       ) {
-        await this.moveCardSafe(card, cols.readyToMerge, cols.done, true);
-        this.ctx.log.emit("merged", id, { note: "merged by hand — card closed" });
+        await this.moveCardSafe(card, columns.readyToMerge, columns.done, true);
+        this.context.log.emit("merged", id, { note: "merged by hand — card closed" });
       }
     }
 
     // Dispatch from the begin column, top first, respecting max_concurrent.
-    for (const card of findColumn(board, cols.begin)?.cards ?? []) {
-      if (this.active.size >= this.ctx.config.max_concurrent) break;
+    for (const card of findColumn(board, columns.begin)?.cards ?? []) {
+      if (this.active.size >= this.context.config.max_concurrent) break;
       const id = ticketIdFromCard(card.text);
       if (this.active.has(id)) continue;
       const job = this.dispatch(card, id).finally(() => {
@@ -166,44 +170,44 @@ export class Coordinator {
   }
 
   private async dispatch(card: Card, id: string): Promise<void> {
-    const cols = this.ctx.config.board.columns;
+    const columns = this.context.config.board.columns;
     try {
-      const ticketsDir = path.join(this.ctx.repoRoot, this.ctx.config.ticketsDir);
+      const ticketsDir = path.join(this.context.repoRoot, this.context.config.ticketsDir);
       const ticket = await resolveTicket(card.text, ticketsDir);
-      await this.moveCardSafe(card, cols.begin, cols.inProgress, false);
+      await this.moveCardSafe(card, columns.begin, columns.inProgress, false);
 
       // A begin-column card whose pipeline already passed is an approval:
       // integrate the existing branch instead of rebuilding.
-      const savedReport = await loadReport(this.ctx.stateDir, id);
+      const savedReport = await loadReport(this.context.stateDir, id);
       const branch = ticketBranch(id);
-      if (savedReport && (await branchExists(this.ctx.repoRoot, branch))) {
+      if (savedReport && (await branchExists(this.context.repoRoot, branch))) {
         await this.integrate(card, ticket, savedReport);
         return;
       }
 
-      const outcome = await runPipeline(this.ctx, ticket);
+      const outcome = await runPipeline(this.context, ticket);
       if (outcome.status === "blocked") {
-        await this.moveCardSafe(card, cols.inProgress, cols.blocked, false);
+        await this.moveCardSafe(card, columns.inProgress, columns.blocked, false);
         return;
       }
       if (outcome.status === "failed") {
-        this.ctx.log.emit("failed", id, { reason: outcome.reason });
-        await this.moveCardSafe(card, cols.inProgress, cols.blocked, false);
+        this.context.log.emit("failed", id, { reason: outcome.reason });
+        await this.moveCardSafe(card, columns.inProgress, columns.blocked, false);
         return;
       }
 
-      await saveReport(this.ctx.stateDir, id, outcome.report);
-      await recordObservations(this.ctx, id, outcome.report.observations);
-      if (this.ctx.config.integration.mode === "on-approval") {
+      await saveReport(this.context.stateDir, id, outcome.report);
+      await recordObservations(this.context, id, outcome.report.observations);
+      if (this.context.config.integration.mode === "on-approval") {
         const notePath = ticket.notePath ?? path.join(ticketsDir, `${ticket.id}.md`);
-        await recordMergeReady(this.ctx, id, notePath, outcome.report);
-        await this.moveCardSafe(card, cols.inProgress, cols.readyToMerge, false);
+        await recordMergeReady(this.context, id, notePath, outcome.report);
+        await this.moveCardSafe(card, columns.inProgress, columns.readyToMerge, false);
         return;
       }
       await this.integrate(card, ticket, outcome.report);
-    } catch (err) {
-      this.ctx.log.emit("failed", id, { reason: (err as Error).message });
-      await this.moveCardSafe(card, cols.inProgress, cols.blocked, false).catch(() => {
+    } catch (error) {
+      this.context.log.emit("failed", id, { reason: (error as Error).message });
+      await this.moveCardSafe(card, columns.inProgress, columns.blocked, false).catch(() => {
         // Best-effort: the failure above is already logged; the board move is advisory.
       });
     }
@@ -211,24 +215,24 @@ export class Coordinator {
 
   /** Integration is the global critical section: strictly one at a time. */
   private async integrate(card: Card, ticket: Ticket, report: RunReport): Promise<void> {
-    const cols = this.ctx.config.board.columns;
-    this.ctx.log.emit("merge_queued", ticket.id);
+    const columns = this.context.config.board.columns;
+    this.context.log.emit("merge_queued", ticket.id);
     const outcome = await this.integrations.enqueue(() =>
       integrateTicket(
-        this.ctx,
+        this.context,
         ticket,
         {
-          path: path.join(worktreesDir(this.ctx.jfdiDir), ticket.id),
+          path: path.join(worktreesDir(this.context.jfdiDir), ticket.id),
           branch: ticketBranch(ticket.id),
         },
         report,
       ),
     );
     if (outcome.status === "blocked") {
-      await this.moveCardSafe(card, cols.inProgress, cols.blocked, false);
+      await this.moveCardSafe(card, columns.inProgress, columns.blocked, false);
       return;
     }
-    await this.moveCardSafe(card, cols.inProgress, cols.done, true);
+    await this.moveCardSafe(card, columns.inProgress, columns.done, true);
   }
 
   /**
@@ -255,12 +259,12 @@ export class Coordinator {
       try {
         await moveCard(this.boardPath, card.raw, actual.name, to, rewrite);
       } catch {
-        this.ctx.log.emit("error", ticketIdFromCard(card.text), {
+        this.context.log.emit("error", ticketIdFromCard(card.text), {
           message: `could not move card to "${to}" — leaving board as-is`,
         });
         return;
       }
     }
-    this.ctx.log.emit("card_moved", ticketIdFromCard(card.text), { from, to });
+    this.context.log.emit("card_moved", ticketIdFromCard(card.text), { from, to });
   }
 }

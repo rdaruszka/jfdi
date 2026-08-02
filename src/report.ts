@@ -35,31 +35,31 @@ export async function loadReport(stateDir: string, ticketId: string): Promise<Ru
  * Duplicate proposals (retries, re-dispatches) are dropped by addCardIfAbsent.
  */
 export async function recordObservations(
-  ctx: PipelineContext,
+  context: PipelineContext,
   ticketId: string,
   observations: string[],
 ): Promise<void> {
   if (observations.length === 0) return;
-  const boardPath = path.join(ctx.repoRoot, ctx.config.board.path);
+  const boardPath = path.join(context.repoRoot, context.config.board.path);
   if (!(await fileExists(boardPath))) return;
   for (const observation of observations) {
     const added = await addCardIfAbsent(
       boardPath,
-      ctx.config.board.columns.inbox,
+      context.config.board.columns.inbox,
       `${observation} *(from ${ticketId})*`,
     );
-    if (added) ctx.log.emit("observation", ticketId, { text: observation });
+    if (added) context.log.emit("observation", ticketId, { text: observation });
   }
 }
 
 /** Append the final report to the ticket note at the merge-ready gate (on-approval). */
 export async function recordMergeReady(
-  ctx: PipelineContext,
+  context: PipelineContext,
   ticketId: string,
   notePath: string,
   report: RunReport,
 ): Promise<void> {
-  await saveReport(ctx.stateDir, ticketId, report);
+  await saveReport(context.stateDir, ticketId, report);
   const lines = [
     `### ${todayIsoDate()} — ready to merge`,
     "",
@@ -72,5 +72,5 @@ export async function recordMergeReady(
     lines.push("", "**Decisions made autonomously:**", ...report.decisions.map((d) => `- ${d}`));
   lines.push("", `_Approve with \`jfdi merge ${ticketId}\`, or merge the branch by hand._`);
   await appendToSection(notePath, "Report", lines.join("\n"));
-  ctx.log.emit("merge_ready", ticketId);
+  context.log.emit("merge_ready", ticketId);
 }

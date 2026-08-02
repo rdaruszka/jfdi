@@ -116,18 +116,18 @@ interface CliResult {
 async function runCli(
   sandbox: Sandbox,
   args: string[],
-  opts: { cwd?: string; useJfdiHomeEnv?: boolean } = {},
+  options: { cwd?: string; useJfdiHomeEnv?: boolean } = {},
 ): Promise<CliResult> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
   };
-  if (opts.useJfdiHomeEnv === false) delete env.JFDI_HOME;
+  if (options.useJfdiHomeEnv === false) delete env.JFDI_HOME;
   else env.JFDI_HOME = sandbox.jfdiHome;
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: opts.cwd ?? sandbox.project,
+      cwd: options.cwd ?? sandbox.project,
       env,
     });
     return { code: 0, stdout, stderr };

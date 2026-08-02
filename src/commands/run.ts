@@ -10,16 +10,16 @@ import { attachInlinePrinter, buildContext } from "./context.js";
  * required. <ticket> is a card line, a [[wikilink]], or an inline description.
  */
 export async function runCommand(ticketRef: string): Promise<number> {
-  const ctx = await buildContext();
-  const detach = attachInlinePrinter(ctx.log);
+  const context = await buildContext();
+  const detach = attachInlinePrinter(context.log);
   try {
-    const ticketsDir = path.join(ctx.repoRoot, ctx.config.ticketsDir);
+    const ticketsDir = path.join(context.repoRoot, context.config.ticketsDir);
     const ticket = await resolveTicket(ticketRef, ticketsDir);
     console.log(`ticket: ${ticket.id}`);
-    const outcome = await runPipeline(ctx, ticket);
+    const outcome = await runPipeline(context, ticket);
     if (outcome.status === "blocked") {
       console.error(`\nBlocked: ${outcome.reason}`);
-      console.error(`See the ticket note in ${ctx.config.ticketsDir}/ for details.`);
+      console.error(`See the ticket note in ${context.config.ticketsDir}/ for details.`);
       return 2;
     }
     if (outcome.status === "failed") {
@@ -27,24 +27,24 @@ export async function runCommand(ticketRef: string): Promise<number> {
       return 1;
     }
 
-    await recordObservations(ctx, ticket.id, outcome.report.observations);
-    if (ctx.config.integration.mode === "auto") {
-      const merged = await integrateTicket(ctx, ticket, outcome.worktree, outcome.report);
+    await recordObservations(context, ticket.id, outcome.report.observations);
+    if (context.config.integration.mode === "auto") {
+      const merged = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
       if (merged.status === "blocked") {
         console.error(`\nIntegration blocked: ${merged.reason}`);
         return 2;
       }
-      console.log(`\nDone — merged into ${ctx.config.integration.target_branch}.`);
+      console.log(`\nDone — merged into ${context.config.integration.target_branch}.`);
       return 0;
     }
 
     // on-approval: park it as ready to merge.
     const notePath = ticket.notePath ?? path.join(ticketsDir, `${ticket.id}.md`);
-    await recordMergeReady(ctx, ticket.id, notePath, outcome.report);
+    await recordMergeReady(context, ticket.id, notePath, outcome.report);
     console.log(`\nPipeline passed. Approve with: jfdi merge ${ticket.id}`);
     return 0;
   } finally {
     detach();
-    await ctx.log.flush();
+    await context.log.flush();
   }
 }

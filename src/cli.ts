@@ -58,8 +58,8 @@ export async function main(argv: string[]): Promise<number> {
       default:
         return usageError(`unknown command "${command}"`);
     }
-  } catch (err) {
-    console.error(`jfdi: ${(err as Error).message}`);
+  } catch (error) {
+    console.error(`jfdi: ${(error as Error).message}`);
     return 1;
   }
 }

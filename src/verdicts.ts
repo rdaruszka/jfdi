@@ -26,18 +26,18 @@ export interface IntegrationVerdict {
   notes?: string;
 }
 
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function strArray(v: unknown): string[] | undefined {
-  if (!Array.isArray(v)) return undefined;
-  const items = v.filter((x): x is string => typeof x === "string");
+function stringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items = value.filter((x): x is string => typeof x === "string");
   return items.length > 0 ? items : undefined;
 }
 
-function optStr(v: unknown): string | undefined {
-  return typeof v === "string" && v.length > 0 ? v : undefined;
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 async function readVerdictFile(path: string): Promise<Record<string, unknown> | null> {
@@ -60,43 +60,43 @@ export async function readImplementationVerdict(
   if (!raw) return null;
   const status = raw.status;
   if (status !== "done" && status !== "escalate") return null;
-  const decisions = strArray(raw.decisions);
-  const out: ImplementationVerdict = { status };
-  const summary = optStr(raw.summary);
-  if (summary) out.summary = summary;
-  if (decisions) out.decisions = decisions;
-  const observations = strArray(raw.observations);
-  if (observations) out.observations = observations;
-  const question = optStr(raw.question);
-  if (question) out.question = question;
-  const recommendation = optStr(raw.recommendation);
-  if (recommendation) out.recommendation = recommendation;
-  return out;
+  const decisions = stringArray(raw.decisions);
+  const result: ImplementationVerdict = { status };
+  const summary = optionalString(raw.summary);
+  if (summary) result.summary = summary;
+  if (decisions) result.decisions = decisions;
+  const observations = stringArray(raw.observations);
+  if (observations) result.observations = observations;
+  const question = optionalString(raw.question);
+  if (question) result.question = question;
+  const recommendation = optionalString(raw.recommendation);
+  if (recommendation) result.recommendation = recommendation;
+  return result;
 }
 
 export async function readReviewVerdict(
   path: string,
-  opts: { allowEscalate: boolean },
+  options: { allowEscalate: boolean },
 ): Promise<ReviewVerdict | null> {
   const raw = await readVerdictFile(path);
   if (!raw) return null;
   const verdict = raw.verdict;
   if (verdict !== "pass" && verdict !== "fail" && verdict !== "escalate") return null;
-  if (verdict === "escalate" && !opts.allowEscalate) return null;
-  const out: ReviewVerdict = { verdict };
-  const feedback = optStr(raw.feedback);
-  if (feedback) out.feedback = feedback;
-  const testsAdded = optStr(raw.testsAdded);
-  if (testsAdded) out.testsAdded = testsAdded;
-  const decisions = strArray(raw.decisions);
-  if (decisions) out.decisions = decisions;
-  const observations = strArray(raw.observations);
-  if (observations) out.observations = observations;
-  const question = optStr(raw.question);
-  if (question) out.question = question;
-  const recommendation = optStr(raw.recommendation);
-  if (recommendation) out.recommendation = recommendation;
-  return out;
+  if (verdict === "escalate" && !options.allowEscalate) return null;
+  const result: ReviewVerdict = { verdict };
+  const feedback = optionalString(raw.feedback);
+  if (feedback) result.feedback = feedback;
+  const testsAdded = optionalString(raw.testsAdded);
+  if (testsAdded) result.testsAdded = testsAdded;
+  const decisions = stringArray(raw.decisions);
+  if (decisions) result.decisions = decisions;
+  const observations = stringArray(raw.observations);
+  if (observations) result.observations = observations;
+  const question = optionalString(raw.question);
+  if (question) result.question = question;
+  const recommendation = optionalString(raw.recommendation);
+  if (recommendation) result.recommendation = recommendation;
+  return result;
 }
 
 export async function readIntegrationVerdict(path: string): Promise<IntegrationVerdict | null> {
@@ -104,8 +104,8 @@ export async function readIntegrationVerdict(path: string): Promise<IntegrationV
   if (!raw) return null;
   const resolution = raw.resolution;
   if (resolution !== "clean" && resolution !== "complicated") return null;
-  const out: IntegrationVerdict = { resolution };
-  const notes = optStr(raw.notes);
-  if (notes) out.notes = notes;
-  return out;
+  const result: IntegrationVerdict = { resolution };
+  const notes = optionalString(raw.notes);
+  if (notes) result.notes = notes;
+  return result;
 }

@@ -18,8 +18,8 @@ const SLUG_HASH_CHARS = 6;
 
 /** Extract the first [[wikilink]] target from a card line, or null. */
 export function extractWikilink(text: string): string | null {
-  const m = WIKILINK_RE.exec(text);
-  return m?.[1]?.trim() ?? null;
+  const match = WIKILINK_RE.exec(text);
+  return match?.[1]?.trim() ?? null;
 }
 
 /**

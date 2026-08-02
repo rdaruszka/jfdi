@@ -17,7 +17,7 @@ export interface Fixture {
   stateDir: string;
   ticketsDir: string;
   config: JfdiConfig;
-  ctx: (handler: FakeHandler) => PipelineContext & { harness: FakeHarness };
+  context: (handler: FakeHandler) => PipelineContext & { harness: FakeHarness };
   cleanup: () => Promise<void>;
 }
 
@@ -46,7 +46,7 @@ export async function makeFixture(configOverrides: Partial<JfdiConfig> = {}): Pr
     stateDir,
     ticketsDir,
     config,
-    ctx: (handler) => {
+    context: (handler) => {
       const harness = new FakeHarness(handler);
       return {
         repoRoot: repo,

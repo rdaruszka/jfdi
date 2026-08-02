@@ -63,9 +63,9 @@ export class BoardEditError extends Error {
 }
 
 function columnLineRange(lines: string[], columnName: string): { start: number; end: number } {
-  const start = lines.findIndex((l) => {
-    const m = COLUMN_RE.exec(l);
-    return m?.[1] === columnName;
+  const start = lines.findIndex((line) => {
+    const match = COLUMN_RE.exec(line);
+    return match?.[1] === columnName;
   });
   if (start === -1) throw new BoardEditError(`column "${columnName}" not found in board`);
   let end = lines.length;
@@ -98,23 +98,23 @@ export async function moveCard(
   cardRaw: string,
   fromColumn: string,
   toColumn: string,
-  opts: { rewriteLine?: (line: string) => string } = {},
+  options: { rewriteLine?: (line: string) => string } = {},
 ): Promise<void> {
   await readModifyWrite(boardPath, (content) => {
     const lines = content.split("\n");
     const from = columnLineRange(lines, fromColumn);
-    let cardIdx = -1;
+    let cardIndex = -1;
     for (let i = from.start + 1; i < from.end; i++) {
       if (lines[i] === cardRaw) {
-        cardIdx = i;
+        cardIndex = i;
         break;
       }
     }
-    if (cardIdx === -1)
+    if (cardIndex === -1)
       throw new BoardEditError(`card not found in column "${fromColumn}": ${cardRaw}`);
-    lines.splice(cardIdx, 1);
+    lines.splice(cardIndex, 1);
     const to = columnLineRange(lines, toColumn);
-    const line = opts.rewriteLine ? opts.rewriteLine(cardRaw) : cardRaw;
+    const line = options.rewriteLine ? options.rewriteLine(cardRaw) : cardRaw;
     lines.splice(insertionPoint(lines, to), 0, line);
     return lines.join("\n");
   });

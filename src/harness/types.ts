@@ -35,5 +35,5 @@ export interface SpawnOptions {
 
 export interface Harness {
   readonly name: string;
-  spawn(spec: PromptSpec, opts: SpawnOptions): HarnessSession;
+  spawn(promptSpec: PromptSpec, options: SpawnOptions): HarnessSession;
 }

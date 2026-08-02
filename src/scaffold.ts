@@ -69,14 +69,14 @@ export async function scaffoldJfdi(
     await atomicWrite(configPath, `${JSON.stringify(config, null, 2)}\n`);
   }
   await ensureDir(path.join(repoRoot, config.ticketsDir));
-  const cols = config.board.columns;
+  const columns = config.board.columns;
   await createBoardIfMissing(path.join(repoRoot, config.board.path), [
-    cols.begin,
-    cols.inProgress,
-    cols.done,
-    cols.blocked,
-    cols.readyToMerge,
-    cols.inbox,
+    columns.begin,
+    columns.inProgress,
+    columns.done,
+    columns.blocked,
+    columns.readyToMerge,
+    columns.inbox,
   ]);
   await ensurePrompts(jfdiDir);
   const sandboxPath = path.join(jfdiDir, "sandbox.md");

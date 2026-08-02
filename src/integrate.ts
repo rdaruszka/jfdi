@@ -53,34 +53,34 @@ type ConflictOutcome =
 
 /** Drive the Integration agent over the conflicted worktree and read its verdict. */
 async function runIntegrationAgent(
-  ctx: PipelineContext,
+  context: PipelineContext,
   ticket: Ticket,
   worktree: Worktree,
   runDir: string,
 ): Promise<IntegrationVerdict | null> {
   const verdictPath = path.join(runDir, "integration.verdict.json");
-  const template = await loadPrompt(ctx.jfdiDir, "integration");
+  const template = await loadPrompt(context.jfdiDir, "integration");
   const prompt = renderPrompt(template, {
     TICKET_ID: ticket.id,
     SPEC: ticket.spec,
     BRANCH: worktree.branch,
-    TARGET_BRANCH: ctx.config.integration.target_branch,
-    GATE_COMMANDS: formatGateCommands(ctx.config.gate),
+    TARGET_BRANCH: context.config.integration.target_branch,
+    GATE_COMMANDS: formatGateCommands(context.config.gate),
     VERDICT_PATH: verdictPath,
   });
   const stage: StageName = "integration";
-  ctx.log.emit("stage_start", ticket.id, { stage });
-  const session = ctx.harness.spawn(
+  context.log.emit("stage_start", ticket.id, { stage });
+  const session = context.harness.spawn(
     { prompt },
     { cwd: worktree.path, logPath: path.join(runDir, "integration.log.jsonl") },
   );
-  for await (const evt of session.events) {
-    if (evt.type === "tool")
-      ctx.log.emit("session_activity", ticket.id, { text: `integration: ${evt.name}` });
+  for await (const event of session.events) {
+    if (event.type === "tool")
+      context.log.emit("session_activity", ticket.id, { text: `integration: ${event.name}` });
   }
   const result = await session.done;
   const verdict = await readIntegrationVerdict(verdictPath);
-  ctx.log.emit("stage_end", ticket.id, {
+  context.log.emit("stage_end", ticket.id, {
     stage,
     verdict: verdict?.resolution ?? (result.ok ? "invalid-verdict" : "session-failed"),
   });
@@ -92,22 +92,22 @@ async function runIntegrationAgent(
  * sign-off no longer binds to what is about to land: re-run QA and the gate.
  */
 async function requalifyAfterMerge(
-  ctx: PipelineContext,
+  context: PipelineContext,
   ticket: Ticket,
   worktree: Worktree,
   notePath: string,
   runDir: string,
   notes: string,
 ): Promise<ConflictOutcome> {
-  ctx.log.emit("complicated_merge", ticket.id, { notes });
+  context.log.emit("complicated_merge", ticket.id, { notes });
   const qaDir = path.join(runDir, "requalify");
   await ensureDir(qaDir);
-  const qa = await runQaStage(ctx, ticket, worktree, qaDir, notePath, 0);
+  const qa = await runQaStage(context, ticket, worktree, qaDir, notePath, 0);
   if (qa.verdict?.verdict !== "pass") {
     const detail = qa.verdict?.feedback ?? qa.verdict?.question ?? "no valid verdict";
     return { status: "blocked", reason: `post-merge QA did not pass: ${detail}` };
   }
-  const gate = await runGate(ctx.config.gate, worktree.path);
+  const gate = await runGate(context.config.gate, worktree.path);
   if (!gate.ok)
     return { status: "blocked", reason: `gate failed after re-QA:\n\n${formatGateFailure(gate)}` };
   return { status: "resolved", notes };
@@ -119,14 +119,14 @@ async function requalifyAfterMerge(
  * resolution goes back through QA before it is allowed near the target.
  */
 async function resolveConflictedRebase(
-  ctx: PipelineContext,
+  context: PipelineContext,
   ticket: Ticket,
   worktree: Worktree,
   notePath: string,
 ): Promise<ConflictOutcome> {
-  const runDir = path.join(runsDir(ctx.stateDir, ticket.id), "integration");
+  const runDir = path.join(runsDir(context.stateDir, ticket.id), "integration");
   await ensureDir(runDir);
-  const verdict = await runIntegrationAgent(ctx, ticket, worktree, runDir);
+  const verdict = await runIntegrationAgent(context, ticket, worktree, runDir);
   if (await rebaseInProgress(worktree.path))
     return {
       status: "blocked",
@@ -135,8 +135,8 @@ async function resolveConflictedRebase(
   if (!verdict) return { status: "blocked", reason: "integration agent produced no valid verdict" };
   const notes = verdict.notes ?? "";
 
-  const gate = await runGate(ctx.config.gate, worktree.path);
-  ctx.log.emit("gate_result", ticket.id, { ok: gate.ok });
+  const gate = await runGate(context.config.gate, worktree.path);
+  context.log.emit("gate_result", ticket.id, { ok: gate.ok });
   if (!gate.ok)
     return {
       status: "blocked",
@@ -144,7 +144,7 @@ async function resolveConflictedRebase(
     };
 
   if (verdict.resolution !== "complicated") return { status: "resolved", notes };
-  return requalifyAfterMerge(ctx, ticket, worktree, notePath, runDir, notes);
+  return requalifyAfterMerge(context, ticket, worktree, notePath, runDir, notes);
 }
 
 /**
@@ -154,20 +154,23 @@ async function resolveConflictedRebase(
  * responsible for serialization — exactly one integration runs at a time.
  */
 export async function integrateTicket(
-  ctx: PipelineContext,
+  context: PipelineContext,
   ticket: Ticket,
   worktree: Worktree,
   report: RunReport | null,
 ): Promise<IntegrateOutcome> {
-  const target = ctx.config.integration.target_branch;
-  const notePath = await ensureTicketNote(ticket, path.join(ctx.repoRoot, ctx.config.ticketsDir));
-  ctx.log.emit("merge_start", ticket.id);
+  const target = context.config.integration.target_branch;
+  const notePath = await ensureTicketNote(
+    ticket,
+    path.join(context.repoRoot, context.config.ticketsDir),
+  );
+  context.log.emit("merge_start", ticket.id);
 
   // Human may have merged by hand (on-approval mode) — never double-merge.
-  if (await isAncestor(ctx.repoRoot, worktree.branch, target)) {
-    ctx.log.emit("merged", ticket.id, { note: "already contained in target" });
+  if (await isAncestor(context.repoRoot, worktree.branch, target)) {
+    context.log.emit("merged", ticket.id, { note: "already contained in target" });
     await appendReport(notePath, ticket, report, `Branch already merged into \`${target}\`.`);
-    await cleanup(ctx, worktree);
+    await cleanup(context, worktree);
     return { status: "already-merged" };
   }
 
@@ -177,19 +180,20 @@ export async function integrateTicket(
   if (!rebase.ok) {
     if (!rebase.conflict) {
       const reason = `rebase onto ${target} failed: ${rebase.output.slice(0, MAX_REBASE_ERROR_CHARS)}`;
-      return blocked(ctx, ticket, notePath, reason);
+      return blocked(context, ticket, notePath, reason);
     }
     // 2–4. Conflicts — agent resolution, gate, and re-QA if it got complicated.
-    const resolution = await resolveConflictedRebase(ctx, ticket, worktree, notePath);
-    if (resolution.status === "blocked") return blocked(ctx, ticket, notePath, resolution.reason);
+    const resolution = await resolveConflictedRebase(context, ticket, worktree, notePath);
+    if (resolution.status === "blocked")
+      return blocked(context, ticket, notePath, resolution.reason);
     resolutionNote = resolution.notes;
   } else {
     // Clean rebase still reruns the gate pre-merge.
-    const gate = await runGate(ctx.config.gate, worktree.path);
-    ctx.log.emit("gate_result", ticket.id, { ok: gate.ok });
+    const gate = await runGate(context.config.gate, worktree.path);
+    context.log.emit("gate_result", ticket.id, { ok: gate.ok });
     if (!gate.ok) {
       return blocked(
-        ctx,
+        context,
         ticket,
         notePath,
         `gate failed after rebase onto ${target}:\n\n${formatGateFailure(gate)}`,
@@ -199,28 +203,28 @@ export async function integrateTicket(
 
   // 5. Land it.
   try {
-    await fastForward(ctx.repoRoot, target, worktree.branch);
-  } catch (err) {
-    return blocked(ctx, ticket, notePath, `merge failed: ${(err as Error).message}`);
+    await fastForward(context.repoRoot, target, worktree.branch);
+  } catch (error) {
+    return blocked(context, ticket, notePath, `merge failed: ${(error as Error).message}`);
   }
-  ctx.log.emit("merged", ticket.id);
+  context.log.emit("merged", ticket.id);
   await appendReport(
     notePath,
     ticket,
     report,
     `Merged into \`${target}\`.${resolutionNote ? ` Conflict resolution: ${resolutionNote}` : ""}`,
   );
-  await cleanup(ctx, worktree);
-  await deleteBranch(ctx.repoRoot, worktree.branch);
+  await cleanup(context, worktree);
+  await deleteBranch(context.repoRoot, worktree.branch);
   return { status: "merged" };
 }
 
-async function cleanup(ctx: PipelineContext, worktree: Worktree): Promise<void> {
-  await removeWorktree(ctx.repoRoot, worktree.path, { force: true });
+async function cleanup(context: PipelineContext, worktree: Worktree): Promise<void> {
+  await removeWorktree(context.repoRoot, worktree.path, { force: true });
 }
 
 async function blocked(
-  ctx: PipelineContext,
+  context: PipelineContext,
   ticket: Ticket,
   notePath: string,
   reason: string,
@@ -233,10 +237,10 @@ async function blocked(
       "",
       reason,
       "",
-      `_The worktree is kept for inspection under \`.jfdi/worktrees/\`. Fix, then move the card back to "${ctx.config.board.columns.begin}"._`,
+      `_The worktree is kept for inspection under \`.jfdi/worktrees/\`. Fix, then move the card back to "${context.config.board.columns.begin}"._`,
     ].join("\n"),
   );
-  ctx.log.emit("blocked", ticket.id, { reason: reason.split("\n")[0] });
+  context.log.emit("blocked", ticket.id, { reason: reason.split("\n")[0] });
   return { status: "blocked", reason };
 }
 

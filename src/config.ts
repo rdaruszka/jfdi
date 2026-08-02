@@ -62,69 +62,77 @@ export class ConfigError extends Error {
   }
 }
 
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function str(v: unknown, fallback: string, where: string): string {
-  if (v === undefined) return fallback;
-  if (typeof v !== "string" || v.length === 0)
+function optionalString(value: unknown, fallback: string, where: string): string {
+  if (value === undefined) return fallback;
+  if (typeof value !== "string" || value.length === 0)
     throw new ConfigError(`${where} must be a non-empty string`);
-  return v;
+  return value;
 }
 
-function requiredStr(v: unknown, where: string): string {
-  if (typeof v !== "string" || v.length === 0)
+function requiredString(value: unknown, where: string): string {
+  if (typeof value !== "string" || value.length === 0)
     throw new ConfigError(`${where} must be a non-empty string`);
-  return v;
+  return value;
 }
 
-function num(v: unknown, fallback: number, where: string): number {
-  if (v === undefined) return fallback;
-  if (typeof v !== "number" || !Number.isInteger(v) || v < 1)
+function positiveInteger(value: unknown, fallback: number, where: string): number {
+  if (value === undefined) return fallback;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1)
     throw new ConfigError(`${where} must be a positive integer`);
-  return v;
+  return value;
 }
 
 /** Parse and validate raw config JSON, filling defaults for absent fields. */
 export function parseConfig(raw: unknown): JfdiConfig {
   if (!isRecord(raw)) throw new ConfigError("config root must be an object");
-  const d = defaultConfig();
+  const defaults = defaultConfig();
 
   const board = isRecord(raw.board) ? raw.board : {};
-  const cols = isRecord(board.columns) ? board.columns : {};
+  const rawColumns = isRecord(board.columns) ? board.columns : {};
   const columns: ColumnMap = {
-    begin: str(cols.begin, d.board.columns.begin, "board.columns.begin"),
-    inProgress: str(cols.inProgress, d.board.columns.inProgress, "board.columns.inProgress"),
-    done: str(cols.done, d.board.columns.done, "board.columns.done"),
-    blocked: str(cols.blocked, d.board.columns.blocked, "board.columns.blocked"),
-    readyToMerge: str(
-      cols.readyToMerge,
-      d.board.columns.readyToMerge,
+    begin: optionalString(rawColumns.begin, defaults.board.columns.begin, "board.columns.begin"),
+    inProgress: optionalString(
+      rawColumns.inProgress,
+      defaults.board.columns.inProgress,
+      "board.columns.inProgress",
+    ),
+    done: optionalString(rawColumns.done, defaults.board.columns.done, "board.columns.done"),
+    blocked: optionalString(
+      rawColumns.blocked,
+      defaults.board.columns.blocked,
+      "board.columns.blocked",
+    ),
+    readyToMerge: optionalString(
+      rawColumns.readyToMerge,
+      defaults.board.columns.readyToMerge,
       "board.columns.readyToMerge",
     ),
-    inbox: str(cols.inbox, d.board.columns.inbox, "board.columns.inbox"),
+    inbox: optionalString(rawColumns.inbox, defaults.board.columns.inbox, "board.columns.inbox"),
   };
 
-  let gate: GateCommand[] = d.gate;
+  let gate: GateCommand[] = defaults.gate;
   if (raw.gate !== undefined) {
     if (!Array.isArray(raw.gate)) throw new ConfigError("gate must be an array");
-    gate = raw.gate.map((g, i) => {
-      if (!isRecord(g)) throw new ConfigError(`gate[${i}] must be an object`);
+    gate = raw.gate.map((rawGateCommand, i) => {
+      if (!isRecord(rawGateCommand)) throw new ConfigError(`gate[${i}] must be an object`);
       return {
-        name: requiredStr(g.name, `gate[${i}].name`),
-        cmd: requiredStr(g.cmd, `gate[${i}].cmd`),
+        name: requiredString(rawGateCommand.name, `gate[${i}].name`),
+        cmd: requiredString(rawGateCommand.cmd, `gate[${i}].cmd`),
       };
     });
   }
 
   const pipeline = isRecord(raw.pipeline) ? raw.pipeline : {};
   const integration = isRecord(raw.integration) ? raw.integration : {};
-  const mode = str(integration.mode, d.integration.mode, "integration.mode");
+  const mode = optionalString(integration.mode, defaults.integration.mode, "integration.mode");
   if (mode !== "auto" && mode !== "on-approval")
     throw new ConfigError(`integration.mode must be "auto" or "on-approval", got "${mode}"`);
 
-  let harnessArgs = d.harnessArgs;
+  let harnessArgs = defaults.harnessArgs;
   if (raw.harnessArgs !== undefined) {
     if (!Array.isArray(raw.harnessArgs) || raw.harnessArgs.some((a) => typeof a !== "string"))
       throw new ConfigError("harnessArgs must be an array of strings");
@@ -132,22 +140,26 @@ export function parseConfig(raw: unknown): JfdiConfig {
   }
 
   return {
-    board: { path: str(board.path, d.board.path, "board.path"), columns },
-    ticketsDir: str(raw.ticketsDir, d.ticketsDir, "ticketsDir"),
+    board: { path: optionalString(board.path, defaults.board.path, "board.path"), columns },
+    ticketsDir: optionalString(raw.ticketsDir, defaults.ticketsDir, "ticketsDir"),
     gate,
     pipeline: {
-      max_rounds: num(pipeline.max_rounds, d.pipeline.max_rounds, "pipeline.max_rounds"),
+      max_rounds: positiveInteger(
+        pipeline.max_rounds,
+        defaults.pipeline.max_rounds,
+        "pipeline.max_rounds",
+      ),
     },
     integration: {
-      target_branch: str(
+      target_branch: optionalString(
         integration.target_branch,
-        d.integration.target_branch,
+        defaults.integration.target_branch,
         "integration.target_branch",
       ),
       mode,
     },
-    max_concurrent: num(raw.max_concurrent, d.max_concurrent, "max_concurrent"),
-    harness: str(raw.harness, d.harness, "harness"),
+    max_concurrent: positiveInteger(raw.max_concurrent, defaults.max_concurrent, "max_concurrent"),
+    harness: optionalString(raw.harness, defaults.harness, "harness"),
     harnessArgs,
   };
 }
@@ -160,8 +172,8 @@ export async function loadConfig(repoRoot: string): Promise<JfdiConfig> {
   let raw: unknown;
   try {
     raw = JSON.parse(content);
-  } catch (err) {
-    throw new ConfigError(`invalid JSON in ${file}: ${(err as Error).message}`);
+  } catch (error) {
+    throw new ConfigError(`invalid JSON in ${file}: ${(error as Error).message}`);
   }
   return parseConfig(raw);
 }

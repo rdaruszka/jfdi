@@ -8,8 +8,8 @@ import type {
 } from "./types.js";
 
 export type FakeHandler = (
-  spec: PromptSpec,
-  opts: SpawnOptions,
+  promptSpec: PromptSpec,
+  options: SpawnOptions,
 ) => Promise<{ ok: boolean; text: string }>;
 
 /**
@@ -18,26 +18,26 @@ export type FakeHandler = (
  */
 export class FakeHarness implements Harness {
   readonly name = "fake";
-  readonly calls: Array<{ spec: PromptSpec; opts: SpawnOptions }> = [];
+  readonly calls: Array<{ promptSpec: PromptSpec; options: SpawnOptions }> = [];
 
   constructor(private readonly handler: FakeHandler) {}
 
-  spawn(spec: PromptSpec, opts: SpawnOptions): HarnessSession {
-    this.calls.push({ spec, opts });
-    let resolveDone: (r: HarnessResult) => void = () => {
+  spawn(promptSpec: PromptSpec, options: SpawnOptions): HarnessSession {
+    this.calls.push({ promptSpec, options });
+    let resolveDone: (result: HarnessResult) => void = () => {
       // Placeholder; replaced synchronously by the Promise executor below.
     };
-    const done = new Promise<HarnessResult>((r) => {
-      resolveDone = r;
+    const done = new Promise<HarnessResult>((resolve) => {
+      resolveDone = resolve;
     });
     const events: HarnessEvent[] = [];
-    const run = this.handler(spec, opts)
-      .then((r) => {
-        events.push({ type: "result", ok: r.ok, text: r.text });
-        resolveDone({ ...r, exitCode: r.ok ? 0 : 1 });
+    const run = this.handler(promptSpec, options)
+      .then((result) => {
+        events.push({ type: "result", ok: result.ok, text: result.text });
+        resolveDone({ ...result, exitCode: result.ok ? 0 : 1 });
       })
-      .catch((err: Error) => {
-        resolveDone({ ok: false, text: err.message, exitCode: 1 });
+      .catch((error: Error) => {
+        resolveDone({ ok: false, text: error.message, exitCode: 1 });
       });
 
     return {
