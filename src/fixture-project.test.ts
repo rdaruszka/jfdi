@@ -165,7 +165,7 @@ describe("half-app end-to-end (fake harness)", () => {
     expect(outcome.status).toBe("passed");
     if (outcome.status !== "passed") return;
 
-    // Board and ticket notes are untracked (spec §2), so the run's churn to
+    // Board and ticket notes are untracked (work tracking is external), so the run's churn to
     // them never dirties the target checkout — the merge lands directly.
     const merged = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
     expect(merged, JSON.stringify(merged)).toEqual({ status: "merged" });

@@ -2,7 +2,7 @@
 
 A CLI harness around coding-agent CLIs. Hand it a ticket; it runs implement → review → QA in an isolated git worktree, then merges. Point it at a Kanban board and it does that continuously, several tickets at a time.
 
-**The spec is the source of truth: [docs/jfdi-spec.md](docs/jfdi-spec.md) (Iteration 2).** This file summarizes conventions and invariants for working in this repo; when in doubt, the spec wins. Anything under `Iteration 1/` is historical, not normative.
+**The documentation under [docs/](docs/README.md) is the source of truth** — [docs/architecture/overview.md](docs/architecture/overview.md) for the system design, the guide pages for behavior. This file summarizes conventions and invariants for working in this repo; when in doubt, the docs win, and a diff that changes behavior they describe updates them in the same diff.
 
 ## Which JFDI is which
 
@@ -37,7 +37,9 @@ The **coordinator** watches `board.md` (Obsidian Kanban format), dispatches each
 ## Layout
 
 ```
-docs/jfdi-spec.md    — the spec (normative)
+docs/               — the documentation (docs/README.md is the index):
+  getting-started.md, guide/     user docs
+  architecture/, development.md  developer docs
 docs/coding-guidelines.md  — the generic coding guidelines (authoritative source)
 docs/agent-enforcement.md  — the enforcement design JFDI implements (reference)
 src/                 — TypeScript source
@@ -48,10 +50,10 @@ fixtures/half-app/   — "penny": a half-finished CLI + 7-ticket board for test 
 fixtures/half-app.grading/ — per-ticket acceptance checks, kept out of the template
 scripts/playground.mjs     — `pnpm playground`: mint a disposable half-app copy
 .jfdi/               — JFDI's own setup once self-hosting begins:
-  config.json          project config (§9)
+  config.json          project config (docs/guide/configuration.md)
   board.md             Kanban board (Obsidian Kanban plugin format)
   tickets/             one markdown note per non-trivial ticket
-  sandbox.md           QA sandbox contract (§6)
+  sandbox.md           QA sandbox contract
   prompts/             stage prompt templates
   worktrees/<ticket-id>/ — per-run isolated checkout (gitignored)
 
@@ -61,11 +63,11 @@ scripts/playground.mjs     — `pnpm playground`: mint a disposable half-app cop
   state.json           derived snapshot
 ```
 
-`config.json`, `sandbox.md`, and the stage prompt files are versioned. `board.md` and `tickets/` are **not** — they are work-tracking artifacts external to the product (typically symlinked into an Obsidian vault; a JIRA-style service later via the spec §12 seam), mutated mid-run by human and coordinator alike. `worktrees/` is runtime state; `.jfdi/.gitignore` (owned by the scaffold) covers it and the two above. Run state lives in the home directory instead, under a `<project-key>` that dash-flattens the project root's absolute path the way Claude Code keys `~/.claude/projects/`; [src/state-dir.ts](src/state-dir.ts) is the only place that computes it, and `JFDI_HOME` overrides the base so tests never touch the real one.
+`config.json`, `sandbox.md`, and the stage prompt files are versioned. `board.md` and `tickets/` are **not** — they are work-tracking artifacts external to the product (typically symlinked into an Obsidian vault; a JIRA-style service later via the ticket-source extension seam), mutated mid-run by human and coordinator alike. `worktrees/` is runtime state; `.jfdi/.gitignore` (owned by the scaffold) covers it and the two above. Run state lives in the home directory instead, under a `<project-key>` that dash-flattens the project root's absolute path the way Claude Code keys `~/.claude/projects/`; [src/state-dir.ts](src/state-dir.ts) is the only place that computes it, and `JFDI_HOME` overrides the base so tests never touch the real one.
 
 ## Hard invariants — do not violate
 
-These are architectural requirements from the spec, not preferences:
+These are architectural requirements, not preferences (rationale in [docs/architecture/overview.md](docs/architecture/overview.md)):
 
 1. **Renderer separation.** All UI (TUI now, web later) renders `events.jsonl`/`state.json` only. Pipeline/coordinator logic never talks to a UI directly, and no state exists only in the UI.
 2. **Harness abstraction.** Pipeline logic never touches provider-specific details. Everything goes through the harness interface (`spawn(promptSpec, cwd) → event stream` — with session continuation via a spawn option — plus interactive launch and kill/cleanup); Claude Code and Codex are implementations. Provider-specific accelerations (e.g. the Claude PostToolUse format hook) live inside the matching harness implementation, and their absence elsewhere degrades gracefully.
@@ -135,13 +137,13 @@ The generic rules with rationale and check questions live in [docs/coding-guidel
 
 **Docs**
 
-- Record what the code cannot say — intent, decisions, vocabulary, invariants. Never restate structure the repo can answer itself. If your diff falsifies this file, the glossary, or the spec's assumptions, update the doc in the same diff or flag it.
+- Record what the code cannot say — intent, decisions, vocabulary, invariants. Never restate structure the repo can answer itself. If your diff falsifies this file, the glossary, or anything under `docs/`, update the doc in the same diff or flag it.
 
-## Explicitly out of scope (Iteration 2)
+## Explicitly out of scope
 
-No PO/orchestrator agent, no PRD building or auto-decomposition, no pre-implementation ticket review, no standalone question queue, no multi-project support, no web UI, no ticket dependency graph. Don't build toward these; just don't preclude the extension seams in spec §12 (ticket sources, merge targets, harnesses, renderers).
+No PO/orchestrator agent, no PRD building or auto-decomposition, no pre-implementation ticket review, no standalone question queue, no multi-project support, no web UI, no ticket dependency graph. Don't build toward these; just don't preclude the extension seams (ticket sources, merge targets, harnesses, renderers — see [docs/architecture/overview.md](docs/architecture/overview.md)).
 
-## Build sequence (spec §14)
+## Build sequence
 
 All four milestones are implemented and tested:
 

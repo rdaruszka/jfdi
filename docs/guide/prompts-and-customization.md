@@ -1,0 +1,124 @@
+# Prompts & Customization
+
+Agent behavior is user-adjustable without code changes. Three levers, in order of
+preference:
+
+1. **The gate** — encode a standard into a lint rule or test and no agent ever
+   needs to be told about it again. Always the first choice.
+2. **The sandbox contract** — teach QA how to exercise *your* product.
+3. **The prompts** — edit the stage prompt templates themselves.
+
+`jfdi convo` exists to evolve all three interactively.
+
+## Stage prompts
+
+Every prompt JFDI uses is a markdown file under `.jfdi/prompts/`, seeded on first
+use and versioned with your repo. **The file on disk is authoritative**: JFDI
+compiles in defaults, but if a file exists it is used verbatim, and a missing
+file is written out before use — what ran is always on disk, never a silent
+in-code fallback. Edit freely; delete a file to get the current default back.
+
+Nine files:
+
+| File | Used by |
+|---|---|
+| `implementation.md` | A fresh Implementation session (round 1, or fallback) |
+| `implementation-continue.md` | Continuing the Implementation session in a later round |
+| `code-review.md` | A fresh Code Review session |
+| `code-review-continue.md` | Continuing Code Review in a later round |
+| `qa.md` | A fresh QA session |
+| `qa-continue.md` | Continuing QA in a later round |
+| `integration.md` | The conflict-resolution session during integration |
+| `convo.md` | The `jfdi convo` scoping prompt |
+| `init.md` | The `jfdi init` agent-assisted setup prompt |
+
+### Template variables
+
+Templates use `{{UPPERCASE_PLACEHOLDERS}}`. Unknown placeholders render as empty
+strings (they never leak literally into a prompt). Every pipeline stage gets the
+common set:
+
+| Variable | Content |
+|---|---|
+| `TICKET_ID` | The ticket id |
+| `SPEC` | The ticket spec — the note body (frontmatter stripped) or the card line |
+| `BRANCH` | `jfdi/<ticket-id>` |
+| `TARGET_BRANCH` | `integration.target_branch` |
+| `GATE_COMMANDS` | The configured gate commands, formatted as a list |
+| `VERDICT_PATH` | The absolute path the session must write its JSON verdict to |
+
+Stage-specific additions:
+
+| Prompt | Extra variables |
+|---|---|
+| `implementation` | `RESUME_SECTION` (prior-work summary when resuming), `FEEDBACK_SECTION` (accumulated feedback from earlier attempts, plus the `mode: ask` override) |
+| `implementation-continue` | `FEEDBACK` (the single failure being addressed, framed by its source) |
+| `code-review` | `NOTE_PATH`, `GATE_RESULT`, `COMMIT_LOG`, `DIFF_STAT`, `DIFF_SECTION` (the full diff inline when it fits) |
+| `code-review-continue` | `LAST_SEEN_COMMIT`, `HEAD_COMMIT`, `PROVENANCE`, `NEW_COMMITS`, `TOUCHED_FILES` |
+| `qa` | `NOTE_PATH`, `GATE_RESULT`, `SANDBOX` (the sandbox contract), `COMMIT_LOG`, `DIFF_STAT` — deliberately no diff |
+| `qa-continue` | `LAST_SEEN_COMMIT`, `HEAD_COMMIT`, `PROVENANCE`, `NEW_COMMITS`, `TOUCHED_FILES` |
+| `integration` | (common set only) |
+| `init` | `CODING_GUIDELINES` (the generic guidelines JFDI ships, compiled from [docs/coding-guidelines.md](../coding-guidelines.md)) |
+| `convo` | (none) |
+
+If you edit a prompt, keep two blocks intact unless you know what you're doing:
+the **verdict instructions** (the pipeline reads outcomes only from the verdict
+file the prompt names — remove that and the stage always "fails" with an invalid
+verdict) and the verdict **schema** the stage's parser expects (see
+[The Pipeline](pipeline.md#verdicts)).
+
+The shared posture block in the three fresh-stage prompts encodes the system's
+values — decide-log-proceed, escalation as a last resort with a recommendation,
+observations instead of inline scope creep, fail loud. Tuning that language tunes
+the whole system's temperament.
+
+## The sandbox contract
+
+`.jfdi/sandbox.md` tells the QA agent how to exercise your product: how to build
+it, launch it, drive it, and tear it down. Without it QA can only read code and
+guess. It is inlined into every fresh QA prompt.
+
+A good contract covers:
+
+- **Build** — the exact commands to produce the artifact under test.
+- **Launch & drive** — how to invoke it, with expected outputs and exit codes
+  per command/flow. Concrete invocation patterns beat prose descriptions.
+- **Scratch space** — where test data goes (an OS temp dir, never the repo), and
+  any environment variables that redirect state.
+- **Teardown** — what to remove, and what stray processes to check for.
+
+Terminal-driven products (CLIs, daemons) are the first-class case.
+Browser-driven products work through whatever browser tooling your harness
+provides — describe the flow in the same build/launch/drive/teardown shape.
+
+If your product itself spawns agents or creates git repos (JFDI's own contract is
+the worked example — see [.jfdi/sandbox.md](../../.jfdi/sandbox.md)), the
+contract must also isolate the inner thing: scratch repos outside any parent
+repo, stub agent CLIs on `PATH`, a scratch `JFDI_HOME`, and guards against
+runaway nested spawning.
+
+`jfdi init` seeds a skeleton; refine it whenever QA misses something it should
+have caught — that's usually a contract gap, not a prompt gap.
+
+## The format hook
+
+Claude Code sessions spawned by JFDI get `.jfdi/claude-settings.json` injected,
+which wires a PostToolUse hook: after every file edit, `.jfdi/hooks/format.sh`
+runs. Point that script at your formatter's single-file mode (the scaffolded
+version is a no-op placeholder with an example) and sessions never burn turns on
+lint-fix loops — the formatter fixes style before the agent even sees a gate
+failure.
+
+This is a provider-specific acceleration: Codex has no hook system, so its
+sessions simply run without it — degraded, not broken. The settings file applies
+only to JFDI-spawned sessions, never to your own `.claude/` setup.
+
+## `jfdi convo`
+
+`jfdi convo` launches an interactive harness session whose system prompt scopes
+it to the JFDI layer itself: the gate config, the sandbox contract, board
+config, and the stage prompts — explicitly *not* your product code. Use it to
+have the conversation "QA keeps missing X" or "reviews keep nitpicking Y" and
+land the fix in the right file. Its first instinct, by design, is a lint rule,
+not a prompt tweak: when a standard can be encoded into tooling, review tokens
+stop being spent on it forever.

@@ -9,7 +9,7 @@ import { atomicWrite, ensureDir, fileExists } from "./util/fsx.js";
  * Worktrees under .jfdi/ must never be committed — a stray `git add -A` would
  * pick them up as embedded repos. Neither are the board and tickets: they're
  * work-tracking artifacts external to the product (think JIRA), mutated mid-run
- * by human and coordinator alike (spec §2). JFDI owns a .gitignore inside
+ * by human and coordinator alike (docs/guide/board-and-tickets.md). JFDI owns a .gitignore inside
  * .jfdi/ so this holds regardless of the repo's root .gitignore. (config.json,
  * sandbox.md, prompts/ remain versioned; runs/, events.jsonl and state.json
  * live outside the project entirely, under ~/.jfdi/projects/<project-key>/.)

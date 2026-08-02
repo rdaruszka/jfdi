@@ -1,0 +1,145 @@
+# Configuration Reference
+
+All project configuration lives in `.jfdi/config.json`, versioned with your
+repo. Every field is optional — a missing file means all defaults — but a config
+with the wrong *types* is a hard error with a message naming the field.
+
+A complete example (this is also what `jfdi init` writes, minus the gate, which
+init fills in for your repo):
+
+```jsonc
+{
+  "board": {
+    "path": ".jfdi/board.md",
+    "columns": {
+      "begin": "Ready",
+      "inProgress": "In Progress",
+      "done": "Done",
+      "blocked": "Blocked",
+      "readyToMerge": "Ready to Merge",
+      "inbox": "Inbox"
+    }
+  },
+  "ticketsDir": ".jfdi/tickets",
+  "gate": [
+    { "name": "build", "cmd": "pnpm build" },
+    { "name": "test",  "cmd": "pnpm test" },
+    { "name": "lint",  "cmd": "pnpm lint" }
+  ],
+  "pipeline": { "max_rounds": 3 },
+  "integration": { "target_branch": "main", "mode": "on-approval" },
+  "max_concurrent": 2,
+  "harness": "claude"
+}
+```
+
+## Field reference
+
+### `board`
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `board.path` | string | `.jfdi/board.md` | Relative to the repo root. May be (or point through) a symlink into an Obsidian vault — writes follow the link. |
+| `board.columns.begin` | string | `Ready` | Cards here are dispatched, top first. Never auto-created — the heading must exist on the board. |
+| `board.columns.inProgress` | string | `In Progress` | Where dispatched cards sit while running. |
+| `board.columns.done` | string | `Done` | Merged cards land here, checked off. |
+| `board.columns.blocked` | string | `Blocked` | Escalations, exhausted rounds, failed integrations, crash orphans. |
+| `board.columns.readyToMerge` | string | `Ready to Merge` | Only used when `integration.mode` is `on-approval`. |
+| `board.columns.inbox` | string | `Inbox` | Agent observation proposals. Never dispatched from. |
+
+Column names are matched against board headings by exact string equality —
+rename in both places or neither. See
+[Board & Tickets](board-and-tickets.md#columns-and-roles) for what each role
+does.
+
+### `ticketsDir`
+
+| Type | Default |
+|---|---|
+| string | `.jfdi/tickets` |
+
+The only directory card `[[wikilinks]]` resolve against. Like the board, commonly
+symlinked into a vault.
+
+### `gate`
+
+| Type | Default |
+|---|---|
+| array of `{ "name": string, "cmd": string }` | `[]` |
+
+The **mechanical gate**: an ordered list of shell commands that must all exit
+zero. Commands run sequentially via `/bin/sh -c` in the ticket's worktree,
+stopping at the first failure; the failing command's output becomes agent
+feedback for the next round. See [The Pipeline](pipeline.md#the-mechanical-gate)
+for when it runs.
+
+An empty gate always passes — legal, but it means "done" is whatever the agent
+says it is. Give the gate teeth: build, test, lint, format-check. `jfdi init`
+sets this up for your repo, and encoding standards into the gate instead of
+review prose is the core system value — the gate is the cheapest reviewer.
+
+### `pipeline`
+
+| Field | Type | Default | Constraint |
+|---|---|---|---|
+| `pipeline.max_rounds` | integer | `3` | ≥ 1 |
+
+The feedback-round cap per run. On exhaustion the card moves to Blocked with the
+round history in the ticket note.
+
+### `integration`
+
+| Field | Type | Default | Values |
+|---|---|---|---|
+| `integration.target_branch` | string | `main` | Any local branch. Never assumed — set it if your default branch differs. |
+| `integration.mode` | string | `on-approval` | `"auto"` or `"on-approval"` |
+
+`auto` merges a passing pipeline immediately; `on-approval` parks it in Ready to
+Merge for your sign-off. See [Integration & Merging](integration.md).
+
+### `max_concurrent`
+
+| Type | Default | Constraint |
+|---|---|---|
+| integer | `2` | ≥ 1 |
+
+How many ticket pipelines the coordinator runs at once. Dispatch order is board
+order (top of the begin column first); integration is always serialized
+regardless of this setting.
+
+### `harness`
+
+| Type | Default | Values |
+|---|---|---|
+| string | `claude` | `"claude"` or `"codex"` |
+
+Which agent CLI runs every session — pipeline stages, `jfdi init`, and
+`jfdi convo` alike. The binary must be on your `PATH`. Provider-specific flags
+are supplied by JFDI itself and are not configurable; a legacy `harnessArgs` key
+is rejected with an explicit error.
+
+## Other files under `.jfdi/`
+
+`config.json` is one of several versioned setup files; the rest have their own
+pages:
+
+| File | Purpose | Docs |
+|---|---|---|
+| `prompts/*.md` | The nine stage/command prompt templates. On disk, editable, authoritative. | [Prompts & Customization](prompts-and-customization.md) |
+| `sandbox.md` | The QA sandbox contract — how to build, launch, drive, and tear down your product. | [Prompts & Customization](prompts-and-customization.md#the-sandbox-contract) |
+| `claude-settings.json` | Settings injected into JFDI-spawned Claude Code sessions (wires the format hook). | [Prompts & Customization](prompts-and-customization.md#the-format-hook) |
+| `hooks/format.sh` | Per-file format hook invoked after each edit in Claude sessions. | [Prompts & Customization](prompts-and-customization.md#the-format-hook) |
+| `.gitignore` | Scaffold-owned; keeps `worktrees/`, `board.md`, and `tickets` out of version control. | — |
+| `board.md`, `tickets/` | Work tracking — deliberately **not** versioned. | [Board & Tickets](board-and-tickets.md) |
+| `worktrees/` | Per-ticket isolated checkouts. Runtime state, gitignored. | [The Pipeline](pipeline.md) |
+
+## Environment
+
+| Variable | Effect |
+|---|---|
+| `JFDI_HOME` | Overrides `~/.jfdi` as the base for all run state (`projects/<project-key>/`). Set it in tests and QA sandboxes so nested runs never touch your real state. Use an absolute path. |
+
+Run state — event stream, state snapshot, per-run logs and reports — lives
+*outside* the project, under `~/.jfdi/projects/<project-key>/`, where
+`<project-key>` is the project root's absolute path with separators flattened to
+dashes. See [Events & State](../architecture/events-and-state.md).

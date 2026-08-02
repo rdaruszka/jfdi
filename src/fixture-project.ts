@@ -105,7 +105,7 @@ export async function createProjectFixture(
 
   // Only config, sandbox, and prompts land in the commit — .jfdi/.gitignore
   // keeps the board, tickets, and runtime state out of product history
-  // (spec §2: work tracking is external, like JIRA would be).
+  // (work tracking is external to the product, like JIRA would be).
   await commitPaths(destinationDir, "chore: adopt jfdi (config, sandbox contract, prompts)", [
     ".jfdi",
   ]);
