@@ -31,6 +31,13 @@ const PIPELINE_TIMEOUT_MS = 120_000;
 /** How long a spawned coordinator gets to reach the state a test waits for. */
 const COORDINATOR_TIMEOUT_MS = 60_000;
 const POLL_INTERVAL_MS = 100;
+/**
+ * How long a paused CLI must still be running to count as held. A process with
+ * nothing referenced on its event loop exits within a tick, so this only has to
+ * clear that by an obvious margin — and it is far short of any resume schedule,
+ * so a CLI still alive here is held rather than merely between probes.
+ */
+const HOLD_PROOF_MS = 3_000;
 
 /**
  * A `claude` that never talks to the network. Beyond replaying stream-json and
@@ -256,19 +263,24 @@ async function putCardInColumn(sandbox: Sandbox, column: string, card: string): 
   );
 }
 
+interface Ended {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+}
+
 /**
- * Run the coordinator until `isReady` holds, then stop it. `jfdi start` watches
- * forever by design, so the only way to observe it from a test is to spawn it,
- * wait on the state it is supposed to produce, and signal it down. The loop is
- * bounded by a deadline, so a coordinator that never gets there fails the test
- * instead of hanging the suite.
+ * A CLI still running: `jfdi start` watches forever by design, and a paused
+ * `jfdi run` holds until a human ends it, so both can only be observed from
+ * the outside while they are alive.
  */
-async function runCoordinatorUntil(
-  sandbox: Sandbox,
-  isReady: () => Promise<boolean>,
-  options: StubOptions = {},
-): Promise<string> {
-  const child = spawn(process.execPath, [cliPath, "start"], {
+interface LiveCli {
+  child: ReturnType<typeof spawn>;
+  output: () => string;
+  exited: Promise<Ended>;
+}
+
+function spawnCli(sandbox: Sandbox, args: string[], options: StubOptions = {}): LiveCli {
+  const child = spawn(process.execPath, [cliPath, ...args], {
     cwd: sandbox.project,
     env: stubEnv(sandbox, options),
   });
@@ -279,18 +291,46 @@ async function runCoordinatorUntil(
   child.stderr.on("data", (chunk: Buffer) => {
     output += chunk.toString();
   });
-  const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+  return {
+    child,
+    output: () => output,
+    exited: new Promise<Ended>((resolve) => {
+      child.once("exit", (code, signal) => resolve({ code, signal }));
+    }),
+  };
+}
+
+function sleep(durationMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, durationMs));
+}
+
+/** Poll until `isReady` holds. Bounded by a deadline, so a stuck CLI fails the test. */
+async function waitUntil(isReady: () => Promise<boolean>, describe: () => string): Promise<void> {
+  const deadline = Date.now() + COORDINATOR_TIMEOUT_MS;
+  // Terminates: the deadline shrinks the remaining time every pass.
+  while (Date.now() < deadline) {
+    if (await isReady()) return;
+    await sleep(POLL_INTERVAL_MS);
+  }
+  throw new Error(describe());
+}
+
+/** Run the coordinator until `isReady` holds, then signal it down. */
+async function runCoordinatorUntil(
+  sandbox: Sandbox,
+  isReady: () => Promise<boolean>,
+  options: StubOptions = {},
+): Promise<string> {
+  const coordinator = spawnCli(sandbox, ["start"], options);
   try {
-    const deadline = Date.now() + COORDINATOR_TIMEOUT_MS;
-    // Terminates: the deadline shrinks the remaining time every pass.
-    while (Date.now() < deadline) {
-      if (await isReady()) return output;
-      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-    }
-    throw new Error(`coordinator never reached the expected state. Output:\n${output}`);
+    await waitUntil(
+      isReady,
+      () => `coordinator never reached the expected state. Output:\n${coordinator.output()}`,
+    );
+    return coordinator.output();
   } finally {
-    child.kill("SIGTERM");
-    await exited;
+    coordinator.child.kill("SIGTERM");
+    await coordinator.exited;
   }
 }
 
@@ -626,6 +666,71 @@ describe("a provider that is down", () => {
       expect((await readEvents(sandbox)).filter((event) => event.type === "blocked")).toEqual([]);
     },
     COORDINATOR_TIMEOUT_MS * 2,
+  );
+
+  it(
+    "keeps a needs-human pause alive with no TTY, where nothing else would hold it",
+    async () => {
+      // The pause with no resume instant is the one that has nothing of its
+      // own to wait on, and redirected output means no TTY listening to stdin
+      // either. If the pause does not hold the process open itself, the run is
+      // abandoned mid-round — silently, since it looks like an ordinary exit.
+      const sandbox = await makeSandbox();
+      await initProject(sandbox);
+      const run = spawnCli(sandbox, ["run", "Fix the parser"], {
+        stubMode: "needs-human",
+        promptSubdir: "held-run",
+      });
+      try {
+        await waitUntil(
+          () => hasPaused(sandbox),
+          () => `jfdi run never paused. Output:\n${run.output()}`,
+        );
+        await sleep(HOLD_PROOF_MS);
+        expect({ code: run.child.exitCode, signal: run.child.signalCode }).toEqual({
+          code: null,
+          signal: null,
+        });
+
+        // …and Ctrl-C still ends it: without a TTY there is no raw mode, so
+        // the signal is a signal and nothing here swallows it.
+        run.child.kill("SIGINT");
+        const ended = await run.exited;
+        expect(ended.signal ?? ended.code).toBeTruthy();
+      } finally {
+        run.child.kill("SIGKILL");
+      }
+    },
+    PIPELINE_TIMEOUT_MS,
+  );
+
+  it(
+    "keeps a paused coordinator alive with no TTY, its card still in flight",
+    async () => {
+      const sandbox = await makeSandbox();
+      await initProject(sandbox);
+      await putCardInColumn(sandbox, "Ready", "- [ ] Fix the parser");
+      const coordinator = spawnCli(sandbox, ["start"], {
+        stubMode: "needs-human",
+        promptSubdir: "held-start",
+      });
+      try {
+        await waitUntil(
+          () => hasPaused(sandbox),
+          () => `coordinator never paused. Output:\n${coordinator.output()}`,
+        );
+        await sleep(HOLD_PROOF_MS);
+        // A coordinator that quits under its own pause stops watching the
+        // board and drops every run it was holding.
+        expect(coordinator.child.exitCode).toBe(null);
+        expect(await cardsInColumn(sandbox, "In Progress")).toEqual(["- [ ] Fix the parser"]);
+        expect(await cardsInColumn(sandbox, "Blocked")).toEqual([]);
+      } finally {
+        coordinator.child.kill("SIGTERM");
+        await coordinator.exited;
+      }
+    },
+    PIPELINE_TIMEOUT_MS,
   );
 
   it(

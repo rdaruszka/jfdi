@@ -35,6 +35,13 @@ const USAGE_LIMIT_BUFFER_MS = 60_000;
  */
 const MAX_PAUSE_WAIT_MS = 21_600_000;
 
+/**
+ * How often the keepalive that holds a pause open fires. It does nothing when
+ * it does; being a referenced handle on the event loop is its whole job, so a
+ * wake-up that costs nothing should also happen rarely.
+ */
+const PAUSE_KEEPALIVE_INTERVAL_MS = 60_000;
+
 export interface PauseDelays {
   /** One entry per stage-local outage retry; its length is how many are allowed. */
   outageStageRetryMs: readonly number[];
@@ -78,6 +85,8 @@ export class PauseController {
   private readonly sleepers = new Set<() => void>();
   private paused: PauseState | null = null;
   private pauseTimer: NodeJS.Timeout | null = null;
+  /** Holds the event loop open for the pause; see `enterPause`. */
+  private keepaliveTimer: NodeJS.Timeout | null = null;
   private probeStep = 0;
   private isStopped = false;
 
@@ -148,7 +157,7 @@ export class PauseController {
   /** Release every waiter and drop the timers; waits after this resolve at once. */
   stop(): void {
     this.isStopped = true;
-    this.clearPauseTimer();
+    this.clearPauseHandles();
     this.paused = null;
     this.wakeSleepers();
     for (const wake of [...this.pauseWaiters]) wake();
@@ -170,8 +179,15 @@ export class PauseController {
       detail: failure.detail,
       ...(resumesAtMs === null ? {} : { resumesAt: new Date(resumesAtMs).toISOString() }),
     });
-    // Deliberately not unref'd: a pause is work in progress, and a paused
-    // `jfdi run` whose only pending timer was unref'd would simply exit.
+    // A pause is work in progress, so something referenced has to hold the
+    // event loop open for it — otherwise the process exits mid-round and
+    // abandons the run. It cannot be the resume timer: a needs-human pause has
+    // no resume instant by design and so installs none. Nor stdin: there may
+    // be no TTY. A keepalive that depends on neither is what every pause has
+    // in common, so the hold is the same whichever failure caused it.
+    this.keepaliveTimer = setInterval(() => {
+      // Being a referenced handle is the whole job.
+    }, PAUSE_KEEPALIVE_INTERVAL_MS);
     if (resumesAtMs !== null)
       this.pauseTimer = setTimeout(
         () => this.resume("timer"),
@@ -210,7 +226,7 @@ export class PauseController {
     const paused = this.paused;
     if (paused === null) return;
     this.paused = null;
-    this.clearPauseTimer();
+    this.clearPauseHandles();
     this.log.emit("harness_resumed", undefined, {
       kind: paused.kind,
       detail: paused.detail,
@@ -241,10 +257,16 @@ export class PauseController {
     this.sleepers.clear();
   }
 
-  private clearPauseTimer(): void {
-    if (this.pauseTimer === null) return;
-    clearTimeout(this.pauseTimer);
-    this.pauseTimer = null;
+  /** Release both of a pause's handles: its resume timer and its keepalive. */
+  private clearPauseHandles(): void {
+    if (this.pauseTimer !== null) {
+      clearTimeout(this.pauseTimer);
+      this.pauseTimer = null;
+    }
+    if (this.keepaliveTimer !== null) {
+      clearInterval(this.keepaliveTimer);
+      this.keepaliveTimer = null;
+    }
   }
 
   private notify(): void {

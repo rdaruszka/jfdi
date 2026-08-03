@@ -138,6 +138,32 @@ describe("PauseController", () => {
     expect(events.at(-1)).toMatchObject({ type: "harness_resumed", data: { trigger: "human" } });
   });
 
+  it("holds a live handle for the whole pause, even with no resume instant to wait on", async () => {
+    // A pause with nothing referenced on the event loop does not hold anything:
+    // the process exits under it and abandons the run. needs-human is the case
+    // that installs no resume timer, so it is the one with nothing of its own.
+    expect(vi.getTimerCount()).toBe(0);
+    const held = pause.holdAfterFailure(NEEDS_HUMAN, 1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(pause.state?.resumesAtMs).toBe(null);
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+    pause.retryNow();
+    expect(await held).toBe(true);
+    // …and released with the pause, so a finished run can still exit.
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("releases its handles on stop too, not only on resume", async () => {
+    const held = pause.holdAfterFailure(NEEDS_HUMAN, 1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+    pause.stop();
+    expect(await held).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("releases every holder at once, including ones that arrived after the pause", async () => {
     const first = pause.holdAfterFailure(NEEDS_HUMAN, 1);
     await vi.advanceTimersByTimeAsync(0);
