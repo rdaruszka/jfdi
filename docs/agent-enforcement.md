@@ -39,6 +39,8 @@ This has exactly the right incentive shape for agents: the cheap path (silently 
 - Minimum identifier length, with the guideline's exception list (`i`, `j`, `_`)
 - Max function length as *warning* (the tripwire), never error
 - Ban on unannotated ignore-pragmas (`any`-equivalents, bare `@ts-ignore`-equivalents)
+- No-magic-numbers lint, with the guideline's exemptions (index/identity literals, test files)
+- Secret scanning on diffs (credential patterns; add PII patterns where the domain handles personal data)
 
 **Gauge honestly.** If a rule's mechanical encoding doesn't exist in your toolchain, tag the rule [R] and give the reviewer its check question. Don't claim gate coverage you don't have.
 
@@ -53,6 +55,8 @@ This has exactly the right incentive shape for agents: the cheap path (silently 
 - "Trace each changed line to the request."
 - "Would this test fail if the business logic broke?"
 - "For each suppression: is the stated reason real?"
+- "Does the diff add a dependency, and is the logged justification real?"
+- "Does anything in the diff — code, logs, error messages, fixtures — emit or embed a credential or personal data?"
 - "Does the diff use any concept-word not in the glossary?"
 - "Does the diff contradict anything the docs assert?"
 - "Does the diff match the assumptions stated in the decision log?"

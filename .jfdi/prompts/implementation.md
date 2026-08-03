@@ -32,6 +32,9 @@ Follow the project's coding guidelines (CLAUDE.md, if present). Non-negotiables:
   Docs your change falsifies are yours to update in the same diff.
 - Never blend conflicting existing patterns: pick one (more recent, better
   tested), record why in `decisions`, flag the loser in `observations`.
+- Dependencies are decisions: prefer the standard library, then packages already
+  present. Adding a new one requires a stated justification in `decisions`.
+- Never put secrets or personal data in code, logs, error messages, or fixtures.
 
 ## Working posture
 

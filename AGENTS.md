@@ -111,13 +111,17 @@ The generic rules with rationale and check questions live in [docs/coding-guidel
 - Long-running processes (coordinator, TUI) bound their in-memory collections; anything that grows per-event needs an eviction story.
 - Functions do one thing at one level of abstraction. Length is a smell, not a violation: past ~100 lines, restructure or justify with an annotated suppression. Splitting mechanically to duck the number is itself a violation.
 - Assert what the type system can't prove: data crossing trust boundaries (`board.md`, ticket notes, anything `JSON.parse`d, harness stream events, subprocess output), cross-call invariants, and exhaustiveness (`never` checks). Impossible states get an assertion, not a recovery path. Asserting what types already guarantee is noise.
+- Every acquired resource — subprocess, watcher, timer, file handle, lock — has a paired release that runs on error paths too (`finally` or explicit teardown). The happy path is not the only path.
 - Every promise is awaited or explicitly handled — no fire-and-forget. No empty catch blocks; catch-and-continue requires the degradation to be deliberate and stated.
+- Errors name the operation, the offending value/path, and the way forward ("failed" is not an error message). Test: could the reader act on it without opening the source?
 - Zero warnings. `biome-ignore` and `@ts-expect-error` require a real reason at the site; `any` and bare `@ts-ignore` are banned. Suppression reasons are review targets — "function is long" is not a reason.
 - No module-level mutable state. Don't mutate arguments or shared objects; return new values.
+- Secrets and PII never appear in code, logs, error messages, or test fixtures. Redact at the boundary; fixtures use obvious placeholders.
 
 **Naming**
 
 - Quantities carry their dimension: `timeoutMs`, `delaySeconds`, `sizeBytes`; fraction vs. percent named explicitly. Convert once at the boundary and name the result — no unlabeled numbers in flight.
+- No magic numbers: a literal that encodes a decision (threshold, timeout, limit, retry count) becomes a named constant, and the name carries the dimension. Exempt: `0`/`1`/`-1` in index/identity positions, and test expectations. The fix is a constant, not a config option.
 - Single-letter names only as: one-expression lambda parameters, numeric loop indices `i`/`j`, `_` for discards. Everywhere else, whole words; name length scales with scope.
 - No abbreviations except: `id`, `min`, `max`, `args`, `config`, `init`, standard acronyms (`JSON`, `URL`, `HTTP`, `API`, `CLI`, `TUI`, `QA`), and ecosystem-imposed identifiers (`cwd`, `env`, `argv`). This list grows only by editing this file. `err`, `ctx`, `cfg`, `req`, `res`, `tmp` are spelled out.
 - Booleans are positive predicates (`isReady`, `hasMerged`, `shouldRetry`) — never bare nouns, never negated names.
@@ -131,7 +135,10 @@ The generic rules with rationale and check questions live in [docs/coding-guidel
 - Surgical changes: every changed line traces to the ticket. Clean up orphans your change created; don't touch pre-existing mess — flag it instead. Docs your change falsified are your mess: fix them in the same diff.
 - Bug tickets start with a failing repro test; the fix makes it pass. Skipping the repro requires a logged reason in `## Decisions`.
 - Never average conflicting patterns: pick one (more recent, better tested), log why, flag the loser. Convention beats taste — follow the codebase's style even where you disagree; surface disagreement, don't silently fork.
+- Dependencies are decisions: prefer the Node stdlib, then dependencies already in package.json. Adding a package requires a logged justification in `## Decisions`; a new dependency for a few dozen lines' worth of code fails review.
 - Tests verify intent: a test that couldn't fail if the business logic broke is wrong. No implementation-mirroring (asserting methods were called), no tautologies.
+- Tests are deterministic and order-independent: wait on conditions, never sleep for durations; control time and randomness. A flaky test is a defect against the gate itself.
+- No commented-out code (git remembers); a TODO must reference a ticket or an inbox observation — otherwise do it or delete it.
 - Commit at each coherent working state; never hand off with uncommitted changes. Fix-round commits are new commits — no amend/squash while a review is in flight. Gate-green is required at handoff commits, not every intermediate one.
 - Fail loud: completion claims must match actual gate output. Anything skipped, stubbed, or degraded is stated prominently in the report, not buried.
 

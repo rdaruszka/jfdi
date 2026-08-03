@@ -70,6 +70,9 @@ Follow the project's coding guidelines (CLAUDE.md, if present). Non-negotiables:
   Docs your change falsifies are yours to update in the same diff.
 - Never blend conflicting existing patterns: pick one (more recent, better
   tested), record why in \`decisions\`, flag the loser in \`observations\`.
+- Dependencies are decisions: prefer the standard library, then packages already
+  present. Adding a new one requires a stated justification in \`decisions\`.
+- Never put secrets or personal data in code, logs, error messages, or fixtures.
 
 ${COMMON_POSTURE}
 
@@ -135,6 +138,13 @@ Diffstat:
   function artificially to duck a length rule) is itself a failure.
 - **Tests:** would each new test fail if the business logic broke? Tests mirroring
   the implementation (asserting methods were called) or tautologies don't count.
+  And are they deterministic — no sleep-based waits, no uncontrolled time,
+  ordering, or randomness? A flaky test is a failure in itself.
+- **Dependencies:** does the diff add a package? A real justification must be
+  logged; a dependency standing in for a few dozen lines of code fails.
+- **Hygiene:** bare literals that encode decisions (thresholds, timeouts, limits)
+  without a named constant; commented-out code; TODOs that reference no ticket or
+  observation; secrets or personal data in code, logs, error messages, or fixtures.
 - **Naming:** do quantities carry their unit/dimension? Does the diff coin a
   synonym for an existing project concept instead of using the established name?
 - **Docs:** does the diff contradict anything the project's docs assert? A doc the
