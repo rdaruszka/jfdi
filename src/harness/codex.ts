@@ -3,9 +3,12 @@ import { createWriteStream, mkdirSync } from "node:fs";
 import * as path from "node:path";
 import * as readline from "node:readline";
 import { EXIT_COMMAND_NOT_EXECUTABLE } from "../util/exit-codes.js";
+import { parseResetTime } from "./reset-time.js";
 import type {
   Harness,
   HarnessEvent,
+  HarnessFailure,
+  HarnessFailureKind,
   HarnessResult,
   HarnessSession,
   InteractiveSpawnOptions,
@@ -17,6 +20,59 @@ const STDERR_TAIL_CHARS = 4_000;
 const SIGKILL_DELAY_MS = 5_000;
 const MAX_TOOL_DETAIL_CHARS = 80;
 const ELLIPSIS = "...";
+
+/**
+ * How a Codex failure message is read as an infrastructure class, most
+ * specific first. Verified against Codex 0.146.0 (Aug 2026) — version-volatile
+ * strings, so this is a table to extend, and an unmatched message stays an
+ * ordinary task failure the pipeline feeds back as a round.
+ */
+const CODEX_FAILURE_PATTERNS: ReadonlyArray<{ pattern: RegExp; kind: HarnessFailureKind }> = [
+  {
+    pattern: /You've hit your usage limit|out of credits|spend cap|Quota exceeded/i,
+    kind: "usage-limit",
+  },
+  {
+    pattern: /could not be refreshed|status 401|codex login|no Codex credentials/i,
+    kind: "needs-human",
+  },
+  {
+    pattern:
+      /exceeded retry limit|stream disconnected|Connection failed|request timed out|Error while reading the server response|high demand|at capacity/i,
+    kind: "outage",
+  },
+];
+
+/** `Try again at 3:45 PM.` — local time, no timezone marker. `Try again later.` carries none. */
+const CODEX_TRY_AGAIN_AT = /try again at ([^.\n]+)/i;
+/** Failure text quoted into a pause banner — one line, terminal-width-ish. */
+const MAX_FAILURE_DETAIL_CHARS = 160;
+
+/**
+ * A session that never announced its thread did not run at all — the
+ * detached-TTY regression (openai/codex#19945). Nothing in the exit code says
+ * so, so the absence of `thread.started` is the signal.
+ */
+const CODEX_NO_THREAD_DETAIL = "codex exited without starting a thread";
+
+function failureDetail(text: string): string {
+  const line = text.split("\n").find((candidate) => candidate.trim() !== "") ?? text;
+  return line.trim().slice(0, MAX_FAILURE_DETAIL_CHARS);
+}
+
+/** Classify a Codex failure message. Undefined means "the agent's problem, not the provider's". */
+export function classifyCodexFailure(text: string, nowMs: number): HarnessFailure | undefined {
+  const matched = CODEX_FAILURE_PATTERNS.find((entry) => entry.pattern.test(text));
+  if (!matched) return undefined;
+  const detail = failureDetail(text);
+  if (matched.kind !== "usage-limit") return { kind: matched.kind, detail };
+  const tryAgainAt = CODEX_TRY_AGAIN_AT.exec(text);
+  return {
+    kind: "usage-limit",
+    resetsAtMs: tryAgainAt?.[1] === undefined ? null : parseResetTime(tryAgainAt[1], nowMs),
+    detail,
+  };
+}
 
 interface CodexStreamLine {
   type?: string;
@@ -62,9 +118,14 @@ export function mapCodexLine(line: string): HarnessEvent[] {
   if (parsed.type === "item.started" || parsed.type === "item.completed") {
     return mapToolItem(parsed.item);
   }
-  if (parsed.type === "turn.failed" || parsed.type === "error") {
+  // Only `turn.failed` is terminal. Bare `error` events carry Codex's own
+  // mid-stream retries ("Reconnecting… 2/5: …") with no field to tell them
+  // apart, so treating one as a failed result reported a session Codex went on
+  // to complete as failed.
+  if (parsed.type === "turn.failed") {
     const text = parsed.error?.message ?? parsed.message ?? "Codex session failed";
-    return [{ type: "result", ok: false, text }];
+    const failure = classifyCodexFailure(text, Date.now());
+    return [{ type: "result", ok: false, text, ...(failure ? { failure } : {}) }];
   }
   return [];
 }
@@ -81,6 +142,38 @@ function mapToolItem(item: CodexStreamLine["item"]): HarnessEvent[] {
     return [{ type: "tool", name: "web_search", detail: truncateDetail(item.query) }];
   }
   return [];
+}
+
+/**
+ * What a finished session reports. Codex says nothing on the way out: success
+ * is inferred from a clean exit that produced an agent message and no
+ * `turn.failed`.
+ */
+function closedResult(
+  exitCode: number | null,
+  finalText: string,
+  failureText: string | null,
+  stderrTail: string,
+): HarnessResult {
+  const isSuccess = exitCode === 0 && finalText !== "" && failureText === null;
+  return isSuccess
+    ? { ok: true, text: finalText, exitCode: 0 }
+    : {
+        ok: false,
+        text: failureText ?? exitText(exitCode, stderrTail),
+        exitCode: exitCode ?? 1,
+      };
+}
+
+/**
+ * Why a session that has already exited failed, when the provider was the
+ * reason. Beyond the message text there is one signal only the close knows: a
+ * session that never announced a thread never ran, whatever its exit code.
+ */
+function closeFailure(text: string, hasStartedThread: boolean): HarnessFailure | undefined {
+  const classified = classifyCodexFailure(text, Date.now());
+  if (classified) return classified;
+  return hasStartedThread ? undefined : { kind: "outage", detail: CODEX_NO_THREAD_DETAIL };
 }
 
 /** Harness implementation running `codex exec --json` in the ticket worktree. */
@@ -119,6 +212,7 @@ export class CodexHarness implements Harness {
     let hasEnded = false;
     let finalText = "";
     let failureText: string | null = null;
+    let resultFailure: HarnessFailure | undefined;
     let sessionId: string | undefined;
     const push = (event: HarnessEvent) => {
       queue.push(event);
@@ -133,7 +227,10 @@ export class CodexHarness implements Harness {
       for (const event of mapCodexLine(line)) {
         if (event.type === "session") sessionId = event.sessionId;
         if (event.type === "text") finalText = event.text;
-        if (event.type === "result" && !event.ok) failureText = event.text;
+        if (event.type === "result" && !event.ok) {
+          failureText = event.text;
+          resultFailure = event.failure;
+        }
         push(event);
       }
     });
@@ -152,16 +249,12 @@ export class CodexHarness implements Harness {
       child.on("close", (code) => {
         hasEnded = true;
         log?.end();
-        const isSuccess = code === 0 && finalText !== "" && failureText === null;
-        if (isSuccess) push({ type: "result", ok: true, text: finalText });
-        const closed: HarnessResult = isSuccess
-          ? { ok: true, text: finalText, exitCode: 0 }
-          : {
-              ok: false,
-              text: failureText ?? exitText(code, stderrTail),
-              exitCode: code ?? 1,
-            };
-        resolve(withSession(closed, sessionId));
+        const closed = closedResult(code, finalText, failureText, stderrTail);
+        if (closed.ok) push({ type: "result", ok: true, text: closed.text });
+        const failure = closed.ok
+          ? undefined
+          : (resultFailure ?? closeFailure(closed.text, sessionId !== undefined));
+        resolve(withSession(failure ? { ...closed, failure } : closed, sessionId));
         notify?.();
       });
     });

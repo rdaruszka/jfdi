@@ -13,7 +13,7 @@ import {
   type Worktree,
 } from "./git.js";
 import type { PipelineContext, RunReport } from "./pipeline.js";
-import { runQaStage, runsDir, worktreesDir } from "./pipeline.js";
+import { runHeldSession, runQaStage, runsDir, worktreesDir } from "./pipeline.js";
 import { formatGateCommands, loadPrompt, renderPrompt } from "./prompts.js";
 import { appendToSection, ensureTicketNote, type Ticket } from "./tickets.js";
 import { todayIsoDate } from "./util/dates.js";
@@ -71,15 +71,16 @@ async function runIntegrationAgent(
   });
   const stage: StageName = "integration";
   context.log.emit("stage_start", ticket.id, { stage });
-  const session = context.harness.spawn(
+  const result = await runHeldSession(
+    context,
+    ticket.id,
     { prompt },
     { cwd: worktree.path, logPath: path.join(runDir, "integration.log.jsonl") },
+    (event) => {
+      if (event.type === "tool")
+        context.log.emit("session_activity", ticket.id, { text: `integration: ${event.name}` });
+    },
   );
-  for await (const event of session.events) {
-    if (event.type === "tool")
-      context.log.emit("session_activity", ticket.id, { text: `integration: ${event.name}` });
-  }
-  const result = await session.done;
   const verdict = await readIntegrationVerdict(verdictPath);
   context.log.emit("stage_end", ticket.id, {
     stage,

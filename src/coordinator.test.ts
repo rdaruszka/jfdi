@@ -3,10 +3,10 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { findColumn, moveCard, parseBoard } from "./board.js";
 import { Coordinator } from "./coordinator.js";
-import { EventLog, loadState } from "./events.js";
+import { EventLog, type JfdiEvent, loadState } from "./events.js";
 import { branchExists, deleteBranch, git, revParse } from "./git.js";
 import { worktreesDir } from "./pipeline.js";
-import { saveReport } from "./report.js";
+import { loadReport, saveReport } from "./report.js";
 import { commitFile, type Fixture, makeFixture, stageOf, writeVerdict } from "./test-helpers.js";
 import { ticketIdFromCard } from "./util/ids.js";
 
@@ -166,6 +166,23 @@ function autoHandler() {
     return { ok: true, text: "" };
   };
 }
+
+/** One card left mid-flight by a coordinator that died, and nothing else. */
+const ORPHANED_BOARD = `---
+
+kanban-plugin: board
+
+---
+
+## Ready
+
+## In Progress
+
+- [ ] Add feature gamma
+
+## Done
+
+`;
 
 const ALPHA_TEXT = "Add feature alpha";
 const ALPHA_CARD = `- [ ] ${ALPHA_TEXT}`;
@@ -599,30 +616,24 @@ describe("Coordinator", () => {
     expect(findColumn(await readBoard(), "Ready to Merge")?.cards).toHaveLength(1);
   });
 
-  it("sweeps crash-orphaned In Progress cards to Blocked at startup", async () => {
-    // Only the orphan on the board: a coordinator died with this card in flight.
-    await fs.writeFile(
-      path.join(fixture.jfdiDir, "board.md"),
-      BOARD.replace(/- \[ \] Add feature \w+\n/g, "").replace(
-        "## In Progress\n",
-        "## In Progress\n\n- [ ] Add feature gamma\n",
-      ),
-    );
+  it("continues an In Progress card nothing is driving, instead of blocking it", async () => {
+    // The board a dead coordinator leaves: a card in flight with no run behind
+    // it. Its branch holds partial work, so the treatment is to pick it back
+    // up — the human should not have to drag it anywhere.
+    await fs.writeFile(path.join(fixture.jfdiDir, "board.md"), ORPHANED_BOARD);
     const context = fixture.context(autoHandler());
-    const reasons: string[] = [];
-    context.log.on((event) => {
-      if (event.type === "blocked") reasons.push(String(event.data?.reason));
-    });
+    fixture.config.integration.mode = "on-approval";
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
     await coordinator.start();
     await coordinator.drain();
     coordinator.stop();
 
     const board = await readBoard();
-    expect(findColumn(board, "Blocked")?.cards.map((c) => c.text)).toEqual(["Add feature gamma"]);
-    expect(reasons).toEqual(["orphaned by a coordinator restart — no run was active"]);
-    // Blocked, not re-run behind the human's back: no session was ever spawned.
-    expect(context.harness.calls).toHaveLength(0);
+    expect(findColumn(board, "Blocked")?.cards).toHaveLength(0);
+    expect(findColumn(board, "Ready to Merge")?.cards.map((c) => c.text)).toEqual([
+      "Add feature gamma",
+    ]);
+    expect(context.harness.calls.length).toBeGreaterThan(0);
   });
 
   it("respects max_concurrent", async () => {
@@ -655,5 +666,97 @@ describe("Coordinator", () => {
     await coordinator.drain();
     coordinator.stop();
     expect(peak).toBe(1);
+  });
+});
+
+/**
+ * A usage limit is not the agent being wrong: nothing about the ticket has
+ * been learned, so nothing may be spent on it. These pin the two halves of
+ * that — a run in flight holds where it stands, and no new run starts.
+ */
+describe("Coordinator under a broken provider", () => {
+  /**
+   * Far enough out that only a human ends this pause within the test, and
+   * inside the fixture's cap so the recorded instant is the one we passed in.
+   */
+  const FarResetMs = 50_000;
+
+  it("holds a run whose provider hit a usage limit, and never blocks its card", async () => {
+    await fs.writeFile(boardPath(), SINGLE_CARD_BOARD);
+    fixture.config.integration.mode = "on-approval";
+    const resetsAtMs = Date.now() + FarResetMs;
+    let implementationAttempts = 0;
+    const context = fixture.context(async (spec, options) => {
+      const stage = stageOf(spec.prompt);
+      if (stage !== "implementation") {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+        return { ok: true, text: "" };
+      }
+      implementationAttempts++;
+      if (implementationAttempts === 1)
+        return {
+          ok: false,
+          text: "",
+          failure: {
+            kind: "usage-limit" as const,
+            resetsAtMs,
+            detail: "You've hit your session limit",
+          },
+        };
+      await commitFile(options.cwd, "impl.txt", "work\n", "implement");
+      await writeVerdict(spec.prompt, { status: "done", summary: "built alpha" });
+      return { ok: true, text: "" };
+    });
+    const pauses: JfdiEvent[] = [];
+    context.log.on((event) => {
+      if (event.type === "harness_paused") pauses.push(event);
+    });
+
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+    await coordinator.start();
+    await waitUntil(() => pauses.length === 1);
+
+    // Held mid-run: the card is still in flight, and the pause says why and
+    // until when, so a renderer can show both.
+    const held = await readBoard();
+    expect(findColumn(held, "In Progress")?.cards.map((c) => c.text)).toEqual([ALPHA_TEXT]);
+    expect(findColumn(held, "Blocked")?.cards).toHaveLength(0);
+    expect(pauses[0]?.data).toEqual({
+      kind: "usage-limit",
+      detail: "You've hit your session limit",
+      resumesAt: new Date(resetsAtMs).toISOString(),
+    });
+
+    context.pause.retryNow();
+    await coordinator.drain();
+    coordinator.stop();
+
+    const board = await readBoard();
+    expect(findColumn(board, "Blocked")?.cards).toHaveLength(0);
+    expect(findColumn(board, "Ready to Merge")?.cards.map((c) => c.text)).toEqual([ALPHA_TEXT]);
+    // The dead session cost a respawn, not a round.
+    expect(implementationAttempts).toBe(2);
+    expect((await loadReport(fixture.stateDir, ticketIdFromCard(ALPHA_TEXT)))?.rounds).toBe(1);
+  });
+
+  it("dispatches nothing while paused, and picks the board up again on resume", async () => {
+    const context = fixture.context(autoHandler());
+    fixture.config.integration.mode = "on-approval";
+    // A needs-human pause carries no timer: only R ends this one.
+    const held = context.pause.holdAfterFailure({ kind: "needs-human", detail: "run /login" }, 1);
+
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+    await coordinator.start();
+    await sleep(SCAN_SETTLE_MS);
+    expect(context.harness.calls).toHaveLength(0);
+    expect(findColumn(await readBoard(), "In Progress")?.cards).toHaveLength(0);
+    expect(findColumn(await readBoard(), "Ready")?.cards).toHaveLength(2);
+
+    context.pause.retryNow();
+    expect(await held).toBe(true);
+    await rescan(coordinator);
+    coordinator.stop();
+
+    expect(findColumn(await readBoard(), "Ready to Merge")?.cards).toHaveLength(2);
   });
 });

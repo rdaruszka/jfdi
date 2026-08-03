@@ -4,7 +4,14 @@ import type { JfdiConfig } from "./config.js";
 import type { EventLog, StageName } from "./events.js";
 import { formatGateFailure, formatGatePass, type GateResult, runGate } from "./gate.js";
 import { commitAllIfDirty, createWorktree, git, revParse, type Worktree } from "./git.js";
-import type { Harness, HarnessEvent } from "./harness/index.js";
+import type {
+  Harness,
+  HarnessEvent,
+  HarnessResult,
+  PromptSpec,
+  SpawnOptions,
+} from "./harness/index.js";
+import type { PauseController } from "./pause.js";
 import { formatGateCommands, loadPrompt, type PromptName, renderPrompt } from "./prompts.js";
 import {
   type FeedbackItem,
@@ -36,6 +43,12 @@ export interface PipelineContext {
   config: JfdiConfig;
   harness: Harness;
   log: EventLog;
+  /**
+   * The tool-wide hold on agent sessions. Shared by every pipeline and by
+   * dispatch, so one provider failure stops the whole tool rather than
+   * draining ticket after ticket into Blocked.
+   */
+  pause: PauseController;
   /** Live sessions register here so a shutdown can kill stray subprocesses. */
   sessions?: Set<{ kill(): void }>;
 }
@@ -141,6 +154,55 @@ function narrateSessionActivity(
   }
 }
 
+/** One session, start to finish, with its events narrated as they arrive. */
+async function runOneSession(
+  context: PipelineContext,
+  promptSpec: PromptSpec,
+  options: SpawnOptions,
+  onEvent: (event: HarnessEvent) => void,
+): Promise<HarnessResult> {
+  const session = context.harness.spawn(promptSpec, options);
+  context.sessions?.add(session);
+  try {
+    for await (const event of session.events) onEvent(event);
+    return await session.done;
+  } finally {
+    context.sessions?.delete(session);
+  }
+}
+
+/**
+ * One harness session, re-run for as long as the provider under it is down.
+ * An infrastructure failure is not the agent being wrong about the work: it
+ * never reaches the caller, never becomes feedback, and never costs a round.
+ *
+ * The loop is unbounded by nature — a usage limit lasts as long as it lasts —
+ * but every pass yields to the pause controller, and both exits are reachable:
+ * a session the provider actually answered, or a stopped controller.
+ */
+export async function runHeldSession(
+  context: PipelineContext,
+  ticketId: string,
+  promptSpec: PromptSpec,
+  options: SpawnOptions,
+  onEvent: (event: HarnessEvent) => void,
+): Promise<HarnessResult> {
+  for (let attempt = 1; ; attempt++) {
+    await context.pause.waitWhilePaused();
+    const result = await runOneSession(context, promptSpec, options, onEvent);
+    if (!result.failure) {
+      context.pause.reportHealthy();
+      return result;
+    }
+    context.log.emit("session_activity", ticketId, {
+      text: `harness ${result.failure.kind}: ${result.failure.detail}`,
+    });
+    // Shutting down is the one way out that is not a working provider; the
+    // caller then sees the failed session exactly as it did before this hold.
+    if (!(await context.pause.holdAfterFailure(result.failure, attempt))) return result;
+  }
+}
+
 async function runStageSession(
   context: PipelineContext,
   ticket: Ticket,
@@ -156,25 +218,19 @@ async function runStageSession(
     stage,
     ...(continueSessionId ? { isContinuation: true } : {}),
   });
-  const session = context.harness.spawn(
+  const result = await runHeldSession(
+    context,
+    ticket.id,
     { prompt },
     { cwd: worktree.path, logPath, ...(continueSessionId ? { continueSessionId } : {}) },
+    (event) => narrateSessionActivity(context, ticket.id, stage, event),
   );
-  context.sessions?.add(session);
-  try {
-    for await (const event of session.events) {
-      narrateSessionActivity(context, ticket.id, stage, event);
-    }
-    const result = await session.done;
-    return {
-      ok: result.ok,
-      resultText: result.text,
-      verdictPath,
-      ...(result.sessionId ? { sessionId: result.sessionId } : {}),
-    };
-  } finally {
-    context.sessions?.delete(session);
-  }
+  return {
+    ok: result.ok,
+    resultText: result.text,
+    verdictPath,
+    ...(result.sessionId ? { sessionId: result.sessionId } : {}),
+  };
 }
 
 interface ContinuationSpec {

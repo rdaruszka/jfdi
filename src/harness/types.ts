@@ -7,12 +7,29 @@ export interface PromptSpec {
   prompt: string;
 }
 
+/**
+ * Why a session died, when the reason was the provider under it rather than
+ * the work in front of it. Each harness classifies its own provider's failures
+ * (exit codes carry no class information on either CLI) and reports this
+ * neutral shape; the pipeline holds and re-runs the stage instead of treating
+ * it as feedback. Absent means an ordinary task failure.
+ */
+export type HarnessFailure =
+  /** Quota exhausted. `resetsAtMs` is null when the provider stated no time we could read. */
+  | { kind: "usage-limit"; resetsAtMs: number | null; detail: string }
+  /** Login expired, key revoked, out of credits — a named repair only a human can do. */
+  | { kind: "needs-human"; detail: string }
+  /** Transient: 5xx, network, capacity. Self-resolves. */
+  | { kind: "outage"; detail: string };
+
+export type HarnessFailureKind = HarnessFailure["kind"];
+
 export type HarnessEvent =
   | { type: "text"; text: string }
   | { type: "tool"; name: string; detail?: string }
   /** The provider's identifier for this session, used to continue it later. */
   | { type: "session"; sessionId: string }
-  | { type: "result"; ok: boolean; text: string };
+  | { type: "result"; ok: boolean; text: string; failure?: HarnessFailure };
 
 export interface HarnessResult {
   ok: boolean;
@@ -24,6 +41,8 @@ export interface HarnessResult {
    * conversation. Absent when the provider never reported one.
    */
   sessionId?: string;
+  /** Set only when the provider failed, not the agent — see `HarnessFailure`. */
+  failure?: HarnessFailure;
 }
 
 export interface HarnessSession {

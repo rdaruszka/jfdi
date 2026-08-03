@@ -6,7 +6,7 @@ import type { PipelineContext } from "../pipeline.js";
 import { runPipeline } from "../pipeline.js";
 import { recordMergeReady, recordObservations } from "../report.js";
 import { resolveTicket } from "../tickets.js";
-import { attachInlinePrinter, buildContext } from "./context.js";
+import { attachInlinePrinter, attachRetryKey, buildContext } from "./context.js";
 
 /**
  * `jfdi run <ticket>` — single-ticket mode: the full pipeline inline. <ticket>
@@ -17,9 +17,13 @@ import { attachInlinePrinter, buildContext } from "./context.js";
 export async function runCommand(ticketRef: string): Promise<number> {
   const context = await buildContext();
   const detach = attachInlinePrinter(context.log);
+  // A single-ticket run pauses on a broken provider exactly as the coordinator
+  // does, so it needs the same way for a human to say "repaired — go".
+  const detachRetryKey = attachRetryKey(context.pause);
   try {
     return await runTicketInline(context, ticketRef);
   } finally {
+    detachRetryKey();
     detach();
     await context.log.flush();
   }

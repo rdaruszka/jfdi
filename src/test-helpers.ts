@@ -7,7 +7,19 @@ import { EventLog } from "./events.js";
 import { git } from "./git.js";
 import type { FakeHandler } from "./harness/fake.js";
 import { FakeHarness } from "./harness/fake.js";
+import { PauseController, type PauseDelays } from "./pause.js";
 import type { PipelineContext } from "./pipeline.js";
+
+/**
+ * Pause waits, shrunk to the millisecond scale. The real schedule is measured
+ * in minutes; a test asserting that a held stage re-runs should not wait one.
+ */
+const TEST_PAUSE_DELAYS: PauseDelays = {
+  outageStageRetryMs: [5, 10, 20],
+  probeMs: [10, 20, 40],
+  usageLimitBufferMs: 0,
+  maxWaitMs: 60_000,
+};
 
 export interface Fixture {
   root: string;
@@ -56,13 +68,15 @@ export async function makeFixture(configOverrides: Partial<JfdiConfig> = {}): Pr
     config,
     context: (handler, options = {}) => {
       const harness = new FakeHarness(handler);
+      const log = new EventLog(stateDir, options.shouldPersistEvents ?? false);
       return {
         repoRoot: repo,
         jfdiDir,
         stateDir,
         config,
         harness,
-        log: new EventLog(stateDir, options.shouldPersistEvents ?? false),
+        log,
+        pause: new PauseController(log, TEST_PAUSE_DELAYS),
       };
     },
     cleanup: () => fs.rm(root, { recursive: true, force: true }),

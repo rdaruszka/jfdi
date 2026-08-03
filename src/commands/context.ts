@@ -3,8 +3,10 @@ import { JFDI_DIR, loadConfig } from "../config.js";
 import { EventLog, type JfdiEvent } from "../events.js";
 import { repoRoot } from "../git.js";
 import { createHarness } from "../harness/index.js";
+import { PauseController } from "../pause.js";
 import type { PipelineContext } from "../pipeline.js";
 import { projectStateDir } from "../state-dir.js";
+import { EXIT_SIGINT } from "../util/exit-codes.js";
 
 export interface CliContext extends PipelineContext {
   repoRoot: string;
@@ -24,13 +26,15 @@ export async function buildContext(cwd: string = process.cwd()): Promise<CliCont
   const config = await loadConfig(root);
   const jfdiDir = path.join(root, JFDI_DIR);
   const stateDir = projectStateDir(root);
+  const log = new EventLog(stateDir);
   return {
     repoRoot: root,
     jfdiDir,
     stateDir,
     config,
     harness: createHarness(config),
-    log: new EventLog(stateDir),
+    log,
+    pause: new PauseController(log),
   };
 }
 
@@ -100,8 +104,54 @@ export function attachInlinePrinter(log: EventLog): () => void {
       case "merged":
         console.log(`${id}${GREEN}merged${RESET}`);
         break;
+      case "harness_paused":
+        console.log(`${YELLOW}paused${RESET} — ${pauseLine(event.data)}`);
+        break;
+      case "harness_resumed":
+        console.log(`${GREEN}resumed${RESET} (${event.data?.trigger})`);
+        break;
       default:
         break;
     }
   });
+}
+
+/** The one-line "why we stopped, and what ends it" a paused terminal shows. */
+function pauseLine(data: Record<string, unknown> | undefined): string {
+  const what = `${data?.kind}: ${data?.detail}`;
+  const resumesAt = data?.resumesAt;
+  return typeof resumesAt === "string"
+    ? `${what} — retrying at ${new Date(resumesAt).toLocaleTimeString()}, or press R now`
+    : `${what} — repair it, then press R`;
+}
+
+/** Ctrl-C, which raw mode delivers as a byte on stdin instead of as a signal. */
+const END_OF_TEXT = "\u0003";
+
+/**
+ * The human's "retry now" key for a paused run. Raw mode is what makes a bare
+ * R a keypress rather than a line to submit, and it is also what stops the
+ * terminal turning Ctrl-C into a signal — so this hands that job back. Without
+ * a TTY there is no keyboard: a needs-human pause then waits for Ctrl-C.
+ */
+export function attachRetryKey(pause: PauseController): () => void {
+  const input = process.stdin;
+  if (!input.isTTY) return () => undefined;
+  function detach(): void {
+    input.off("data", onKey);
+    input.setRawMode(false);
+    input.pause();
+  }
+  const onKey = (chunk: Buffer) => {
+    const key = chunk.toString();
+    if (key === "r" || key === "R") pause.retryNow();
+    if (key === END_OF_TEXT) {
+      detach();
+      process.exit(EXIT_SIGINT);
+    }
+  };
+  input.setRawMode(true);
+  input.resume();
+  input.on("data", onKey);
+  return detach;
 }

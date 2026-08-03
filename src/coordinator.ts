@@ -47,6 +47,7 @@ export class Coordinator {
   private watcher: ReturnType<typeof watch> | null = null;
   private pollTimer: NodeJS.Timeout | null = null;
   private lastMtimeMs = 0;
+  private readonly unsubscribeFromPause: () => void;
   readonly sessions = new Set<{ kill(): void }>();
 
   constructor(
@@ -55,6 +56,9 @@ export class Coordinator {
   ) {
     this.pollMs = options.pollMs ?? DEFAULT_POLL_INTERVAL_MS;
     context.sessions = this.sessions;
+    // A pause suspends dispatch and a resume must restart it, and neither
+    // touches the board — so neither would ever reach a scan on its own.
+    this.unsubscribeFromPause = context.pause.subscribe(() => this.requestScan());
   }
 
   private get boardPath(): string {
@@ -85,29 +89,7 @@ export class Coordinator {
     }, this.pollMs);
     this.pollTimer.unref();
 
-    await this.sweepCrashOrphans();
     await this.scan();
-  }
-
-  /**
-   * A card sitting in the in-progress column at startup was left there by a
-   * coordinator that died mid-run: nothing is driving it, and no later scan
-   * would ever look at that column. Move it to Blocked so the human sees it —
-   * the branch keeps its partial work, and a re-dispatch resumes from it.
-   */
-  private async sweepCrashOrphans(): Promise<void> {
-    // start() runs once on a fresh instance; anything in-progress predates us.
-    if (this.active.size > 0)
-      throw new Error("coordinator started with active pipelines — start() must run once");
-    const columns = this.context.config.board.columns;
-    const content = await readIfExists(this.boardPath);
-    if (content === null) return;
-    for (const card of findColumn(parseBoard(content), columns.inProgress)?.cards ?? []) {
-      await moveCardSafe(this.context, card, columns.inProgress, columns.blocked, false);
-      this.context.log.emit("blocked", ticketIdFromCard(card.text), {
-        reason: "orphaned by a coordinator restart — no run was active",
-      });
-    }
   }
 
   /** Stop watching, kill live sessions. In-flight pipelines settle in the background. */
@@ -115,6 +97,8 @@ export class Coordinator {
     this.isStopped = true;
     this.watcher?.close();
     if (this.pollTimer) clearInterval(this.pollTimer);
+    this.unsubscribeFromPause();
+    this.context.pause.stop();
     for (const session of this.sessions) session.kill();
   }
 
@@ -196,7 +180,9 @@ export class Coordinator {
     const board = parseBoard(content);
     await this.closeMergedCards(board);
     this.acknowledgeApprovals(board);
-    this.dispatchReadyCards(board);
+    // Paused means the provider under the harness is down: a new dispatch
+    // would spawn straight into the same wall. The resume triggers a rescan.
+    if (!this.context.pause.isPaused()) this.dispatchReadyCards(board);
   }
 
   /**
@@ -284,14 +270,26 @@ export class Coordinator {
     }
   }
 
-  /** Dispatch from the begin column, top first, respecting max_concurrent. */
+  /**
+   * Dispatch, top first, respecting max_concurrent. In-progress cards go
+   * first: a card in that column with nothing driving it is work already part
+   * done — a coordinator died, or one was stopped mid-run — and continuing it
+   * is what the resume machinery is for. Begin-column cards follow.
+   */
   private dispatchReadyCards(board: Board): void {
     const columns = this.context.config.board.columns;
-    for (const card of findColumn(board, columns.begin)?.cards ?? []) {
+    const stranded = (findColumn(board, columns.inProgress)?.cards ?? [])
+      .filter((card) => !this.hasRunHere(ticketIdFromCard(card.text)))
+      .map((card) => ({ card, isAlreadyInProgress: true }));
+    const ready = (findColumn(board, columns.begin)?.cards ?? []).map((card) => ({
+      card,
+      isAlreadyInProgress: false,
+    }));
+    for (const { card, isAlreadyInProgress } of [...stranded, ...ready]) {
       if (this.active.size >= this.context.config.max_concurrent) break;
       const id = ticketIdFromCard(card.text);
       if (this.active.has(id)) continue;
-      const job = this.dispatch(card, id).finally(() => {
+      const job = this.dispatch(card, id, isAlreadyInProgress).finally(() => {
         this.active.delete(id);
         this.requestScan();
       });
@@ -299,12 +297,25 @@ export class Coordinator {
     }
   }
 
-  private async dispatch(card: Card, id: string): Promise<void> {
+  /**
+   * Whether this process has already run this ticket. A scan decides from a
+   * board it read before awaiting git, so a run that finished in the meantime
+   * can still appear in the in-progress column with `active` already cleared —
+   * and dispatching from that stale line would run the ticket twice. Nothing
+   * this coordinator dispatched ever needs dispatching again: a stranded card
+   * is by definition one an earlier process left, and this log starts empty.
+   */
+  private hasRunHere(ticketId: string): boolean {
+    return this.context.log.snapshot().tickets[ticketId] !== undefined;
+  }
+
+  private async dispatch(card: Card, id: string, isAlreadyInProgress: boolean): Promise<void> {
     const columns = this.context.config.board.columns;
     try {
       const ticketsDir = path.join(this.context.repoRoot, this.context.config.ticketsDir);
       const ticket = await resolveTicket(card.text, ticketsDir);
-      await moveCardSafe(this.context, card, columns.begin, columns.inProgress, false);
+      if (!isAlreadyInProgress)
+        await moveCardSafe(this.context, card, columns.begin, columns.inProgress, false);
 
       // A begin-column card whose pipeline already passed is an approval:
       // integrate the existing branch instead of rebuilding. Sign-offs bind to

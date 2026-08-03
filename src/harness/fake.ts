@@ -1,6 +1,7 @@
 import type {
   Harness,
   HarnessEvent,
+  HarnessFailure,
   HarnessResult,
   HarnessSession,
   PromptSpec,
@@ -10,7 +11,7 @@ import type {
 export type FakeHandler = (
   promptSpec: PromptSpec,
   options: SpawnOptions,
-) => Promise<{ ok: boolean; text: string; sessionId?: string }>;
+) => Promise<{ ok: boolean; text: string; sessionId?: string; failure?: HarnessFailure }>;
 
 /**
  * In-process harness for tests: the handler plays the agent, performing side

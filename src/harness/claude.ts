@@ -3,9 +3,12 @@ import { createWriteStream, existsSync, mkdirSync } from "node:fs";
 import * as path from "node:path";
 import * as readline from "node:readline";
 import { EXIT_COMMAND_NOT_EXECUTABLE } from "../util/exit-codes.js";
+import { parseResetTime } from "./reset-time.js";
 import type {
   Harness,
   HarnessEvent,
+  HarnessFailure,
+  HarnessFailureKind,
   HarnessResult,
   HarnessSession,
   InteractiveSpawnOptions,
@@ -26,10 +29,82 @@ interface ClaudeStreamLine {
   subtype?: string;
   result?: string;
   is_error?: boolean;
+  /** HTTP status behind an API-level failure; null for connection errors. */
+  api_error_status?: number | null;
   session_id?: string;
   message?: {
     content?: Array<{ type?: string; text?: string; name?: string; input?: unknown }>;
   };
+}
+
+/**
+ * How a Claude Code failure message is read as an infrastructure class,
+ * most specific first. Verified against Claude Code v2.1.220 (Aug 2026) —
+ * these strings are version-volatile, so this is a table to extend, and
+ * anything it does not match stays an ordinary task failure that the pipeline
+ * feeds back as a round.
+ */
+const CLAUDE_FAILURE_PATTERNS: ReadonlyArray<{ pattern: RegExp; kind: HarnessFailureKind }> = [
+  { pattern: /You've hit your (session|weekly|Opus|Sonnet) limit/i, kind: "usage-limit" },
+  { pattern: /usage limit reached/i, kind: "usage-limit" },
+  {
+    pattern:
+      /run \/login|not logged in|invalid api key|oauth token (expired|revoked)|could not be refreshed|authentication/i,
+    kind: "needs-human",
+  },
+  { pattern: /credit balance is too low/i, kind: "needs-human" },
+  {
+    pattern: /unable to connect|connection error|ECONN|ETIMEDOUT|ENOTFOUND|timed out|overloaded/i,
+    kind: "outage",
+  },
+];
+
+/** API statuses that mean "come back later", not "your request was wrong". */
+const HTTP_INTERNAL_SERVER_ERROR = 500;
+const HTTP_OVERLOADED = 529;
+const CLAUDE_OUTAGE_STATUSES = new Set([HTTP_INTERNAL_SERVER_ERROR, HTTP_OVERLOADED]);
+/** Legacy raw-API form: the reset instant after a pipe, in epoch seconds. */
+const CLAUDE_LEGACY_RESET = /usage limit reached\|(\d+)/i;
+/** The only machine-free form the CLI prints: `resets 3:45pm`, `resets Mon 12:00am`. */
+const CLAUDE_RESETS_AT = /resets\s+([^.\n]+)/i;
+const MS_PER_SECOND = 1_000;
+/** Failure text quoted into a pause banner — one line, terminal-width-ish. */
+const MAX_FAILURE_DETAIL_CHARS = 160;
+
+function failureDetail(text: string): string {
+  const line = text.split("\n").find((candidate) => candidate.trim() !== "") ?? text;
+  return line.trim().slice(0, MAX_FAILURE_DETAIL_CHARS);
+}
+
+function claudeResetTime(text: string, nowMs: number): number | null {
+  const legacy = CLAUDE_LEGACY_RESET.exec(text);
+  if (legacy?.[1] !== undefined) {
+    const resetsAtMs = Number(legacy[1]) * MS_PER_SECOND;
+    return resetsAtMs > nowMs ? resetsAtMs : null;
+  }
+  const resets = CLAUDE_RESETS_AT.exec(text);
+  return resets?.[1] === undefined ? null : parseResetTime(resets[1], nowMs);
+}
+
+/**
+ * Classify a failed Claude session. `apiErrorStatus` is the `api_error_status`
+ * the result line carried, or null when there was none — a connection error,
+ * or a failure that never reached the API at all.
+ */
+export function classifyClaudeFailure(
+  text: string,
+  apiErrorStatus: number | null,
+  nowMs: number,
+): HarnessFailure | undefined {
+  const matched = CLAUDE_FAILURE_PATTERNS.find((entry) => entry.pattern.test(text));
+  const kind =
+    matched?.kind ??
+    (apiErrorStatus !== null && CLAUDE_OUTAGE_STATUSES.has(apiErrorStatus) ? "outage" : null);
+  if (kind === null) return undefined;
+  const detail = failureDetail(text);
+  return kind === "usage-limit"
+    ? { kind, resetsAtMs: claudeResetTime(text, nowMs), detail }
+    : { kind, detail };
 }
 
 type ClaudeContentBlock = NonNullable<NonNullable<ClaudeStreamLine["message"]>["content"]>[number];
@@ -69,11 +144,14 @@ export function mapClaudeLine(line: string): HarnessEvent[] {
   if (parsed.type === "result") {
     const events: HarnessEvent[] = [];
     if (parsed.session_id) events.push({ type: "session", sessionId: parsed.session_id });
-    events.push({
-      type: "result",
-      ok: parsed.subtype === "success" && !parsed.is_error,
-      text: parsed.result ?? "",
-    });
+    const text = parsed.result ?? "";
+    const isOk = parsed.subtype === "success" && !parsed.is_error;
+    // An API-level failure arrives as subtype "success" with is_error set — the
+    // subtype describes the CLI's turn, not the provider's answer.
+    const failure = isOk
+      ? undefined
+      : classifyClaudeFailure(text, parsed.api_error_status ?? null, Date.now());
+    events.push({ type: "result", ok: isOk, text, ...(failure ? { failure } : {}) });
     return events;
   }
   return [];
@@ -134,6 +212,7 @@ export class ClaudeHarness implements Harness {
     let notify: (() => void) | null = null;
     let hasEnded = false;
     let result: HarnessResult | null = null;
+    let resultFailure: HarnessFailure | undefined;
     let sessionId: string | undefined;
 
     const push = (event: HarnessEvent) => {
@@ -148,7 +227,10 @@ export class ClaudeHarness implements Harness {
       log?.write(`${line}\n`);
       for (const event of mapClaudeLine(line)) {
         if (event.type === "session") sessionId = event.sessionId;
-        if (event.type === "result") result = { ok: event.ok, text: event.text, exitCode: 0 };
+        if (event.type === "result") {
+          result = { ok: event.ok, text: event.text, exitCode: 0 };
+          resultFailure = event.failure;
+        }
         push(event);
       }
     });
@@ -175,7 +257,13 @@ export class ClaudeHarness implements Harness {
                 text: result?.text ?? exitText(code, stderrTail),
                 exitCode: code ?? 1,
               };
-        resolve(withSession(closed, sessionId));
+        // A session that died before any result line leaves its only evidence
+        // in stderr, so the exit text is classified too, not just the result.
+        const failure =
+          closed.ok === false
+            ? (resultFailure ?? classifyClaudeFailure(closed.text, null, Date.now()))
+            : undefined;
+        resolve(withSession(failure ? { ...closed, failure } : closed, sessionId));
         notify?.();
       });
     });

@@ -11,6 +11,7 @@ import { runGate } from "./gate.js";
 import { git } from "./git.js";
 import { FakeHarness } from "./harness/fake.js";
 import { integrateTicket } from "./integrate.js";
+import { PauseController } from "./pause.js";
 import { type PipelineContext, runPipeline } from "./pipeline.js";
 import { commitFile, stageOf, writeVerdict } from "./test-helpers.js";
 import { resolveTicket } from "./tickets.js";
@@ -148,13 +149,15 @@ describe("half-app end-to-end (fake harness)", () => {
     });
 
     const stateDir = path.join(root, "state");
+    const log = new EventLog(stateDir, false);
     const context: PipelineContext = {
       repoRoot: fixture.repo,
       jfdiDir,
       stateDir,
       config,
       harness,
-      log: new EventLog(stateDir, false),
+      log,
+      pause: new PauseController(log),
     };
     const ticket = await resolveTicket(
       "Add a category filter to penny list [[filter-by-category]]",

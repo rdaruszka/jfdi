@@ -45,26 +45,55 @@ function TicketRow({ ticket }: { ticket: TicketState }) {
   );
 }
 
+/** What a `harness_paused` event says, kept only until its `harness_resumed`. */
+interface PauseBanner {
+  kind: string;
+  detail: string;
+  resumesAt: string | null;
+}
+
+function pauseBannerFrom(data: Record<string, unknown> | undefined): PauseBanner {
+  const resumesAt = data?.resumesAt;
+  return {
+    kind: typeof data?.kind === "string" ? data.kind : "harness failure",
+    detail: typeof data?.detail === "string" ? data.detail : "no detail given",
+    resumesAt: typeof resumesAt === "string" ? resumesAt : null,
+  };
+}
+
+function pauseBannerText(banner: PauseBanner): string {
+  if (banner.resumesAt === null)
+    return `Harness needs attention: ${banner.detail} — repair, then press R`;
+  const at = new Date(banner.resumesAt).toLocaleTimeString();
+  const what = banner.kind === "usage-limit" ? "Usage limit" : `Harness ${banner.kind}`;
+  return `${what} — resumes ${at} · R to retry now`;
+}
+
 export interface AppProps {
   log: EventLog;
   boardName: string;
   targetBranch: string;
   onQuit: () => void;
+  /** The human's "the provider is back / I repaired it" signal. */
+  onRetry: () => void;
 }
 
 /**
  * The live view for `jfdi start` — a pure renderer over the event stream.
  * It reads nothing from pipeline internals: state snapshots + events only.
  */
-export function App({ log, boardName, targetBranch, onQuit }: AppProps) {
+export function App({ log, boardName, targetBranch, onQuit, onRetry }: AppProps) {
   const { exit } = useApp();
   const [state, setState] = useState<CoordinatorState>(log.snapshot());
   const [recent, setRecent] = useState<Array<{ seq: number; event: JfdiEvent }>>([]);
+  const [pause, setPause] = useState<PauseBanner | null>(null);
 
   useEffect(() => {
     let seq = 0;
     return log.on((event, snapshot) => {
       setState(snapshot);
+      if (event.type === "harness_paused") setPause(pauseBannerFrom(event.data));
+      if (event.type === "harness_resumed") setPause(null);
       if (event.type === "session_activity" || event.type === "card_moved") return;
       seq += 1;
       const entry = { seq, event };
@@ -77,6 +106,7 @@ export function App({ log, boardName, targetBranch, onQuit }: AppProps) {
       onQuit();
       exit();
     }
+    if (input === "r" || input === "R") onRetry();
   });
 
   const tickets = Object.values(state.tickets);
@@ -96,6 +126,14 @@ export function App({ log, boardName, targetBranch, onQuit }: AppProps) {
         <Text bold>{targetBranch}</Text>
         <Text dimColor> · q to quit</Text>
       </Box>
+
+      {pause !== null && (
+        <Box marginBottom={1}>
+          <Text bold inverse color="yellow" wrap="truncate">
+            {` ${pauseBannerText(pause)} `}
+          </Text>
+        </Box>
+      )}
 
       <Box flexDirection="column" marginBottom={1}>
         <Text bold underline>

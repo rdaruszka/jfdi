@@ -24,6 +24,9 @@ export type EventType =
   | "card_moved"
   | "observation"
   | "session_activity"
+  /** Tool-wide: the provider under the harness is down; no session may run. */
+  | "harness_paused"
+  | "harness_resumed"
   | "done"
   | "failed"
   | "error";
@@ -165,6 +168,8 @@ function narrate(event: JfdiEvent, ticket: TicketState): string {
     case "merge_ready":
     case "card_moved":
     case "observation":
+    case "harness_paused":
+    case "harness_resumed":
     case "done":
     case "failed":
     case "error":
@@ -248,11 +253,16 @@ function applyTicketEvent(
       ticket.lastActivity = stringField(event.data, "reason") ?? "failed";
       next.integrationQueue = next.integrationQueue.filter((queued) => queued !== id);
       break;
-    // These three carry no ticket-state transition. Named rather than left to
-    // a `default`, so useExhaustiveSwitchCases fails the gate when a new
+    // These carry no ticket-state transition. Named rather than left to a
+    // `default`, so useExhaustiveSwitchCases fails the gate when a new
     // EventType is added without deciding how it folds into ticket state.
+    // The two harness events are tool-wide and carry no ticket id at all: a
+    // pause says nothing about any one ticket's status, only that every
+    // ticket's next session is waiting.
     case "card_moved":
     case "observation":
+    case "harness_paused":
+    case "harness_resumed":
     case "error":
       break;
   }

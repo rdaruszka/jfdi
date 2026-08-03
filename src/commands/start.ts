@@ -44,6 +44,7 @@ export async function startCommand(): Promise<number> {
       boardName: path.basename(context.config.board.path),
       targetBranch: context.config.integration.target_branch,
       onQuit: shutdown,
+      onRetry: () => context.pause.retryNow(),
     }),
   );
   await coordinator.start();
