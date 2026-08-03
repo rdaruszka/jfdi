@@ -2,6 +2,7 @@
   "name": "jfdi",
   "version": "0.0.1",
   "description": "Just F'ing Do It — a CLI harness around coding-agent CLIs",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "jfdi": "./dist/index.js"
