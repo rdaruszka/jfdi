@@ -2,8 +2,9 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { git, isAncestor, isRebaseInProgress } from "./git.js";
+import { type FakeHandler, FakeHarness } from "./harness/fake.js";
 import { IntegrationQueue, integrateTicket } from "./integrate.js";
-import { runPipeline } from "./pipeline.js";
+import { type PipelineContext, runPipeline } from "./pipeline.js";
 import { commitFile, type Fixture, makeFixture, stageOf, writeVerdict } from "./test-helpers.js";
 import { resolveTicket } from "./tickets.js";
 
@@ -278,6 +279,73 @@ describe("integrateTicket", () => {
     const result = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
     expect(result.status).toBe("already-merged");
     expect(await git(fixture.repo, "rev-parse", "HEAD")).toBe(headBefore);
+  });
+
+  /**
+   * Integration's selection prices conflict resolution alone, and its output
+   * lands on the target branch — so it has to be the integration entry's own
+   * agent, not whichever harness the pipeline stages happened to use.
+   */
+  it("resolves a conflicted rebase through the integration stage's own harness", async () => {
+    const mixed = await makeFixture({
+      stages: {
+        implementation: { harness: "claude", model: "claude-opus-5", effort: "high" },
+        "code-review": { harness: "claude" },
+        qa: { harness: "claude" },
+        integration: { harness: "codex", model: "gpt-5.6-sol", effort: "medium" },
+      },
+    });
+    try {
+      const context = mixed.context(passingHandler("feat7.txt"));
+      const ticket = await resolveTicket("Conflicted integration", mixed.ticketsDir);
+      const outcome = await runPipeline(context, ticket);
+      if (outcome.status !== "passed") throw new Error("pipeline should pass");
+      await commitFile(mixed.repo, "feat7.txt", "main version\n", "collide");
+
+      const resolvingHandler: FakeHandler = async (spec, options) => {
+        expect(stageOf(spec.prompt)).toBe("integration");
+        await fs.writeFile(path.join(options.cwd, "feat7.txt"), "reconciled\n");
+        await git(options.cwd, "add", "-A");
+        await git(options.cwd, "-c", "core.editor=true", "rebase", "--continue");
+        await writeVerdict(spec.prompt, { resolution: "clean", notes: "kept both" });
+        return { ok: true, text: "" };
+      };
+      const integrationHarness = new FakeHarness(resolvingHandler);
+      const otherHarness = new FakeHarness(async () => {
+        throw new Error("only the integration harness may run here");
+      });
+      const base = mixed.context(resolvingHandler);
+      const integrationContext: PipelineContext = {
+        ...base,
+        harnesses: {
+          implementation: otherHarness,
+          "code-review": otherHarness,
+          qa: otherHarness,
+          integration: integrationHarness,
+        },
+      };
+      const starts: Array<Record<string, unknown> | undefined> = [];
+      integrationContext.log.on((event) => {
+        if (event.type === "stage_start") starts.push(event.data);
+      });
+
+      const result = await integrateTicket(
+        integrationContext,
+        ticket,
+        outcome.worktree,
+        outcome.report,
+      );
+
+      expect(result).toEqual({ status: "merged" });
+      expect(integrationHarness.calls).toHaveLength(1);
+      expect(otherHarness.calls).toHaveLength(0);
+      expect(starts).toEqual([
+        { stage: "integration", harness: "codex", model: "gpt-5.6-sol", effort: "medium" },
+      ]);
+      expect(await fs.readFile(path.join(mixed.repo, "feat7.txt"), "utf8")).toBe("reconciled\n");
+    } finally {
+      await mixed.cleanup();
+    }
   });
 });
 

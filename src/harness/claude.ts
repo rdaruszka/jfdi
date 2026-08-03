@@ -4,17 +4,34 @@ import * as path from "node:path";
 import * as readline from "node:readline";
 import { EXIT_COMMAND_NOT_EXECUTABLE } from "../util/exit-codes.js";
 import { parseResetTime } from "./reset-time.js";
+import { spawnFailureText } from "./spawn-failure.js";
 import type {
   Harness,
   HarnessEvent,
   HarnessFailure,
   HarnessFailureKind,
   HarnessResult,
+  HarnessSelection,
   HarnessSession,
   InteractiveSpawnOptions,
   PromptSpec,
   SpawnOptions,
 } from "./types.js";
+
+/**
+ * What `claude --effort` accepts (verified against `claude --help`, Aug 2026).
+ * Config validation reads this so a typo fails at startup rather than burning
+ * a round; it is version-volatile, so it is a table to extend.
+ */
+export const CLAUDE_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+
+/** The selection, as Claude Code spells it. An absent value passes no flag. */
+function claudeSelectionArgs(selection: HarnessSelection): string[] {
+  return [
+    ...(selection.model ? ["--model", selection.model] : []),
+    ...(selection.effort ? ["--effort", selection.effort] : []),
+  ];
+}
 
 /** Longest tool-input excerpt shown as a progress detail. */
 const MAX_TOOL_DETAIL_CHARS = 80;
@@ -177,7 +194,10 @@ function summarizeInput(input: unknown): string | undefined {
 export class ClaudeHarness implements Harness {
   readonly name = "claude";
 
-  constructor(private readonly executable: string = "claude") {}
+  constructor(
+    private readonly selection: HarnessSelection,
+    private readonly executable: string = "claude",
+  ) {}
 
   spawn(promptSpec: PromptSpec, options: SpawnOptions): HarnessSession {
     const args = [
@@ -188,6 +208,7 @@ export class ClaudeHarness implements Harness {
       "--verbose",
       "--permission-mode",
       "bypassPermissions",
+      ...claudeSelectionArgs(this.selection),
     ];
     if (options.continueSessionId) args.push("--resume", options.continueSessionId);
     // Per-project hook config (PostToolUse formatter etc.), scoped to
@@ -241,7 +262,7 @@ export class ClaudeHarness implements Harness {
         log?.end();
         resolve({
           ok: false,
-          text: `failed to spawn ${this.executable}: ${error.message}`,
+          text: spawnFailureText(this.executable, this.selection, error.message),
           exitCode: EXIT_COMMAND_NOT_EXECUTABLE,
         });
         notify?.();
@@ -300,18 +321,26 @@ export class ClaudeHarness implements Harness {
   }
 
   spawnInteractive(promptSpec: PromptSpec, options: InteractiveSpawnOptions): Promise<number> {
-    const args = options.isSystemPrompt
-      ? ["--append-system-prompt", promptSpec.prompt]
-      : [promptSpec.prompt];
+    // Both flags are session-scoped on the interactive CLI too, so an
+    // interactive launch runs the same agent the implementation stage would.
+    const args = [
+      ...claudeSelectionArgs(this.selection),
+      ...(options.isSystemPrompt ? ["--append-system-prompt"] : []),
+      promptSpec.prompt,
+    ];
     const child = spawn(this.executable, args, { cwd: options.cwd, stdio: "inherit" });
-    return interactiveResult(child, this.executable);
+    return interactiveResult(child, this.executable, this.selection);
   }
 }
 
-function interactiveResult(child: ChildProcess, executable: string): Promise<number> {
+function interactiveResult(
+  child: ChildProcess,
+  executable: string,
+  selection: HarnessSelection,
+): Promise<number> {
   return new Promise<number>((resolve) => {
     child.on("error", (error) => {
-      console.error(`failed to launch ${executable}: ${error.message}`);
+      console.error(spawnFailureText(executable, selection, error.message));
       resolve(EXIT_COMMAND_NOT_EXECUTABLE);
     });
     child.on("close", (code) => resolve(code ?? 0));

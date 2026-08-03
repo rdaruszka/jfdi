@@ -2,7 +2,7 @@ import * as path from "node:path";
 import { JFDI_DIR, loadConfig } from "../config.js";
 import { EventLog, type JfdiEvent } from "../events.js";
 import { repoRoot } from "../git.js";
-import { createHarness } from "../harness/index.js";
+import { createStageHarnesses } from "../harness/index.js";
 import { PauseController } from "../pause.js";
 import type { PipelineContext } from "../pipeline.js";
 import { projectStateDir } from "../state-dir.js";
@@ -31,7 +31,7 @@ export async function buildContext(cwd: string = process.cwd()): Promise<CliCont
     jfdiDir,
     stateDir,
     config,
-    harness: createHarness(config),
+    harnesses: createStageHarnesses(config),
     log,
     pause: new PauseController(log),
   };
@@ -61,7 +61,9 @@ export function attachInlinePrinter(log: EventLog): () => void {
         console.log(`${id}${BOLD}— round ${event.data?.round} —${RESET}`);
         break;
       case "stage_start":
-        console.log(`${id}${BOLD}${event.data?.stage}${RESET} started`);
+        console.log(
+          `${id}${BOLD}${event.data?.stage}${RESET} started ${DIM}${stageAgent(event.data)}${RESET}`,
+        );
         break;
       case "stage_end": {
         const verdict = String(event.data?.verdict ?? "");
@@ -113,6 +115,14 @@ export function attachInlinePrinter(log: EventLog): () => void {
         break;
     }
   });
+}
+
+/** Which agent a starting stage got, from the selection `stage_start` carries. */
+function stageAgent(data: Record<string, unknown> | undefined): string {
+  const parts = ["harness", "model", "effort"]
+    .map((key) => data?.[key])
+    .filter((value): value is string => typeof value === "string");
+  return parts.length > 0 ? `(${parts.join(" ")})` : "";
 }
 
 /** The one-line "why we stopped, and what ends it" a paused terminal shows. */

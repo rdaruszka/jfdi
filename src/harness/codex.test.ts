@@ -2,11 +2,14 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CodexHarness, classifyCodexFailure, mapCodexLine } from "./codex.js";
-import type { HarnessEvent } from "./types.js";
+import { CODEX_EFFORT_LEVELS, CodexHarness, classifyCodexFailure, mapCodexLine } from "./codex.js";
+import type { HarnessEvent, HarnessSelection } from "./types.js";
 
 /** 2026-08-03 09:30 local. */
 const NOW = new Date(2026, 7, 3, 9, 30).getTime();
+
+/** Harness-only selection: the tests that care about flags name their own. */
+const TEST_SELECTION: HarnessSelection = { stage: "implementation" };
 
 describe("mapCodexLine", () => {
   it("maps completed agent messages", () => {
@@ -129,7 +132,7 @@ describe("CodexHarness subprocess", () => {
       { type: "item.completed", item: { type: "agent_message", text: "all done" } },
       { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 2 } },
     ]);
-    const session = new CodexHarness(executable).spawn(
+    const session = new CodexHarness(TEST_SELECTION, executable).spawn(
       { prompt: "first line\nsecond line with spaces" },
       { cwd: dir },
     );
@@ -146,7 +149,7 @@ describe("CodexHarness subprocess", () => {
       { type: "item.completed", item: { type: "agent_message", text: "done" } },
     ]);
     const logPath = path.join(dir, "logs/session.jsonl");
-    const session = new CodexHarness(executable).spawn(
+    const session = new CodexHarness(TEST_SELECTION, executable).spawn(
       { prompt: "first line\nsecond line with spaces" },
       { cwd: dir, logPath },
     );
@@ -156,7 +159,7 @@ describe("CodexHarness subprocess", () => {
 
   it("reports a nonzero exit", async () => {
     const executable = await stubCodex([], 2);
-    const result = await new CodexHarness(executable).spawn(
+    const result = await new CodexHarness(TEST_SELECTION, executable).spawn(
       { prompt: "first line\nsecond line with spaces" },
       { cwd: dir },
     ).done;
@@ -165,7 +168,7 @@ describe("CodexHarness subprocess", () => {
   });
 
   it("reports a missing executable", async () => {
-    const result = await new CodexHarness(path.join(dir, "missing")).spawn(
+    const result = await new CodexHarness(TEST_SELECTION, path.join(dir, "missing")).spawn(
       { prompt: "do it" },
       { cwd: dir },
     ).done;
@@ -178,7 +181,7 @@ describe("CodexHarness subprocess", () => {
       { type: "thread.started", thread_id: "thread-1" },
       { type: "item.completed", item: { type: "agent_message", text: "done" } },
     ]);
-    const result = await new CodexHarness(executable).spawn(
+    const result = await new CodexHarness(TEST_SELECTION, executable).spawn(
       { prompt: "first line\nsecond line with spaces" },
       { cwd: dir },
     ).done;
@@ -191,7 +194,7 @@ describe("CodexHarness subprocess", () => {
       { type: "error", message: "Reconnecting... 2/5: stream disconnected" },
       { type: "item.completed", item: { type: "agent_message", text: "all done" } },
     ]);
-    const result = await new CodexHarness(executable).spawn(
+    const result = await new CodexHarness(TEST_SELECTION, executable).spawn(
       { prompt: "first line\nsecond line with spaces" },
       { cwd: dir },
     ).done;
@@ -209,7 +212,7 @@ describe("CodexHarness subprocess", () => {
       ],
       1,
     );
-    const result = await new CodexHarness(executable).spawn(
+    const result = await new CodexHarness(TEST_SELECTION, executable).spawn(
       { prompt: "first line\nsecond line with spaces" },
       { cwd: dir },
     ).done;
@@ -223,7 +226,7 @@ describe("CodexHarness subprocess", () => {
   it("calls a session that never started a thread an outage, whatever its exit code", async () => {
     // The detached-TTY regression: codex exits having emitted nothing at all.
     const executable = await stubCodex([]);
-    const result = await new CodexHarness(executable).spawn(
+    const result = await new CodexHarness(TEST_SELECTION, executable).spawn(
       { prompt: "first line\nsecond line with spaces" },
       { cwd: dir },
     ).done;
@@ -244,11 +247,115 @@ describe("CodexHarness subprocess", () => {
       `echo '${JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "continued" } })}'`,
     ].join("\n");
     await fs.writeFile(script, `${body}\n`, { mode: 0o755 });
-    const result = await new CodexHarness(script).spawn(
+    const result = await new CodexHarness(TEST_SELECTION, script).spawn(
       { prompt: "go on" },
       { cwd: dir, continueSessionId: "thread-7" },
     ).done;
     expect(result.ok).toBe(true);
     expect(result.text).toBe("continued");
+  });
+});
+
+describe("CodexHarness selection flags", () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-codex-argv-")));
+  });
+  afterEach(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  /** Stub `codex` that records the argv it was handed, one argument per line. */
+  async function argvRecorder(): Promise<{ executable: string; argv: () => Promise<string[]> }> {
+    const argvPath = path.join(dir, "argv.txt");
+    const executable = path.join(dir, "recording-codex");
+    await fs.writeFile(
+      executable,
+      ["#!/bin/sh", `for arg in "$@"; do echo "$arg" >> "${argvPath}"; done`, ""].join("\n"),
+      { mode: 0o755 },
+    );
+    return {
+      executable,
+      argv: async () => (await fs.readFile(argvPath, "utf8")).split("\n").slice(0, -1),
+    };
+  }
+
+  it("spells model as a flag and effort as a config override", async () => {
+    const recorder = await argvRecorder();
+    await new CodexHarness(
+      { stage: "code-review", model: "gpt-5.6-sol", effort: "high" },
+      recorder.executable,
+    ).spawn({ prompt: "review it" }, { cwd: dir }).done;
+    expect(await recorder.argv()).toEqual([
+      "exec",
+      "--json",
+      "--dangerously-bypass-approvals-and-sandbox",
+      "--model",
+      "gpt-5.6-sol",
+      "-c",
+      "model_reasoning_effort=high",
+      "review it",
+    ]);
+  });
+
+  it("keeps the flags ahead of the positional thread id when continuing", async () => {
+    const recorder = await argvRecorder();
+    await new CodexHarness(
+      { stage: "code-review", model: "gpt-5.6-sol", effort: "low" },
+      recorder.executable,
+    ).spawn({ prompt: "go on" }, { cwd: dir, continueSessionId: "thread-7" }).done;
+    const argv = await recorder.argv();
+    expect(argv.slice(-2)).toEqual(["thread-7", "go on"]);
+    expect(argv.indexOf("--model")).toBeLessThan(argv.indexOf("thread-7"));
+    expect(argv.indexOf("-c")).toBeLessThan(argv.indexOf("thread-7"));
+  });
+
+  it("passes no flag for a value the stage did not configure", async () => {
+    const recorder = await argvRecorder();
+    await new CodexHarness({ stage: "qa", effort: "medium" }, recorder.executable).spawn(
+      { prompt: "p" },
+      { cwd: dir },
+    ).done;
+    const argv = await recorder.argv();
+    expect(argv).not.toContain("--model");
+    expect(argv).toContain("model_reasoning_effort=medium");
+  });
+
+  it("passes the selection to an interactive launch too", async () => {
+    const recorder = await argvRecorder();
+    await new CodexHarness(
+      { stage: "implementation", model: "gpt-5.6-sol", effort: "high" },
+      recorder.executable,
+    ).spawnInteractive({ prompt: "brief" }, { cwd: dir });
+    expect(await recorder.argv()).toEqual([
+      "--dangerously-bypass-approvals-and-sandbox",
+      "--model",
+      "gpt-5.6-sol",
+      "-c",
+      "model_reasoning_effort=high",
+      "brief",
+    ]);
+  });
+
+  it("names the binary and the stage entry when the CLI is not installed", async () => {
+    const result = await new CodexHarness(
+      { stage: "code-review" },
+      path.join(dir, "not-installed"),
+    ).spawn({ prompt: "p" }, { cwd: dir }).done;
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("not-installed");
+    expect(result.text).toContain("stages.code-review.harness");
+  });
+
+  it("accepts exactly the effort levels the API documents", () => {
+    expect([...CODEX_EFFORT_LEVELS]).toEqual([
+      "none",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
   });
 });

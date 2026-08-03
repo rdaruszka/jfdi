@@ -26,7 +26,11 @@ export async function initCommand(options: { isBare?: boolean } = {}): Promise<n
   console.log("launching an agent session to set up the mechanical gate…\n");
   const template = await loadPrompt(jfdiDir, "init");
   const prompt = renderPrompt(template, { CODING_GUIDELINES });
-  const exitCode = await createHarness(config).spawnInteractive({ prompt }, { cwd: root });
+  // The implementation stage's agent, like `jfdi convo` — see convo.ts.
+  const exitCode = await createHarness(
+    "implementation",
+    config.stages.implementation,
+  ).spawnInteractive({ prompt }, { cwd: root });
   if (exitCode !== 0)
     console.error("scaffold is in place — fill in .jfdi/config.json's gate by hand");
   return exitCode;

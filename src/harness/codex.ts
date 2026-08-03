@@ -4,12 +4,14 @@ import * as path from "node:path";
 import * as readline from "node:readline";
 import { EXIT_COMMAND_NOT_EXECUTABLE } from "../util/exit-codes.js";
 import { parseResetTime } from "./reset-time.js";
+import { spawnFailureText } from "./spawn-failure.js";
 import type {
   Harness,
   HarnessEvent,
   HarnessFailure,
   HarnessFailureKind,
   HarnessResult,
+  HarnessSelection,
   HarnessSession,
   InteractiveSpawnOptions,
   PromptSpec,
@@ -20,6 +22,30 @@ const STDERR_TAIL_CHARS = 4_000;
 const SIGKILL_DELAY_MS = 5_000;
 const MAX_TOOL_DETAIL_CHARS = 80;
 const ELLIPSIS = "...";
+
+/**
+ * What `-c model_reasoning_effort=` accepts. Codex has no flag for it and
+ * validates nothing locally — it forwards the value to the API, which answers
+ * an unknown one with a 400 mid-session (verified against Codex 0.146.0,
+ * Aug 2026). This table is what turns that into a config error at startup.
+ */
+export const CODEX_EFFORT_LEVELS = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+
+/** The selection, as Codex spells it. An absent value passes no flag. */
+function codexSelectionArgs(selection: HarnessSelection): string[] {
+  return [
+    ...(selection.model ? ["--model", selection.model] : []),
+    ...(selection.effort ? ["-c", `model_reasoning_effort=${selection.effort}`] : []),
+  ];
+}
 
 /**
  * How a Codex failure message is read as an infrastructure class, most
@@ -180,20 +206,32 @@ function closeFailure(text: string, hasStartedThread: boolean): HarnessFailure |
 export class CodexHarness implements Harness {
   readonly name = "codex";
 
-  constructor(private readonly executable: string = "codex") {}
+  constructor(
+    private readonly selection: HarnessSelection,
+    private readonly executable: string = "codex",
+  ) {}
 
   spawn(promptSpec: PromptSpec, options: SpawnOptions): HarnessSession {
     // `codex exec resume <thread-id> <prompt>` continues an earlier thread.
+    // Flags precede the positional thread id and prompt in both forms.
+    const selectionArgs = codexSelectionArgs(this.selection);
     const args = options.continueSessionId
       ? [
           "exec",
           "resume",
           "--json",
           "--dangerously-bypass-approvals-and-sandbox",
+          ...selectionArgs,
           options.continueSessionId,
           promptSpec.prompt,
         ]
-      : ["exec", "--json", "--dangerously-bypass-approvals-and-sandbox", promptSpec.prompt];
+      : [
+          "exec",
+          "--json",
+          "--dangerously-bypass-approvals-and-sandbox",
+          ...selectionArgs,
+          promptSpec.prompt,
+        ];
     const child: ChildProcess = spawn(this.executable, args, {
       cwd: options.cwd,
       stdio: ["ignore", "pipe", "pipe"],
@@ -241,7 +279,7 @@ export class CodexHarness implements Harness {
         log?.end();
         resolve({
           ok: false,
-          text: `failed to spawn ${this.executable}: ${error.message}`,
+          text: spawnFailureText(this.executable, this.selection, error.message),
           exitCode: EXIT_COMMAND_NOT_EXECUTABLE,
         });
         notify?.();
@@ -288,19 +326,29 @@ export class CodexHarness implements Harness {
   }
 
   spawnInteractive(promptSpec: PromptSpec, options: InteractiveSpawnOptions): Promise<number> {
+    // `-m` and `-c` are top-level Codex options, so an interactive launch runs
+    // the same agent the implementation stage would.
     const child = spawn(
       this.executable,
-      ["--dangerously-bypass-approvals-and-sandbox", promptSpec.prompt],
+      [
+        "--dangerously-bypass-approvals-and-sandbox",
+        ...codexSelectionArgs(this.selection),
+        promptSpec.prompt,
+      ],
       { cwd: options.cwd, stdio: "inherit" },
     );
-    return interactiveResult(child, this.executable);
+    return interactiveResult(child, this.executable, this.selection);
   }
 }
 
-function interactiveResult(child: ChildProcess, executable: string): Promise<number> {
+function interactiveResult(
+  child: ChildProcess,
+  executable: string,
+  selection: HarnessSelection,
+): Promise<number> {
   return new Promise<number>((resolve) => {
     child.on("error", (error) => {
-      console.error(`failed to launch ${executable}: ${error.message}`);
+      console.error(spawnFailureText(executable, selection, error.message));
       resolve(EXIT_COMMAND_NOT_EXECUTABLE);
     });
     child.on("close", (code) => resolve(code ?? 0));

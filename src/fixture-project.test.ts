@@ -155,7 +155,12 @@ describe("half-app end-to-end (fake harness)", () => {
       jfdiDir,
       stateDir,
       config,
-      harness,
+      harnesses: {
+        implementation: harness,
+        "code-review": harness,
+        qa: harness,
+        integration: harness,
+      },
       log,
       pause: new PauseController(log),
     };

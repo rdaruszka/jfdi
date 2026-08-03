@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { defaultConfig } from "./config.js";
 import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
@@ -25,7 +26,16 @@ afterEach(async () => {
   );
 });
 
-async function makeProject(harness?: "claude" | "codex"): Promise<{
+/**
+ * An interactive launch takes the implementation stage's agent, so that is the
+ * only entry a project here needs to vary. Omitting it means no config.json at
+ * all — the scaffold defaults.
+ */
+async function makeProject(implementationStage?: {
+  harness: "claude" | "codex";
+  model?: string;
+  effort?: string;
+}): Promise<{
   project: string;
   environment: NodeJS.ProcessEnv;
   tracePath: string;
@@ -38,10 +48,11 @@ async function makeProject(harness?: "claude" | "codex"): Promise<{
   const tracePath = path.join(sandboxRoot, "trace.json");
   await fs.mkdir(path.join(project, ".jfdi"), { recursive: true });
   await fs.mkdir(binDir);
-  if (harness) {
+  if (implementationStage) {
+    const stages = { ...defaultConfig().stages, implementation: implementationStage };
     await fs.writeFile(
       path.join(project, ".jfdi", "config.json"),
-      `${JSON.stringify({ harness })}\n`,
+      `${JSON.stringify({ stages }, null, 2)}\n`,
     );
   }
 
@@ -94,28 +105,50 @@ async function readTrace(tracePath: string): Promise<{
 }
 
 describe("interactive provider selection", () => {
-  it.each(["init", "convo"] as const)("routes %s through Codex", async (command) => {
-    const sandbox = await makeProject("codex");
-    await runCli(sandbox.project, sandbox.environment, command);
+  it.each(["init", "convo"] as const)(
+    "routes %s through the implementation stage's Codex",
+    async (command) => {
+      const sandbox = await makeProject({ harness: "codex" });
+      await runCli(sandbox.project, sandbox.environment, command);
+
+      const trace = await readTrace(sandbox.tracePath);
+      expect(trace.executable).toBe("codex");
+      expect(trace.args[0]).toBe("--dangerously-bypass-approvals-and-sandbox");
+      expect(trace.args.at(-1)).toContain(
+        command === "init"
+          ? "You are bootstrapping **JFDI**"
+          : "You are working on the **JFDI layer**",
+      );
+      // A harness-only entry inherits no model from the scaffolded mix.
+      expect(trace.args).not.toContain("--model");
+      expect(trace.cwd).toBe(sandbox.project);
+    },
+  );
+
+  it("carries the implementation stage's model and effort into the session", async () => {
+    const sandbox = await makeProject({ harness: "codex", model: "gpt-5.6-sol", effort: "low" });
+    await runCli(sandbox.project, sandbox.environment, "convo");
 
     const trace = await readTrace(sandbox.tracePath);
-    expect(trace.executable).toBe("codex");
-    expect(trace.args[0]).toBe("--dangerously-bypass-approvals-and-sandbox");
-    expect(trace.args[1]).toContain(
-      command === "init"
-        ? "You are bootstrapping **JFDI**"
-        : "You are working on the **JFDI layer**",
-    );
-    expect(trace.cwd).toBe(sandbox.project);
+    expect(trace.args).toEqual([
+      "--dangerously-bypass-approvals-and-sandbox",
+      "--model",
+      "gpt-5.6-sol",
+      "-c",
+      "model_reasoning_effort=low",
+      expect.stringContaining("You are working on the **JFDI layer**"),
+    ]);
   });
 
-  it("keeps new scaffolds on Claude", async () => {
+  it("keeps new scaffolds on the default mix's Claude", async () => {
     const sandbox = await makeProject();
     await runCli(sandbox.project, sandbox.environment, "init");
 
     const trace = await readTrace(sandbox.tracePath);
     expect(trace.executable).toBe("claude");
-    expect(trace.args[0]).toContain("You are bootstrapping **JFDI**");
+    const { model, effort } = defaultConfig().stages.implementation;
+    expect(trace.args.slice(0, 4)).toEqual(["--model", model, "--effort", effort]);
+    expect(trace.args.at(-1)).toContain("You are bootstrapping **JFDI**");
     expect(trace.cwd).toBe(sandbox.project);
   });
 });

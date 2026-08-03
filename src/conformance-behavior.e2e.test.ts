@@ -293,15 +293,22 @@ describe("CLI surface", () => {
         [
           "board",
           "gate",
-          "harness",
           "integration",
           "max_concurrent",
           "pipeline",
+          "stages",
           "ticketsDir",
         ].sort(),
       );
       expect(config.integration.target_branch).toBe("main");
       expect(config.pipeline.max_rounds).toBe(3);
+      // The scaffolded mix: a cross-provider review, everything else on Claude.
+      expect(config.stages).toEqual({
+        implementation: { harness: "claude", model: "claude-opus-5", effort: "high" },
+        "code-review": { harness: "codex", model: "gpt-5.6-sol", effort: "high" },
+        qa: { harness: "claude", model: "claude-opus-5", effort: "high" },
+        integration: { harness: "claude", model: "claude-opus-5", effort: "medium" },
+      });
 
       // Re-running init must not rewrite or duplicate anything.
       const before = await fs.readFile(path.join(jfdiDir, "config.json"), "utf8");

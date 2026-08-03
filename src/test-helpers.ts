@@ -74,6 +74,14 @@ export async function makeFixture(configOverrides: Partial<JfdiConfig> = {}): Pr
         jfdiDir,
         stateDir,
         config,
+        // One fake behind every stage, so `harness.calls` sees the whole run.
+        // Tests about per-stage routing install distinct fakes themselves.
+        harnesses: {
+          implementation: harness,
+          "code-review": harness,
+          qa: harness,
+          integration: harness,
+        },
         harness,
         log,
         pause: new PauseController(log, TEST_PAUSE_DELAYS),

@@ -13,7 +13,13 @@ import {
   type Worktree,
 } from "./git.js";
 import type { PipelineContext, RunReport } from "./pipeline.js";
-import { runHeldSession, runQaStage, runsDir, worktreesDir } from "./pipeline.js";
+import {
+  runHeldSession,
+  runQaStage,
+  runsDir,
+  stageSelectionFields,
+  worktreesDir,
+} from "./pipeline.js";
 import { formatGateCommands, loadPrompt, renderPrompt } from "./prompts.js";
 import { appendToSection, ensureTicketNote, type Ticket } from "./tickets.js";
 import { todayIsoDate } from "./util/dates.js";
@@ -70,10 +76,14 @@ async function runIntegrationAgent(
     VERDICT_PATH: verdictPath,
   });
   const stage: StageName = "integration";
-  context.log.emit("stage_start", ticket.id, { stage });
+  context.log.emit("stage_start", ticket.id, {
+    stage,
+    ...stageSelectionFields(context.config, stage),
+  });
   const result = await runHeldSession(
     context,
     ticket.id,
+    stage,
     { prompt },
     { cwd: worktree.path, logPath: path.join(runDir, "integration.log.jsonl") },
     (event) => {

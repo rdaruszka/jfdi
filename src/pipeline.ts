@@ -5,11 +5,11 @@ import type { EventLog, StageName } from "./events.js";
 import { formatGateFailure, formatGatePass, type GateResult, runGate } from "./gate.js";
 import { commitAllIfDirty, createWorktree, git, revParse, type Worktree } from "./git.js";
 import type {
-  Harness,
   HarnessEvent,
   HarnessResult,
   PromptSpec,
   SpawnOptions,
+  StageHarnesses,
 } from "./harness/index.js";
 import type { PauseController } from "./pause.js";
 import { formatGateCommands, loadPrompt, type PromptName, renderPrompt } from "./prompts.js";
@@ -41,7 +41,8 @@ export interface PipelineContext {
   /** Absolute path to ~/.jfdi/projects/<project-key>/ — runs, events, state snapshot. */
   stateDir: string;
   config: JfdiConfig;
-  harness: Harness;
+  /** One harness per stage, as `config.stages` selected them. */
+  harnesses: StageHarnesses;
   log: EventLog;
   /**
    * The tool-wide hold on agent sessions. Shared by every pipeline and by
@@ -154,14 +155,28 @@ function narrateSessionActivity(
   }
 }
 
+/**
+ * The stage's agent selection, as the event stream records it — so `jfdi logs`
+ * can answer "which model produced this" long after the run.
+ */
+export function stageSelectionFields(config: JfdiConfig, stage: StageName): Record<string, string> {
+  const selection = config.stages[stage];
+  return {
+    harness: selection.harness,
+    ...(selection.model ? { model: selection.model } : {}),
+    ...(selection.effort ? { effort: selection.effort } : {}),
+  };
+}
+
 /** One session, start to finish, with its events narrated as they arrive. */
 async function runOneSession(
   context: PipelineContext,
+  stage: StageName,
   promptSpec: PromptSpec,
   options: SpawnOptions,
   onEvent: (event: HarnessEvent) => void,
 ): Promise<HarnessResult> {
-  const session = context.harness.spawn(promptSpec, options);
+  const session = context.harnesses[stage].spawn(promptSpec, options);
   context.sessions?.add(session);
   try {
     for await (const event of session.events) onEvent(event);
@@ -188,6 +203,7 @@ async function runOneSession(
 export async function runHeldSession(
   context: PipelineContext,
   ticketId: string,
+  stage: StageName,
   promptSpec: PromptSpec,
   options: SpawnOptions,
   onEvent: (event: HarnessEvent) => void,
@@ -195,7 +211,7 @@ export async function runHeldSession(
   let attemptOptions = options;
   for (let attempt = 1; ; attempt++) {
     await context.pause.waitWhilePaused();
-    const result = await runOneSession(context, promptSpec, attemptOptions, onEvent);
+    const result = await runOneSession(context, stage, promptSpec, attemptOptions, onEvent);
     if (!result.failure) {
       context.pause.reportHealthy();
       return result;
@@ -223,11 +239,13 @@ async function runStageSession(
   const logPath = path.join(roundDir, `${stage}.log.jsonl`);
   context.log.emit("stage_start", ticket.id, {
     stage,
+    ...stageSelectionFields(context.config, stage),
     ...(continueSessionId ? { isContinuation: true } : {}),
   });
   const result = await runHeldSession(
     context,
     ticket.id,
+    stage,
     { prompt },
     { cwd: worktree.path, logPath, ...(continueSessionId ? { continueSessionId } : {}) },
     (event) => narrateSessionActivity(context, ticket.id, stage, event),

@@ -1,10 +1,11 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { JfdiEvent } from "./events.js";
+import type { JfdiConfig } from "./config.js";
+import type { JfdiEvent, StageName } from "./events.js";
 import { createWorktree, git, isRebaseInProgress, rebaseOnto } from "./git.js";
-import type { FakeHandler } from "./harness/fake.js";
-import { runPipeline } from "./pipeline.js";
+import { type FakeHandler, FakeHarness } from "./harness/fake.js";
+import { type PipelineContext, runPipeline } from "./pipeline.js";
 import {
   commitFile,
   type Fixture,
@@ -755,5 +756,129 @@ describe("runPipeline under a broken provider", () => {
     // Three retries in place, then the escalation; the fifth session succeeds.
     expect(callsAtFirstPause).toBe(stageRetryCount + 1);
     expect(implementationCalls).toBe(stageRetryCount + 2);
+  });
+});
+
+/**
+ * A mix in which no two stages share a selection, so a session reaching the
+ * wrong harness — or borrowing a neighbour's model — shows up as a failure
+ * rather than as an equally-plausible pass. QA names only a harness: its
+ * sessions must carry no model or effort at all.
+ */
+const MIXED_STAGES: JfdiConfig["stages"] = {
+  implementation: { harness: "claude", model: "claude-opus-5", effort: "high" },
+  "code-review": { harness: "codex", model: "gpt-5.6-sol", effort: "low" },
+  qa: { harness: "claude" },
+  integration: { harness: "codex", effort: "medium" },
+};
+
+/** One fake per stage, so which harness a session reached is observable. */
+function perStageHarnesses(handler: FakeHandler): Record<StageName, FakeHarness> {
+  return {
+    implementation: new FakeHarness(handler),
+    "code-review": new FakeHarness(handler),
+    qa: new FakeHarness(handler),
+    integration: new FakeHarness(handler),
+  };
+}
+
+describe("runPipeline with per-stage harness selection", () => {
+  it("sends every stage — and its continuation — to that stage's own harness", async () => {
+    const mixed = await makeFixture({
+      gate: [{ name: "check", cmd: "test -f impl.txt" }],
+      stages: MIXED_STAGES,
+    });
+    try {
+      let implementationCalls = 0;
+      let reviewCalls = 0;
+      const handler: FakeHandler = async (spec, options) => {
+        const stage = stageOf(spec.prompt);
+        switch (stage) {
+          case "implementation":
+            implementationCalls += 1;
+            await commitFile(
+              options.cwd,
+              "impl.txt",
+              `attempt ${implementationCalls}\n`,
+              "implement",
+            );
+            await writeVerdict(spec.prompt, { status: "done", summary: "built it" });
+            break;
+          case "code-review":
+            reviewCalls += 1;
+            await writeVerdict(
+              spec.prompt,
+              // Fail once, so round 2 exercises the continuation path.
+              reviewCalls === 1
+                ? { verdict: "fail", feedback: "name it better" }
+                : { verdict: "pass" },
+            );
+            break;
+          case "qa":
+            await writeVerdict(spec.prompt, { verdict: "pass", testsAdded: "one" });
+            break;
+          default:
+            throw new Error(`unexpected stage ${stage}`);
+        }
+        return { ok: true, text: "", sessionId: `${stage}-session` };
+      };
+
+      const harnesses = perStageHarnesses(handler);
+      const context: PipelineContext = { ...mixed.context(handler), harnesses };
+      const starts: JfdiEvent[] = [];
+      context.log.on((event) => {
+        if (event.type === "stage_start") starts.push(event);
+      });
+
+      const ticket = await resolveTicket("Build the feature", mixed.ticketsDir);
+      const outcome = await runPipeline(context, ticket);
+      expect(outcome.status).toBe("passed");
+
+      // No harness ever saw a stage that was not its own.
+      for (const [stage, harness] of Object.entries(harnesses)) {
+        for (const call of harness.calls) expect(stageOf(call.promptSpec.prompt)).toBe(stage);
+      }
+      expect(harnesses.implementation.calls).toHaveLength(2);
+      expect(harnesses["code-review"].calls).toHaveLength(2);
+      expect(harnesses.qa.calls).toHaveLength(1);
+      // Integration does not run in a pipeline; its harness stays untouched.
+      expect(harnesses.integration.calls).toHaveLength(0);
+
+      // Round 2 re-enters each stage's own session — which is only meaningful
+      // because the harness that minted the id is the one being asked.
+      expect(harnesses.implementation.calls[1]?.options.continueSessionId).toBe(
+        "implementation-session",
+      );
+      expect(harnesses["code-review"].calls[1]?.options.continueSessionId).toBe(
+        "code-review-session",
+      );
+
+      // The record answers "which model produced this" per stage.
+      const selectionOf = (stage: StageName) =>
+        starts
+          .filter((event) => event.data?.stage === stage)
+          .map((event) => ({
+            harness: event.data?.harness,
+            model: event.data?.model,
+            effort: event.data?.effort,
+          }));
+      expect(selectionOf("implementation")).toEqual([
+        { harness: "claude", model: "claude-opus-5", effort: "high" },
+        { harness: "claude", model: "claude-opus-5", effort: "high" },
+      ]);
+      expect(selectionOf("code-review")[0]).toEqual({
+        harness: "codex",
+        model: "gpt-5.6-sol",
+        effort: "low",
+      });
+      // A harness-only stage stays that way: no model, no effort, nothing
+      // borrowed from the stages either side of it.
+      const qaStart = starts.find((event) => event.data?.stage === "qa");
+      expect(qaStart?.data?.harness).toBe("claude");
+      expect(Object.hasOwn(qaStart?.data ?? {}, "model")).toBe(false);
+      expect(Object.hasOwn(qaStart?.data ?? {}, "effort")).toBe(false);
+    } finally {
+      await mixed.cleanup();
+    }
   });
 });

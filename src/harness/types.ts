@@ -2,6 +2,25 @@
  * The harness abstraction. Pipeline logic never touches harness specifics —
  * Provider-specific CLI details stay behind this interface.
  */
+import type { StageName } from "../events.js";
+
+export type HarnessName = "claude" | "codex";
+
+/**
+ * What one `stages` entry asked of a harness instance. Model and effort are
+ * provider-native strings passed through verbatim — there is no neutral model
+ * vocabulary — and each implementation maps them to its own CLI's spelling.
+ * Absent means "pass no flag": the provider's own default, never a value
+ * borrowed from another stage.
+ *
+ * `stage` is carried only as provenance: it is the config key that selected
+ * this instance, so a spawn that fails can name the entry to fix.
+ */
+export interface HarnessSelection {
+  stage: StageName;
+  model?: string | undefined;
+  effort?: string | undefined;
+}
 
 export interface PromptSpec {
   prompt: string;
