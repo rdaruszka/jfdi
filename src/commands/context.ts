@@ -6,7 +6,6 @@ import { createHarness } from "../harness/index.js";
 import { PauseController } from "../pause.js";
 import type { PipelineContext } from "../pipeline.js";
 import { projectStateDir } from "../state-dir.js";
-import { EXIT_SIGINT } from "../util/exit-codes.js";
 
 export interface CliContext extends PipelineContext {
   repoRoot: string;
@@ -128,30 +127,73 @@ function pauseLine(data: Record<string, unknown> | undefined): string {
 /** Ctrl-C, which raw mode delivers as a byte on stdin instead of as a signal. */
 const END_OF_TEXT = "\u0003";
 
+/** The slice of a TTY stdin the retry key needs — narrow enough for a test to stand one up. */
+export interface KeyInput {
+  isTTY?: boolean | undefined;
+  setRawMode(isRaw: boolean): unknown;
+  resume(): unknown;
+  pause(): unknown;
+  on(event: "data", listener: (chunk: Buffer) => void): unknown;
+  off(event: "data", listener: (chunk: Buffer) => void): unknown;
+}
+
 /**
- * The human's "retry now" key for a paused run. Raw mode is what makes a bare
- * R a keypress rather than a line to submit, and it is also what stops the
- * terminal turning Ctrl-C into a signal — so this hands that job back. Without
- * a TTY there is no keyboard: a needs-human pause then waits for Ctrl-C.
+ * The human's "retry now" key for a paused run.
+ *
+ * Raw mode is what makes a bare R a keypress rather than a line to submit, but
+ * it also clears ISIG: while it is on, Ctrl-C is a byte on stdin and the
+ * terminal generates no SIGINT for the foreground process group — neither for
+ * this process nor for the agent subprocess inside it. So the terminal is taken
+ * for the pause only and given straight back on resume; at every other moment
+ * Ctrl-C keeps its ordinary meaning and takes the whole group down.
+ *
+ * Holding it for that window is safe because a pause begins only after the
+ * session that provoked it has ended — `runHeldSession` awaits the session,
+ * then holds — so there is no live child to orphan. The one interrupt raw mode
+ * does swallow is handed to `onInterrupt` to answer by hand.
+ *
+ * Without a TTY there is no keyboard at all: a needs-human pause then waits for
+ * an ordinary Ctrl-C.
  */
-export function attachRetryKey(pause: PauseController): () => void {
-  const input = process.stdin;
+export function attachRetryKey(
+  pause: PauseController,
+  onInterrupt: () => void,
+  input: KeyInput = process.stdin,
+): () => void {
   if (!input.isTTY) return () => undefined;
-  function detach(): void {
+  let isListening = false;
+
+  function stopListening(): void {
+    if (!isListening) return;
+    isListening = false;
     input.off("data", onKey);
     input.setRawMode(false);
     input.pause();
   }
+
   const onKey = (chunk: Buffer) => {
     const key = chunk.toString();
     if (key === "r" || key === "R") pause.retryNow();
     if (key === END_OF_TEXT) {
-      detach();
-      process.exit(EXIT_SIGINT);
+      stopListening();
+      onInterrupt();
     }
   };
-  input.setRawMode(true);
-  input.resume();
-  input.on("data", onKey);
-  return detach;
+
+  function startListening(): void {
+    if (isListening) return;
+    isListening = true;
+    input.setRawMode(true);
+    input.resume();
+    input.on("data", onKey);
+  }
+
+  const unsubscribe = pause.subscribe(() => {
+    if (pause.isPaused()) startListening();
+    else stopListening();
+  });
+  return () => {
+    unsubscribe();
+    stopListening();
+  };
 }

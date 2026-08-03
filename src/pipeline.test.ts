@@ -5,7 +5,14 @@ import type { JfdiEvent } from "./events.js";
 import { createWorktree, git, isRebaseInProgress, rebaseOnto } from "./git.js";
 import type { FakeHandler } from "./harness/fake.js";
 import { runPipeline } from "./pipeline.js";
-import { commitFile, type Fixture, makeFixture, stageOf, writeVerdict } from "./test-helpers.js";
+import {
+  commitFile,
+  type Fixture,
+  makeFixture,
+  stageOf,
+  TEST_PAUSE_DELAYS,
+  writeVerdict,
+} from "./test-helpers.js";
 import { resolveTicket } from "./tickets.js";
 
 let fixture: Fixture;
@@ -629,15 +636,15 @@ describe("runPipeline", () => {
   });
 });
 
+/** Short enough that the fixture's pause schedule lifts it within the test. */
+const RESET_SOON_MS = 5;
+
 /**
  * The difference the pipeline has to keep straight: a session that ended
  * because the work was wrong earns a feedback round, and a session that ended
  * because the provider was down earns nothing but another try.
  */
 describe("runPipeline under a broken provider", () => {
-  /** Short enough that the fixture's pause schedule lifts it within the test. */
-  const ResetSoonMs = 5;
-
   it("re-runs a stage the provider killed, at no cost in rounds or feedback", async () => {
     const prompts: string[] = [];
     let implementationCalls = 0;
@@ -655,7 +662,7 @@ describe("runPipeline under a broken provider", () => {
           text: "",
           failure: {
             kind: "usage-limit" as const,
-            resetsAtMs: Date.now() + ResetSoonMs,
+            resetsAtMs: Date.now() + RESET_SOON_MS,
             detail: "You've hit your session limit",
           },
         };
@@ -713,7 +720,7 @@ describe("runPipeline under a broken provider", () => {
   });
 
   it("retries an outage in place before it stops the whole tool", async () => {
-    const stageRetryCount = 3;
+    const stageRetryCount = TEST_PAUSE_DELAYS.outageStageRetryMs.length;
     let implementationCalls = 0;
     const context = fixture.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);

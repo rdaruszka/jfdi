@@ -14,7 +14,7 @@ import type { PipelineContext } from "./pipeline.js";
  * Pause waits, shrunk to the millisecond scale. The real schedule is measured
  * in minutes; a test asserting that a held stage re-runs should not wait one.
  */
-const TEST_PAUSE_DELAYS: PauseDelays = {
+export const TEST_PAUSE_DELAYS: PauseDelays = {
   outageStageRetryMs: [5, 10, 20],
   probeMs: [10, 20, 40],
   usageLimitBufferMs: 0,

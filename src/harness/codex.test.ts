@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CodexHarness, classifyCodexFailure, mapCodexLine } from "./codex.js";
 import type { HarnessEvent } from "./types.js";
 
+/** 2026-08-03 09:30 local. */
+const NOW = new Date(2026, 7, 3, 9, 30).getTime();
+
 describe("mapCodexLine", () => {
   it("maps completed agent messages", () => {
     const line = JSON.stringify({
@@ -43,23 +46,20 @@ describe("mapCodexLine", () => {
 });
 
 describe("classifyCodexFailure", () => {
-  /** 2026-08-03 09:30 local. */
-  const Now = new Date(2026, 7, 3, 9, 30).getTime();
-
   it("reads each usage-limit wording, with the local reset time out of the prose", () => {
     expect(
-      classifyCodexFailure("You've hit your usage limit. Try again at 3:45 PM.", Now),
+      classifyCodexFailure("You've hit your usage limit. Try again at 3:45 PM.", NOW),
     ).toMatchObject({ kind: "usage-limit", resetsAtMs: new Date(2026, 7, 3, 15, 45).getTime() });
     expect(
-      classifyCodexFailure("You are out of credits. Try again at Mar 3rd, 2027 3:45 PM.", Now),
+      classifyCodexFailure("You are out of credits. Try again at Mar 3rd, 2027 3:45 PM.", NOW),
     ).toMatchObject({ kind: "usage-limit", resetsAtMs: new Date(2027, 2, 3, 15, 45).getTime() });
-    expect(classifyCodexFailure("Quota exceeded for this spend cap", Now)?.kind).toBe(
+    expect(classifyCodexFailure("Quota exceeded for this spend cap", NOW)?.kind).toBe(
       "usage-limit",
     );
   });
 
   it("leaves the reset time null when the message only says `Try again later.`", () => {
-    expect(classifyCodexFailure("You've hit your usage limit. Try again later.", Now)).toEqual({
+    expect(classifyCodexFailure("You've hit your usage limit. Try again later.", NOW)).toEqual({
       kind: "usage-limit",
       resetsAtMs: null,
       detail: "You've hit your usage limit. Try again later.",
@@ -73,7 +73,7 @@ describe("classifyCodexFailure", () => {
       "Please run codex login",
       "no Codex credentials found",
     ]) {
-      expect(classifyCodexFailure(text, Now)?.kind).toBe("needs-human");
+      expect(classifyCodexFailure(text, NOW)?.kind).toBe("needs-human");
     }
   });
 
@@ -87,12 +87,12 @@ describe("classifyCodexFailure", () => {
       "We're experiencing high demand",
       "the model is at capacity",
     ]) {
-      expect(classifyCodexFailure(text, Now)?.kind).toBe("outage");
+      expect(classifyCodexFailure(text, NOW)?.kind).toBe("outage");
     }
   });
 
   it("leaves an ordinary task failure unclassified", () => {
-    expect(classifyCodexFailure("the tool call was rejected", Now)).toBeUndefined();
+    expect(classifyCodexFailure("the tool call was rejected", NOW)).toBeUndefined();
   });
 });
 

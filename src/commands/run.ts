@@ -6,6 +6,7 @@ import type { PipelineContext } from "../pipeline.js";
 import { runPipeline } from "../pipeline.js";
 import { recordMergeReady, recordObservations } from "../report.js";
 import { resolveTicket } from "../tickets.js";
+import { EXIT_SIGINT } from "../util/exit-codes.js";
 import { attachInlinePrinter, attachRetryKey, buildContext } from "./context.js";
 
 /**
@@ -17,16 +18,28 @@ import { attachInlinePrinter, attachRetryKey, buildContext } from "./context.js"
 export async function runCommand(ticketRef: string): Promise<number> {
   const context = await buildContext();
   const detach = attachInlinePrinter(context.log);
+  /** Release what the run acquired: the pause's timers, then the pending writes. */
+  const shutdown = async (): Promise<void> => {
+    context.pause.stop();
+    await context.log.flush();
+  };
   // A single-ticket run pauses on a broken provider exactly as the coordinator
-  // does, so it needs the same way for a human to say "repaired — go".
-  const detachRetryKey = attachRetryKey(context.pause);
+  // does, so it needs the same way for a human to say "repaired — go". While
+  // that key is live the terminal sends no SIGINT, so a Ctrl-C has to do the
+  // shutdown the default handler would have skipped, then exit as it would.
+  const detachRetryKey = attachRetryKey(context.pause, () => {
+    void shutdown()
+      .catch((error: unknown) => {
+        console.error(`could not shut down cleanly: ${(error as Error).message}`);
+      })
+      .then(() => process.exit(EXIT_SIGINT));
+  });
   try {
     return await runTicketInline(context, ticketRef);
   } finally {
     detachRetryKey();
-    context.pause.stop();
     detach();
-    await context.log.flush();
+    await shutdown();
   }
 }
 

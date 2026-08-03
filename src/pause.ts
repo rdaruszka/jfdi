@@ -191,8 +191,15 @@ export class PauseController {
     if (failure.kind === "usage-limit" && failure.resetsAtMs !== null)
       return Math.min(failure.resetsAtMs + this.delays.usageLimitBufferMs, nowMs + this.maxWaitMs);
     const step = Math.min(this.probeStep, this.delays.probeMs.length - 1);
+    const probeMs = this.delays.probeMs[step];
+    // An empty schedule would index -1 and there is no sane delay to invent:
+    // zero would busy-probe the very provider we are backing off from.
+    if (probeMs === undefined)
+      throw new Error(
+        "pause probe schedule is empty — PauseDelays.probeMs needs at least one delay",
+      );
     this.probeStep += 1;
-    return nowMs + Math.min(this.delays.probeMs[step] ?? 0, this.maxWaitMs);
+    return nowMs + Math.min(probeMs, this.maxWaitMs);
   }
 
   private get maxWaitMs(): number {

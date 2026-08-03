@@ -127,6 +127,24 @@ kill semantics. They are near-duplicates by design — the duplication keeps eac
 provider's quirks local instead of leaking into a shared "provider-generic"
 layer that wouldn't be.
 
+### Permissions
+
+JFDI supplies the autonomous-operation flags (`bypassPermissions` /
+`--dangerously-bypass-approvals-and-sandbox`) itself; they are not project
+configuration, and a legacy `harnessArgs` config key is explicitly rejected.
+The safety model is the pipeline around the session — isolated worktrees, the
+gate, two reviews, serialized integration — not per-tool-call prompting, which
+would make unattended operation impossible.
+
+### The fake harness
+
+Tests use `FakeHarness`: a constructor-injected handler plays the agent
+in-process, performing real side effects (writing files, committing, dropping
+verdict files) and recording every call for assertions on prompts and
+continuation ids. It is not reachable from config — tests construct it
+directly. End-to-end tests that exercise real spawning use stub `claude`/`codex`
+scripts on `PATH` instead.
+
 ## Failure classification
 
 A session can die because the agent got stuck, or because the provider under it
@@ -166,24 +184,6 @@ Classification is the harness's whole share of this. What happens next — the
 tool-wide hold, the backoff schedules, the auto-resume, the `R` keypress — is
 [the pause controller](../guide/pipeline.md#when-the-provider-goes-down)'s, and
 it is provider-neutral.
-
-### Permissions
-
-JFDI supplies the autonomous-operation flags (`bypassPermissions` /
-`--dangerously-bypass-approvals-and-sandbox`) itself; they are not project
-configuration, and a legacy `harnessArgs` config key is explicitly rejected.
-The safety model is the pipeline around the session — isolated worktrees, the
-gate, two reviews, serialized integration — not per-tool-call prompting, which
-would make unattended operation impossible.
-
-### The fake harness
-
-Tests use `FakeHarness`: a constructor-injected handler plays the agent
-in-process, performing real side effects (writing files, committing, dropping
-verdict files) and recording every call for assertions on prompts and
-continuation ids. It is not reachable from config — tests construct it
-directly. End-to-end tests that exercise real spawning use stub `claude`/`codex`
-scripts on `PATH` instead.
 
 ## Selection
 

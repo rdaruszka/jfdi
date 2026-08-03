@@ -670,21 +670,21 @@ describe("Coordinator", () => {
 });
 
 /**
+ * Far enough out that only a human ends this pause within the test, and inside
+ * the fixture's cap so the recorded instant is the one we passed in.
+ */
+const FAR_RESET_MS = 50_000;
+
+/**
  * A usage limit is not the agent being wrong: nothing about the ticket has
  * been learned, so nothing may be spent on it. These pin the two halves of
  * that — a run in flight holds where it stands, and no new run starts.
  */
 describe("Coordinator under a broken provider", () => {
-  /**
-   * Far enough out that only a human ends this pause within the test, and
-   * inside the fixture's cap so the recorded instant is the one we passed in.
-   */
-  const FarResetMs = 50_000;
-
   it("holds a run whose provider hit a usage limit, and never blocks its card", async () => {
     await fs.writeFile(boardPath(), SINGLE_CARD_BOARD);
     fixture.config.integration.mode = "on-approval";
-    const resetsAtMs = Date.now() + FarResetMs;
+    const resetsAtMs = Date.now() + FAR_RESET_MS;
     let implementationAttempts = 0;
     const context = fixture.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
