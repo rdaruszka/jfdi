@@ -179,6 +179,11 @@ async function runOneSession(
  * The loop is unbounded by nature — a usage limit lasts as long as it lasts —
  * but every pass yields to the pause controller, and both exits are reachable:
  * a session the provider actually answered, or a stopped controller.
+ *
+ * A retry continues the dead session when the provider named one — whatever it
+ * had already done is still worth having — and is otherwise the same spawn with
+ * the same prompt. A provider that has forgotten the session leaves the caller's
+ * existing fresh-session fallback to catch it.
  */
 export async function runHeldSession(
   context: PipelineContext,
@@ -187,13 +192,15 @@ export async function runHeldSession(
   options: SpawnOptions,
   onEvent: (event: HarnessEvent) => void,
 ): Promise<HarnessResult> {
+  let attemptOptions = options;
   for (let attempt = 1; ; attempt++) {
     await context.pause.waitWhilePaused();
-    const result = await runOneSession(context, promptSpec, options, onEvent);
+    const result = await runOneSession(context, promptSpec, attemptOptions, onEvent);
     if (!result.failure) {
       context.pause.reportHealthy();
       return result;
     }
+    if (result.sessionId) attemptOptions = { ...options, continueSessionId: result.sessionId };
     context.log.emit("session_activity", ticketId, {
       text: `harness ${result.failure.kind}: ${result.failure.detail}`,
     });

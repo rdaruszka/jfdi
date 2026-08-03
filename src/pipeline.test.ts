@@ -684,6 +684,34 @@ describe("runPipeline under a broken provider", () => {
     expect(JSON.parse(await fs.readFile(historyPath, "utf8"))).toEqual([]);
   });
 
+  it("continues the dead session when the provider named one", async () => {
+    let implementationCalls = 0;
+    const context = fixture.context(async (spec, options) => {
+      const stage = stageOf(spec.prompt);
+      if (stage !== "implementation") {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+        return { ok: true, text: "" };
+      }
+      implementationCalls++;
+      // The session got far enough to be named before the provider cut it off.
+      if (implementationCalls === 1)
+        return {
+          ok: false,
+          text: "",
+          sessionId: "session-1",
+          failure: { kind: "outage" as const, detail: "Overloaded" },
+        };
+      expect(options.continueSessionId).toBe("session-1");
+      await commitFile(options.cwd, "impl.txt", "the feature\n", "implement");
+      await writeVerdict(spec.prompt, { status: "done", summary: "implemented" });
+      return { ok: true, text: "" };
+    });
+
+    const ticket = await resolveTicket("Build the feature", fixture.ticketsDir);
+    expect((await runPipeline(context, ticket)).status).toBe("passed");
+    expect(implementationCalls).toBe(2);
+  });
+
   it("retries an outage in place before it stops the whole tool", async () => {
     const stageRetryCount = 3;
     let implementationCalls = 0;
