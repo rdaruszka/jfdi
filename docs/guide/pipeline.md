@@ -166,6 +166,47 @@ If the provider has forgotten the session, the stage falls back to exactly one
 fresh session with the full prompt and accumulated feedback. Session memory is
 per-run and in-memory only: a re-dispatch always starts every stage fresh.
 
+## When the provider goes down
+
+A session can also die for a reason that has nothing to do with the work: a
+usage limit, an expired login, a 5xx. Treating that as feedback would be a
+disaster — the next round spawns into the same wall, `max_rounds` burns in
+seconds, and the coordinator moves on to drain the rest of the board the same
+way. So it isn't feedback. The harness classifies it
+([how](../architecture/harness.md#failure-classification)), and the tool stops.
+
+**The run holds where it stands.** No round is consumed, no feedback is
+invented, the card stays in **In Progress**, and the in-memory state — round
+counter, feedback history, session memory — is untouched. When the pause lifts,
+the same stage runs again: continuing its session if one was captured,
+otherwise a fresh spawn with the same prompt.
+
+**The pause is global.** One failure stops everything: no new dispatches, and
+every in-flight pipeline holds at its next stage boundary. `jfdi run` uses the
+identical code path and behaves identically. *Nothing lands in Blocked for an
+infrastructure reason.*
+
+What lifts it depends on the class:
+
+| Class | What it is | What resumes it |
+|---|---|---|
+| **usage-limit** | quota exhausted | the stated reset time plus a minute's slack, automatically. No human needed. If the provider named no time we could read, the outage schedule below is used instead — a limit self-expires, so it never demands a keypress. |
+| **outage** | 5xx, network, capacity | three stage-local retries first (5 s, 20 s, 60 s); still failing, it escalates to a global pause that re-probes on a stepped, capped backoff (1 min, 5 min, then every 15 min). Resumes by itself when the provider recovers. |
+| **needs-human** | expired login, revoked key, out of credits | **nothing automatic.** The banner names the repair and waits. |
+
+`R` retries immediately in every case — that is the only way out of a
+needs-human pause, and a way to skip the wait in the others. In the TUI it is a
+keypress; `jfdi run` takes the same key on its terminal, and prints the pause
+reason and resume time as it goes. A session that reaches the provider resets
+the backoff to its first step.
+
+The pause is announced on the event stream as `harness_paused` /
+`harness_resumed`, carrying `{kind, detail, resumesAt?}`, which is what the TUI
+banner renders. It is deliberately **not** persisted: a pause is a fact about
+the provider right now, not about the run. Stopping JFDI and starting it again
+is not an event — see
+[after a stop](board-and-tickets.md#stopping-and-restarting).
+
 ## Escalation and Blocked
 
 The default posture is **decide, log, proceed**: at a decision fork the agent makes

@@ -68,6 +68,6 @@ One name per concept — these terms are used exactly, here and in the code:
 | **worktree** | the isolated git checkout (branch `jfdi/<ticket-id>`) a run works in |
 | **resume** | a re-dispatch that continues an interrupted run's partial work (run-level) |
 | **continuation** | re-entering a stage's previous agent session in a later round (session-level) |
-| **crash orphan** | a card stranded in the in-progress column by a dead coordinator |
+| **pause** | the tool-wide hold on agent sessions while the provider is down; no card is ever blocked for it |
 | **observation** | an out-of-scope issue a stage reports in its verdict; never fixed inline |
 | **inbox** | the board column where observations land as proposals; agents propose, humans promote |

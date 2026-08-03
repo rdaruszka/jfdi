@@ -43,7 +43,7 @@ init fills in for your repo):
 | `board.columns.begin` | string | `Ready` | Cards here are dispatched, top first. Never auto-created — the heading must exist on the board. |
 | `board.columns.inProgress` | string | `In Progress` | Where dispatched cards sit while running. |
 | `board.columns.done` | string | `Done` | Merged cards land here, checked off. |
-| `board.columns.blocked` | string | `Blocked` | Escalations, exhausted rounds, failed integrations, crash orphans. |
+| `board.columns.blocked` | string | `Blocked` | Escalations, exhausted rounds, failed integrations. Never infrastructure failures. |
 | `board.columns.readyToMerge` | string | `Ready to Merge` | Only used when `integration.mode` is `on-approval`. |
 | `board.columns.inbox` | string | `Inbox` | Agent observation proposals. Never dispatched from. |
 

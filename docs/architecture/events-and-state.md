@@ -76,7 +76,16 @@ One JSON object per line:
 | `failed` | `reason` | A dispatch failed unexpectedly |
 | `observation` | `text` | An out-of-scope observation became an Inbox card |
 | `card_moved` | `from`, `to` | A board card was moved by JFDI |
+| `harness_paused` | `kind`, `detail`, `resumesAt?` | The provider under the harness is down; every session is held. No `ticketId` — the pause is tool-wide. `resumesAt` is absent when only a human can end it |
+| `harness_resumed` | `kind`, `detail`, `trigger` | …and it lifted, by `timer` or by `human` |
 | `error` | `message` | A non-fatal problem (board write failure, bad stream line) |
+
+The two `harness_*` events are the only ticket-less ones, and they fold into no
+ticket state: a pause says nothing about any one ticket's status, only that
+every ticket's next session is waiting. Renderers read them directly from the
+stream — that is what the TUI banner is. They are never written to disk as
+state, deliberately: see
+[When the provider goes down](../guide/pipeline.md#when-the-provider-goes-down).
 
 ## Derived state
 

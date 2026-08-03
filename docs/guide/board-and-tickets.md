@@ -185,7 +185,22 @@ flowchart LR
     INBOX -.->|you promote| B
 ```
 
-One special case: a card sitting in the in-progress column when `jfdi start`
-boots was stranded by a coordinator that died (a **crash orphan**). The startup
-sweep moves it to Blocked so you see it; its branch keeps the partial work, and
-moving it back to the begin column resumes from where it left off.
+## Stopping and restarting
+
+Stopping JFDI is not something the board records. Ctrl-C `jfdi start`, or kill
+it outright, and its cards stay exactly where they were — including in the
+in-progress column, where their branches keep the partial work.
+
+Starting it again picks them back up. A card in the in-progress column that
+nothing is driving is dispatched through the same
+[resume](pipeline.md#resuming-an-interrupted-run) machinery as any other: the
+worktree is sanitized, the branch's existing commits and the previous run's
+unanswered feedback go into the prompt, and the run carries on. Such cards go
+first (they hold partial work) and count against `max_concurrent`. You do not
+have to drag anything anywhere.
+
+This is checked on every scan, not just at startup, so "in progress with
+nothing behind it" heals itself rather than being a boot-time special case. A
+ticket that genuinely cannot be finished still exhausts its rounds and lands in
+**Blocked** the ordinary way; only infrastructure failures are exempt, and
+those [pause the tool](pipeline.md#when-the-provider-goes-down) instead.

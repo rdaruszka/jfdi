@@ -91,8 +91,8 @@ Three routes, all equivalent:
    keeps advertising an approval question the board has already answered.
 
 One caveat on `jfdi merge`: it requires the `jfdi/<id>` branch to still exist. If
-you hand-merged and already deleted the branch, let the coordinator's sweep close
-the card (or move it to Done yourself).
+you hand-merged and already deleted the branch, let the coordinator's next board
+scan close the card (or move it to Done yourself).
 
 ## Rejecting
 

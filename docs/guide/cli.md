@@ -35,7 +35,10 @@ The reference can be:
 
 No board is required, but when the board holds a matching card, the run moves it
 through the same columns the coordinator would: to In Progress at dispatch, then
-to Done (auto mode, merged), Ready to Merge (on-approval), or Blocked.
+to Done (auto mode, merged), Ready to Merge (on-approval), or Blocked. It also
+[pauses on a broken provider](pipeline.md#when-the-provider-goes-down) exactly
+as the coordinator does, printing the reason and the resume time and taking `R`
+on its terminal to retry now.
 
 | Exit code | Meaning |
 |---|---|
@@ -53,15 +56,18 @@ queue, and presents a live full-screen TUI.
 The TUI shows the board name and target branch, active tickets with their
 current stage and round, tickets needing attention (blocked / ready to merge /
 queued), the integration queue, settled tickets, and a tail of recent events.
-One key: `q` quits (as do Ctrl-C / SIGTERM, exit codes 130/143). When stdout is
+When the provider under the harness is down, a banner across the top names the
+reason and when work resumes. Two keys: `q` quits (as do Ctrl-C / SIGTERM, exit
+codes 130/143), and `R` retries a paused harness immediately. When stdout is
 not a TTY, `jfdi start` falls back to plain line-by-line streaming.
 
 On startup the coordinator:
 
 - requires the board to exist (run `jfdi init` first);
 - ensures the Blocked, Ready to Merge, and Inbox columns exist;
-- sweeps **crash orphans** — cards stranded in In Progress by a dead coordinator
-  move to Blocked, their branches intact, ready for re-dispatch;
+- **continues cards left in In Progress** by an earlier coordinator, through the
+  ordinary resume path — stopping and restarting JFDI needs no board edits from
+  you (see [Stopping and restarting](board-and-tickets.md#stopping-and-restarting));
 - picks up cards added while it runs, live.
 
 Other JFDI processes (a `jfdi merge` in a second terminal) append to the same
@@ -89,8 +95,8 @@ the card to Done. Works alongside a running coordinator — the shared event
 stream keeps both consistent.
 
 Requires the `jfdi/<ticket-id>` branch to exist. If you already merged by hand
-and deleted the branch, the coordinator's sweep will detect the landed work and
-close the card itself.
+and deleted the branch, the coordinator's next scan will detect the landed work
+and close the card itself.
 
 | Exit code | Meaning |
 |---|---|

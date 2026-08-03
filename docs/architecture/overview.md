@@ -69,8 +69,10 @@ flowchart TB
 - **Coordinator** ([src/coordinator.ts](../../src/coordinator.ts)) — the
   long-running loop behind `jfdi start`. Watches the board (fs-watch plus a 2 s
   mtime poll), dispatches ready cards into pipelines up to `max_concurrent`,
-  owns the single-file integration queue, sweeps crash orphans at startup,
-  detects hand-merged work, and folds in events written by other JFDI processes.
+  owns the single-file integration queue, continues cards an earlier coordinator
+  left in the in-progress column, detects hand-merged work, and folds in events
+  written by other JFDI processes. It dispatches nothing while the harness is
+  paused.
 - **Pipeline** ([src/pipeline.ts](../../src/pipeline.ts)) — one ticket's trip:
   worktree setup, resume sanitization, then up to `max_rounds` rounds of
   Implementation → gate → Code Review → QA, with session continuation between
@@ -82,7 +84,13 @@ flowchart TB
   queue), by `jfdi run` (auto mode), and by `jfdi merge` — same code path, three
   callers. History is strictly linear: rebase + fast-forward, no merge commits.
 - **Harness** ([src/harness/](../../src/harness/)) — the provider abstraction;
-  see [Harness](harness.md).
+  see [Harness](harness.md). It also classifies its own provider's failures, so
+  a usage limit or an outage is never mistaken for bad work.
+- **Pause controller** ([src/pause.ts](../../src/pause.ts)) — the tool-wide hold
+  that classification feeds. It lives on the `PipelineContext`, so `jfdi run`
+  and every dispatched pipeline share one pause and one resume; the coordinator
+  consults it before dispatching. Behavior:
+  [When the provider goes down](../guide/pipeline.md#when-the-provider-goes-down).
 - **Board layer** ([src/board.ts](../../src/board.ts),
   [src/cards.ts](../../src/cards.ts)) — parse, surgical card moves, atomic
   writes. `moveCardSafe` is the single choke point every card move goes through;

@@ -38,9 +38,18 @@ type HarnessEvent =
   | { type: "text";    text: string }
   | { type: "tool";    name: string; detail?: string }
   | { type: "session"; sessionId: string }   // provider id for continuation
-  | { type: "result";  ok: boolean; text: string };
+  | { type: "result";  ok: boolean; text: string; failure?: HarnessFailure };
 
-interface HarnessResult { ok: boolean; text: string; exitCode: number; sessionId?: string }
+interface HarnessResult {
+  ok: boolean; text: string; exitCode: number;
+  sessionId?: string;
+  failure?: HarnessFailure;   // set only when the provider failed, not the agent
+}
+
+type HarnessFailure =
+  | { kind: "usage-limit"; resetsAtMs: number | null; detail: string }
+  | { kind: "needs-human";  detail: string }   // login, key, billing
+  | { kind: "outage";       detail: string };  // 5xx, network, capacity
 ```
 
 Contracts worth knowing:
@@ -48,6 +57,11 @@ Contracts worth knowing:
 - **`done` never rejects.** Session failures are data (`ok: false` with the
   failure text), not exceptions — a dead subprocess must not take down the
   coordinator.
+- **A failure the provider caused is classified here, not upstream.** Each
+  implementation reads its own provider's stream and message text and reports
+  the neutral `HarnessFailure` above; the pipeline then holds and re-runs the
+  stage instead of feeding the death back as a round. See
+  [Failure classification](#failure-classification).
 - **Sessions report a `sessionId`** the pipeline stores to continue the
   conversation in a later round. **Providers forget sessions**; callers must
   treat a failed continuation as "fall back to one fresh spawn with the full
@@ -95,8 +109,10 @@ codex exec resume --json --dangerously-bypass-approvals-and-sandbox <threadId> <
 
 - Parses the Codex JSON event protocol: `thread.started` carries the thread id
   (the continuation handle), `agent_message` items become `text` events,
-  command/MCP/web-search items become `tool` events, `turn.failed`/`error`
-  become failure results.
+  command/MCP/web-search items become `tool` events, and `turn.failed` becomes
+  a failure result. Bare `{"type":"error"}` events are **not** terminal —
+  Codex emits them for retries it goes on to survive (`Reconnecting… 2/5: …`)
+  with no field to tell those apart from fatal ones.
 - Codex emits no terminal success line, so the harness synthesizes the `result`
   event from the last agent message on a clean exit.
 - No hook system → no settings injection. The format-hook acceleration is
@@ -110,6 +126,46 @@ result line never arrives, exit code 127 on a missing executable, and the same
 kill semantics. They are near-duplicates by design — the duplication keeps each
 provider's quirks local instead of leaking into a shared "provider-generic"
 layer that wouldn't be.
+
+## Failure classification
+
+A session can die because the agent got stuck, or because the provider under it
+is down — a usage limit, an expired login, a 5xx. Those need opposite
+treatments: the first is feedback for another round, the second must stop the
+tool ([Pause and resume](#pause-and-resume-in-one-line)). Neither CLI helps:
+both exit `1` for everything, so the class has to be read out of the stream and
+the message text.
+
+That reading is **provider-specific and therefore lives in each harness**. The
+pipeline only ever sees `HarnessFailure`, and an unclassified failure keeps the
+old behavior exactly — it becomes a feedback round.
+
+Both implementations use the same shape: an ordered pattern table, matched
+case-insensitively, most specific first, easy to extend. The strings were
+verified against Claude Code v2.1.220 and Codex 0.146.0 in Aug 2026 and are
+**version-volatile by nature** — when a provider rewords a message, add a row.
+
+| | Claude Code | Codex |
+|---|---|---|
+| where the fatal text is | the `result` line — an API failure arrives as `subtype: "success"` with `is_error: true`; `subtype: "error_*"` is a *task* failure | `turn.failed`'s `error.message`, or the stderr `Error:` line when no events arrived |
+| usage-limit | `You've hit your <session\|weekly\|Opus\|Sonnet> limit`, `usage limit reached` | `You've hit your usage limit`, `out of credits`, `spend cap`, `Quota exceeded` |
+| reset time | only in the prose (`resets 3:45pm`, `resets Mon 12:00am`, `resets May 28 at 7pm (Europe/Madrid)`), plus the legacy `…usage limit reached\|<epoch-seconds>` | only as local-time text (`Try again at 3:45 PM.`); `Try again later.` carries none |
+| needs-human | `run /login`, `not logged in`, `invalid api key`, `oauth token expired/revoked`, `could not be refreshed`, `authentication`, `Credit balance is too low` | `could not be refreshed`, `status 401`, `codex login`, `no Codex credentials` |
+| outage | `api_error_status` 500/529, or `unable to connect`, `connection error`, `ECONN`, `ETIMEDOUT`, `ENOTFOUND`, `timed out`, `overloaded` | `exceeded retry limit`, `stream disconnected`, `Connection failed`, `request timed out`, `Error while reading the server response`, `high demand`, `at capacity`; **also** any session that exits without emitting `thread.started` (the detached-TTY regression, openai/codex#19945) |
+
+Reset times are parsed by [reset-time.ts](../../src/harness/reset-time.ts),
+shared because reading a clock out of English is not provider-specific. It is
+best-effort by construction: an unreadable string yields `null`, and a
+`resetsAtMs: null` usage limit waits on the outage backoff instead — a limit
+self-expires, so it never demands a human. Reading a time *early* is safe too:
+the retry fails, is classified again, and re-pauses on the fresh string.
+
+## Pause and resume, in one line
+
+Classification is the harness's whole share of this. What happens next — the
+tool-wide hold, the backoff schedules, the auto-resume, the `R` keypress — is
+[the pause controller](../guide/pipeline.md#when-the-provider-goes-down)'s, and
+it is provider-neutral.
 
 ### Permissions
 
