@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CodexHarness, mapCodexLine } from "./codex.js";
+import { CodexHarness, classifyCodexFailure, mapCodexLine } from "./codex.js";
 import type { HarnessEvent } from "./types.js";
 
 describe("mapCodexLine", () => {
@@ -27,6 +27,11 @@ describe("mapCodexLine", () => {
     expect(mapCodexLine(line)).toEqual([{ type: "result", ok: false, text: "usage limit" }]);
   });
 
+  it("ignores bare error events — Codex emits them for retries it goes on to survive", () => {
+    const line = JSON.stringify({ type: "error", message: "Reconnecting... 2/5: stream error" });
+    expect(mapCodexLine(line)).toEqual([]);
+  });
+
   it("ignores unparseable lines", () => {
     expect(mapCodexLine("not json")).toEqual([]);
   });
@@ -34,6 +39,60 @@ describe("mapCodexLine", () => {
   it("maps the thread id used to resume the session later", () => {
     const line = JSON.stringify({ type: "thread.started", thread_id: "thread-9" });
     expect(mapCodexLine(line)).toEqual([{ type: "session", sessionId: "thread-9" }]);
+  });
+});
+
+describe("classifyCodexFailure", () => {
+  /** 2026-08-03 09:30 local. */
+  const Now = new Date(2026, 7, 3, 9, 30).getTime();
+
+  it("reads each usage-limit wording, with the local reset time out of the prose", () => {
+    expect(
+      classifyCodexFailure("You've hit your usage limit. Try again at 3:45 PM.", Now),
+    ).toMatchObject({ kind: "usage-limit", resetsAtMs: new Date(2026, 7, 3, 15, 45).getTime() });
+    expect(
+      classifyCodexFailure("You are out of credits. Try again at Mar 3rd, 2027 3:45 PM.", Now),
+    ).toMatchObject({ kind: "usage-limit", resetsAtMs: new Date(2027, 2, 3, 15, 45).getTime() });
+    expect(classifyCodexFailure("Quota exceeded for this spend cap", Now)?.kind).toBe(
+      "usage-limit",
+    );
+  });
+
+  it("leaves the reset time null when the message only says `Try again later.`", () => {
+    expect(classifyCodexFailure("You've hit your usage limit. Try again later.", Now)).toEqual({
+      kind: "usage-limit",
+      resetsAtMs: null,
+      detail: "You've hit your usage limit. Try again later.",
+    });
+  });
+
+  it("classifies the repairs only a human can make", () => {
+    for (const text of [
+      "The provided token could not be refreshed",
+      "unexpected status 401 Unauthorized",
+      "Please run codex login",
+      "no Codex credentials found",
+    ]) {
+      expect(classifyCodexFailure(text, Now)?.kind).toBe("needs-human");
+    }
+  });
+
+  it("classifies transient failures as outages", () => {
+    for (const text of [
+      "exceeded retry limit, last status: 503",
+      "stream disconnected before completion",
+      "Connection failed",
+      "request timed out",
+      "Error while reading the server response",
+      "We're experiencing high demand",
+      "the model is at capacity",
+    ]) {
+      expect(classifyCodexFailure(text, Now)?.kind).toBe("outage");
+    }
+  });
+
+  it("leaves an ordinary task failure unclassified", () => {
+    expect(classifyCodexFailure("the tool call was rejected", Now)).toBeUndefined();
   });
 });
 
@@ -124,6 +183,52 @@ describe("CodexHarness subprocess", () => {
       { cwd: dir },
     ).done;
     expect(result.sessionId).toBe("thread-1");
+  });
+
+  it("reports a session Codex retried mid-stream and then completed as a success", async () => {
+    const executable = await stubCodex([
+      { type: "thread.started", thread_id: "thread-2" },
+      { type: "error", message: "Reconnecting... 2/5: stream disconnected" },
+      { type: "item.completed", item: { type: "agent_message", text: "all done" } },
+    ]);
+    const result = await new CodexHarness(executable).spawn(
+      { prompt: "first line\nsecond line with spaces" },
+      { cwd: dir },
+    ).done;
+    expect(result.ok).toBe(true);
+    expect(result.text).toBe("all done");
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("classifies a turn.failed usage limit for the pipeline to pause on", async () => {
+    const executable = await stubCodex(
+      [
+        { type: "thread.started", thread_id: "thread-3" },
+        // No apostrophes: the stub replays its lines through a shell `echo`.
+        { type: "turn.failed", error: { message: "You are out of credits. Try again later." } },
+      ],
+      1,
+    );
+    const result = await new CodexHarness(executable).spawn(
+      { prompt: "first line\nsecond line with spaces" },
+      { cwd: dir },
+    ).done;
+    expect(result.failure).toEqual({
+      kind: "usage-limit",
+      resetsAtMs: null,
+      detail: "You are out of credits. Try again later.",
+    });
+  });
+
+  it("calls a session that never started a thread an outage, whatever its exit code", async () => {
+    // The detached-TTY regression: codex exits having emitted nothing at all.
+    const executable = await stubCodex([]);
+    const result = await new CodexHarness(executable).spawn(
+      { prompt: "first line\nsecond line with spaces" },
+      { cwd: dir },
+    ).done;
+    expect(result.ok).toBe(false);
+    expect(result.failure?.kind).toBe("outage");
   });
 
   it("runs `exec resume` when continuing an earlier session", async () => {

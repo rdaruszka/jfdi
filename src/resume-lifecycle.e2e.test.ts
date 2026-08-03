@@ -46,11 +46,29 @@ const { execFileSync } = require("node:child_process");
 const argv = process.argv.slice(2);
 const prompt = argv[argv.indexOf("-p") + 1] || "";
 const match = prompt.match(/(\\/\\S+\\.verdict\\.json)/);
+const promptDir = process.env.STUB_PROMPT_DIR;
+const RESET_SECONDS_AHEAD = 3600;
+// Provider-down modes: the session dies the way a real one does — a result
+// line the harness classifies, no verdict file, nonzero exit.
+function die(result) {
+  process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: true, result }) + "\\n");
+  process.exit(1);
+}
+if (process.env.STUB_MODE === "usage-limit") {
+  die("Claude AI usage limit reached|" + (Math.floor(Date.now() / 1000) + RESET_SECONDS_AHEAD));
+}
+if (process.env.STUB_MODE === "outage-once") {
+  fs.mkdirSync(promptDir, { recursive: true });
+  const marker = path.join(promptDir, "outage-used");
+  if (!fs.existsSync(marker)) {
+    fs.writeFileSync(marker, "1");
+    die("API Error: Connection error.");
+  }
+}
 process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "stub" }] } }) + "\\n");
 if (match) {
   const verdictPath = match[1];
   const stage = path.basename(verdictPath).replace(".verdict.json", "");
-  const promptDir = process.env.STUB_PROMPT_DIR;
   fs.mkdirSync(promptDir, { recursive: true });
   let index = 0;
   while (fs.existsSync(path.join(promptDir, stage + "-" + index + ".txt"))) index += 1;
@@ -190,7 +208,11 @@ interface RecordedEvent {
 }
 
 async function readEvents(sandbox: Sandbox): Promise<RecordedEvent[]> {
-  const raw = await fs.readFile(path.join(sandbox.stateDir, "events.jsonl"), "utf8");
+  // Polled while a coordinator is still starting up, so "not written yet" is
+  // an ordinary answer: no events.
+  const raw = await fs
+    .readFile(path.join(sandbox.stateDir, "events.jsonl"), "utf8")
+    .catch(() => "");
   return raw
     .split("\n")
     .filter(Boolean)
@@ -434,36 +456,32 @@ describe("resuming an interrupted run", () => {
   );
 });
 
-describe("coordinator startup sweep", () => {
+describe("coordinator startup", () => {
   it(
-    "moves a card stranded in the in-progress column to Blocked, with an event, and dispatches nothing",
+    "continues a card stranded in the in-progress column, without a board edit",
     async () => {
       const sandbox = await makeSandbox();
       await initProject(sandbox);
       // A coordinator died with this card in flight; nothing else is on the board.
       await putCardInColumn(sandbox, "In Progress", "- [ ] Half-finished thing");
 
-      const output = await runCoordinatorUntil(
+      await runCoordinatorUntil(
         sandbox,
-        async () => (await cardsInColumn(sandbox, "Blocked")).length > 0,
+        async () => (await cardsInColumn(sandbox, "Ready to Merge")).length > 0,
       );
 
-      expect(await cardsInColumn(sandbox, "Blocked")).toEqual(["- [ ] Half-finished thing"]);
-      expect(await cardsInColumn(sandbox, "In Progress")).toEqual([]);
-      const blocked = (await readEvents(sandbox)).filter((event) => event.type === "blocked");
-      expect(blocked).toHaveLength(1);
-      expect(blocked[0]?.data?.reason).toBe(
-        "orphaned by a coordinator restart — no run was active",
+      // Picked back up where it stood — not flagged for the human to drag back.
+      expect(await cardsInColumn(sandbox, "Ready to Merge")).toEqual(["- [ ] Half-finished thing"]);
+      expect(await cardsInColumn(sandbox, "Blocked")).toEqual([]);
+      expect(await fs.readdir(path.join(sandbox.promptDir, "default"))).toContain(
+        "implementation-0.txt",
       );
-      // Swept, not silently re-run behind the human's back.
-      expect(output).toContain("orphaned by a coordinator restart");
-      await expect(fs.readdir(path.join(sandbox.promptDir, "default"))).rejects.toThrow();
     },
     PIPELINE_TIMEOUT_MS,
   );
 
   it(
-    "resumes a swept card once the human readies it again",
+    "resumes a blocked card once the human readies it again",
     async () => {
       const sandbox = await makeSandbox();
       await initProject(sandbox);
@@ -497,6 +515,90 @@ describe("coordinator startup sweep", () => {
       expect(prompt).toContain("Resuming an interrupted attempt");
       expect(prompt).toContain("3 commits of partial work");
       expect(prompt).toContain("the parser is wrong");
+    },
+    PIPELINE_TIMEOUT_MS,
+  );
+});
+
+/**
+ * The provider under the harness going down, driven through the shipped CLI.
+ * The unit tests prove the classifier and the controller; only this can show
+ * that a usage limit really stops the tool instead of draining the board, and
+ * that stopping and restarting JFDI is not itself an event the board records.
+ */
+describe("a provider that is down", () => {
+  async function hasPaused(sandbox: Sandbox): Promise<boolean> {
+    return (await readEvents(sandbox)).some((event) => event.type === "harness_paused");
+  }
+
+  it(
+    "pauses instead of blocking, and a restart picks the card back up",
+    async () => {
+      const sandbox = await makeSandbox();
+      await initProject(sandbox);
+      await putCardInColumn(sandbox, "Ready", "- [ ] Fix the parser");
+
+      // Every session dies on a usage limit whose reset is an hour out, so the
+      // pause outlives this coordinator.
+      await runCoordinatorUntil(sandbox, () => hasPaused(sandbox), {
+        stubMode: "usage-limit",
+        promptSubdir: "down",
+      });
+
+      const paused = (await readEvents(sandbox)).filter((event) => event.type === "harness_paused");
+      expect(paused[0]?.data?.kind).toBe("usage-limit");
+      expect(typeof paused[0]?.data?.resumesAt).toBe("string");
+      // Held where it stood: nothing blocked, nothing dispatched past the wall.
+      expect(await cardsInColumn(sandbox, "In Progress")).toEqual(["- [ ] Fix the parser"]);
+      expect(await cardsInColumn(sandbox, "Blocked")).toEqual([]);
+
+      // Ctrl-C during the pause, restarted while the provider is still down:
+      // it pauses again rather than treating the restart as progress.
+      const pausesBefore = paused.length;
+      await runCoordinatorUntil(
+        sandbox,
+        async () =>
+          (await readEvents(sandbox)).filter((event) => event.type === "harness_paused").length >
+          pausesBefore,
+        { stubMode: "usage-limit", promptSubdir: "down-again" },
+      );
+      expect(await cardsInColumn(sandbox, "In Progress")).toEqual(["- [ ] Fix the parser"]);
+      expect(await cardsInColumn(sandbox, "Blocked")).toEqual([]);
+
+      // Restarted once the provider is healthy: the same card, still in the
+      // in-progress column, runs to completion with no board edit by a human.
+      await runCoordinatorUntil(
+        sandbox,
+        async () => (await cardsInColumn(sandbox, "Ready to Merge")).length > 0,
+        { tag: "healthy", promptSubdir: "healthy" },
+      );
+      expect(await cardsInColumn(sandbox, "Ready to Merge")).toEqual(["- [ ] Fix the parser"]);
+      expect(await cardsInColumn(sandbox, "Blocked")).toEqual([]);
+      // Nothing was ever blocked for an infrastructure reason.
+      expect((await readEvents(sandbox)).filter((event) => event.type === "blocked")).toEqual([]);
+    },
+    COORDINATOR_TIMEOUT_MS * 3,
+  );
+
+  it(
+    "`jfdi run` holds and re-runs the same stage, at no cost in rounds",
+    async () => {
+      const sandbox = await makeSandbox();
+      await initProject(sandbox);
+
+      const result = await runCli(sandbox, ["run", "Fix the parser"], {
+        stubMode: "outage-once",
+        promptSubdir: "run1",
+      });
+      expect(`${result.code} ${result.stderr}`).toBe("0 ");
+
+      // The dead session was reported as harness trouble, not fed back as work.
+      expect(result.stdout).toContain("harness outage");
+      const prompt = await readPrompt(sandbox, "run1", "implementation-0.txt");
+      expect(prompt).not.toContain("Feedback on earlier attempts");
+      const rounds = (await readEvents(sandbox)).filter((event) => event.type === "round_start");
+      expect(rounds).toHaveLength(1);
+      expect(await cardsInColumn(sandbox, "Blocked")).toEqual([]);
     },
     PIPELINE_TIMEOUT_MS,
   );

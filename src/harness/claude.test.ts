@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ClaudeHarness, mapClaudeLine } from "./claude.js";
+import { ClaudeHarness, classifyClaudeFailure, mapClaudeLine } from "./claude.js";
 import type { HarnessEvent } from "./types.js";
 
 describe("mapClaudeLine", () => {
@@ -56,6 +56,101 @@ describe("mapClaudeLine", () => {
       { type: "session", sessionId: "def-456" },
       { type: "result", ok: true, text: "done" },
     ]);
+  });
+});
+
+describe("classifyClaudeFailure", () => {
+  /** 2026-08-03 09:30 local — a Monday, so weekday strings have somewhere to land. */
+  const Now = new Date(2026, 7, 3, 9, 30).getTime();
+
+  it("reads each usage-limit wording, with the reset time out of the prose", () => {
+    expect(
+      classifyClaudeFailure("You've hit your session limit · resets 3:45pm", null, Now),
+    ).toEqual({
+      kind: "usage-limit",
+      resetsAtMs: new Date(2026, 7, 3, 15, 45).getTime(),
+      detail: "You've hit your session limit · resets 3:45pm",
+    });
+    expect(
+      classifyClaudeFailure("You've hit your weekly limit, resets Mon 12:00am", null, Now),
+    ).toMatchObject({ kind: "usage-limit", resetsAtMs: new Date(2026, 7, 10, 0).getTime() });
+    expect(
+      classifyClaudeFailure("You've hit your Opus limit · resets Aug 28 at 7pm", null, Now),
+    ).toMatchObject({ kind: "usage-limit", resetsAtMs: new Date(2026, 7, 28, 19).getTime() });
+  });
+
+  it("reads the legacy raw-API form, where the reset is epoch seconds after a pipe", () => {
+    const resetsAtMs = new Date(2026, 7, 3, 18).getTime();
+    const epochSeconds = Math.floor(resetsAtMs / 1000);
+    expect(
+      classifyClaudeFailure(`Claude AI usage limit reached|${epochSeconds}`, null, Now),
+    ).toMatchObject({ kind: "usage-limit", resetsAtMs });
+  });
+
+  it("leaves the reset time null when the prose names none", () => {
+    expect(classifyClaudeFailure("You've hit your session limit", null, Now)).toEqual({
+      kind: "usage-limit",
+      resetsAtMs: null,
+      detail: "You've hit your session limit",
+    });
+  });
+
+  it("classifies the repairs only a human can make", () => {
+    for (const text of [
+      "Invalid API key · Please run /login",
+      "You are not logged in",
+      "OAuth token expired",
+      "Credit balance is too low",
+      "authentication_error: could not be refreshed",
+    ]) {
+      expect(classifyClaudeFailure(text, null, Now)?.kind).toBe("needs-human");
+    }
+  });
+
+  it("classifies transient failures as outages, by text or by HTTP status", () => {
+    expect(classifyClaudeFailure("API Error: Overloaded", null, Now)?.kind).toBe("outage");
+    expect(classifyClaudeFailure("unable to connect to api.anthropic.com", null, Now)?.kind).toBe(
+      "outage",
+    );
+    expect(classifyClaudeFailure("connect ETIMEDOUT", null, Now)?.kind).toBe("outage");
+    // A 500 body that says nothing recognizable is still an outage.
+    expect(classifyClaudeFailure("Internal server error", 500, Now)?.kind).toBe("outage");
+    expect(classifyClaudeFailure("something went wrong", 529, Now)?.kind).toBe("outage");
+  });
+
+  it("leaves an ordinary task failure unclassified, so it stays a feedback round", () => {
+    expect(classifyClaudeFailure("ran out of turns", null, Now)).toBeUndefined();
+    // 400 is a bad request, not a provider outage.
+    expect(classifyClaudeFailure("messages.0: too long", 400, Now)).toBeUndefined();
+  });
+});
+
+describe("mapClaudeLine failure classification", () => {
+  it("classifies an API failure, which arrives as a success subtype with is_error", () => {
+    const line = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      result: "You've hit your session limit",
+    });
+    expect(mapClaudeLine(line)).toEqual([
+      {
+        type: "result",
+        ok: false,
+        text: "You've hit your session limit",
+        failure: { kind: "usage-limit", resetsAtMs: null, detail: "You've hit your session limit" },
+      },
+    ]);
+  });
+
+  it("leaves error_* subtypes unclassified — those are the agent's problem, not the provider's", () => {
+    const line = JSON.stringify({
+      type: "result",
+      subtype: "error_max_turns",
+      is_error: true,
+      result: "ran out",
+    });
+    expect(mapClaudeLine(line)).toEqual([{ type: "result", ok: false, text: "ran out" }]);
   });
 });
 

@@ -170,13 +170,13 @@ export class PauseController {
       detail: failure.detail,
       ...(resumesAtMs === null ? {} : { resumesAt: new Date(resumesAtMs).toISOString() }),
     });
-    if (resumesAtMs !== null) {
+    // Deliberately not unref'd: a pause is work in progress, and a paused
+    // `jfdi run` whose only pending timer was unref'd would simply exit.
+    if (resumesAtMs !== null)
       this.pauseTimer = setTimeout(
         () => this.resume("timer"),
         Math.max(0, resumesAtMs - Date.now()),
       );
-      this.pauseTimer.unref();
-    }
     this.notify();
   }
 
@@ -225,7 +225,6 @@ export class PauseController {
         resolve();
       };
       timer = setTimeout(wake, delayMs);
-      timer.unref();
       this.sleepers.add(wake);
     });
   }

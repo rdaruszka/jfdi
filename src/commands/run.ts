@@ -24,6 +24,7 @@ export async function runCommand(ticketRef: string): Promise<number> {
     return await runTicketInline(context, ticketRef);
   } finally {
     detachRetryKey();
+    context.pause.stop();
     detach();
     await context.log.flush();
   }

@@ -628,3 +628,97 @@ describe("runPipeline", () => {
     expect(implementationCalls).toBe(2);
   });
 });
+
+/**
+ * The difference the pipeline has to keep straight: a session that ended
+ * because the work was wrong earns a feedback round, and a session that ended
+ * because the provider was down earns nothing but another try.
+ */
+describe("runPipeline under a broken provider", () => {
+  /** Short enough that the fixture's pause schedule lifts it within the test. */
+  const ResetSoonMs = 5;
+
+  it("re-runs a stage the provider killed, at no cost in rounds or feedback", async () => {
+    const prompts: string[] = [];
+    let implementationCalls = 0;
+    const context = fixture.context(async (spec, options) => {
+      const stage = stageOf(spec.prompt);
+      if (stage !== "implementation") {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+        return { ok: true, text: "" };
+      }
+      implementationCalls++;
+      prompts.push(spec.prompt);
+      if (implementationCalls === 1)
+        return {
+          ok: false,
+          text: "",
+          failure: {
+            kind: "usage-limit" as const,
+            resetsAtMs: Date.now() + ResetSoonMs,
+            detail: "You've hit your session limit",
+          },
+        };
+      await commitFile(options.cwd, "impl.txt", "the feature\n", "implement");
+      await writeVerdict(spec.prompt, { status: "done", summary: "implemented" });
+      return { ok: true, text: "" };
+    });
+    const pauses: JfdiEvent[] = [];
+    context.log.on((event) => {
+      if (event.type === "harness_paused" || event.type === "harness_resumed") pauses.push(event);
+    });
+
+    const ticket = await resolveTicket("Build the feature", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+
+    expect(outcome.status).toBe("passed");
+    if (outcome.status === "passed") expect(outcome.report.rounds).toBe(1);
+    expect(implementationCalls).toBe(2);
+    // The retry is the same stage over again, not a fix round: no invented
+    // feedback, and the prompt it gets is the one the dead session got.
+    expect(prompts[1]).toBe(prompts[0]);
+    expect(prompts[1]).not.toContain("Feedback on earlier attempts");
+    expect(pauses.map((event) => event.type)).toEqual(["harness_paused", "harness_resumed"]);
+    // Nothing to inherit: the run answered everything it was asked.
+    const historyPath = path.join(fixture.stateDir, "runs", ticket.id, "run-1", "history.json");
+    expect(JSON.parse(await fs.readFile(historyPath, "utf8"))).toEqual([]);
+  });
+
+  it("retries an outage in place before it stops the whole tool", async () => {
+    const stageRetryCount = 3;
+    let implementationCalls = 0;
+    const context = fixture.context(async (spec, options) => {
+      const stage = stageOf(spec.prompt);
+      if (stage !== "implementation") {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+        return { ok: true, text: "" };
+      }
+      implementationCalls++;
+      // Down for every stage-local retry and the first attempt after the pause.
+      if (implementationCalls <= stageRetryCount + 1)
+        return {
+          ok: false,
+          text: "",
+          failure: { kind: "outage" as const, detail: "Overloaded" },
+        };
+      await commitFile(options.cwd, "impl.txt", "the feature\n", "implement");
+      await writeVerdict(spec.prompt, { status: "done", summary: "implemented" });
+      return { ok: true, text: "" };
+    });
+    /** Sessions already spawned when the tool first paused. */
+    let callsAtFirstPause = 0;
+    context.log.on((event) => {
+      if (event.type === "harness_paused" && callsAtFirstPause === 0)
+        callsAtFirstPause = implementationCalls;
+    });
+
+    const ticket = await resolveTicket("Build the feature", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+
+    expect(outcome.status).toBe("passed");
+    if (outcome.status === "passed") expect(outcome.report.rounds).toBe(1);
+    // Three retries in place, then the escalation; the fifth session succeeds.
+    expect(callsAtFirstPause).toBe(stageRetryCount + 1);
+    expect(implementationCalls).toBe(stageRetryCount + 2);
+  });
+});
