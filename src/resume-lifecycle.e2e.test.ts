@@ -38,6 +38,8 @@ const POLL_INTERVAL_MS = 100;
  * so a CLI still alive here is held rather than merely between probes.
  */
 const HOLD_PROOF_MS = 3_000;
+/** A pause short enough that a test can wait out the real thing. */
+const RESUME_SOON_MS = 50;
 
 /**
  * A `claude` that never talks to the network. Beyond replaying stream-json and
@@ -729,6 +731,42 @@ describe("a provider that is down", () => {
         coordinator.child.kill("SIGTERM");
         await coordinator.exited;
       }
+    },
+    PIPELINE_TIMEOUT_MS,
+  );
+
+  /**
+   * The other half of holding the event loop open: what a pause takes, it has
+   * to give back. A keepalive that outlives its pause would not abandon a run
+   * — it would strand a finished one, leaving `jfdi run` printing "Pipeline
+   * passed" and never returning to the shell. Fake timer counts prove the
+   * handle was cleared; only a real process proves nothing else holds it.
+   */
+  it(
+    "lets the process exit again once the pause it was holding has resumed",
+    async () => {
+      const script = `
+        const { PauseController } = await import(${JSON.stringify(path.join(repoRoot, "dist", "pause.js"))});
+        const pause = new PauseController({ emit: () => undefined }, {
+          outageStageRetryMs: [],
+          probeMs: [${RESUME_SOON_MS}],
+          usageLimitBufferMs: 0,
+          maxWaitMs: 60_000,
+        });
+        await pause.holdAfterFailure({ kind: "usage-limit", resetsAtMs: null, detail: "spend cap" }, 1);
+        console.log("resumed");
+      `;
+      const startedAtMs = Date.now();
+      const { stdout } = await execFileAsync(process.execPath, [
+        "--input-type=module",
+        "-e",
+        script,
+      ]);
+
+      expect(stdout).toContain("resumed");
+      // Held for the pause and not a moment longer: a leaked handle would keep
+      // this process alive until the test's own timeout killed it.
+      expect(Date.now() - startedAtMs).toBeLessThan(HOLD_PROOF_MS);
     },
     PIPELINE_TIMEOUT_MS,
   );
