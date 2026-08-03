@@ -54,11 +54,16 @@ function die(result) {
   process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: true, result }) + "\\n");
   process.exit(1);
 }
+// Every spawn announces itself, so a test can prove the tool stopped spawning.
+fs.mkdirSync(promptDir, { recursive: true });
+fs.appendFileSync(path.join(promptDir, "spawns.log"), "spawn\\n");
 if (process.env.STUB_MODE === "usage-limit") {
   die("Claude AI usage limit reached|" + (Math.floor(Date.now() / 1000) + RESET_SECONDS_AHEAD));
 }
+if (process.env.STUB_MODE === "needs-human") {
+  die("API Error: Invalid API key · Please run /login");
+}
 if (process.env.STUB_MODE === "outage-once") {
-  fs.mkdirSync(promptDir, { recursive: true });
   const marker = path.join(promptDir, "outage-used");
   if (!fs.existsSync(marker)) {
     fs.writeFileSync(marker, "1");
@@ -69,7 +74,6 @@ process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ 
 if (match) {
   const verdictPath = match[1];
   const stage = path.basename(verdictPath).replace(".verdict.json", "");
-  fs.mkdirSync(promptDir, { recursive: true });
   let index = 0;
   while (fs.existsSync(path.join(promptDir, stage + "-" + index + ".txt"))) index += 1;
   fs.writeFileSync(path.join(promptDir, stage + "-" + index + ".txt"), prompt);
@@ -578,6 +582,50 @@ describe("a provider that is down", () => {
       expect((await readEvents(sandbox)).filter((event) => event.type === "blocked")).toEqual([]);
     },
     COORDINATOR_TIMEOUT_MS * 3,
+  );
+
+  /** How many sessions the stub was asked for, across every run in a sandbox. */
+  async function spawnCount(sandbox: Sandbox, subdir: string): Promise<number> {
+    const log = await fs
+      .readFile(path.join(sandbox.promptDir, subdir, "spawns.log"), "utf8")
+      .catch(() => "");
+    return log.split("\n").filter(Boolean).length;
+  }
+
+  it(
+    "waits for a human on a repair only a human can make, and probes nothing meanwhile",
+    async () => {
+      const sandbox = await makeSandbox();
+      await initProject(sandbox);
+      await putCardInColumn(sandbox, "Ready", "- [ ] Fix the parser");
+
+      await runCoordinatorUntil(sandbox, () => hasPaused(sandbox), {
+        stubMode: "needs-human",
+        promptSubdir: "login",
+      });
+
+      // No reset time to offer and no retry worth making: the banner names the
+      // repair, and the tool asks the human rather than hammering the provider.
+      const paused = (await readEvents(sandbox)).filter((event) => event.type === "harness_paused");
+      expect(paused).toHaveLength(1);
+      expect(paused[0]?.data?.kind).toBe("needs-human");
+      expect(paused[0]?.data?.resumesAt).toBeUndefined();
+      expect(paused[0]?.data?.detail).toContain("run /login");
+      expect(await spawnCount(sandbox, "login")).toBe(1);
+      expect(await cardsInColumn(sandbox, "In Progress")).toEqual(["- [ ] Fix the parser"]);
+      expect(await cardsInColumn(sandbox, "Blocked")).toEqual([]);
+
+      // The human repairs the login and starts JFDI again — no board edit, and
+      // the card it left in flight runs to completion.
+      await runCoordinatorUntil(
+        sandbox,
+        async () => (await cardsInColumn(sandbox, "Ready to Merge")).length > 0,
+        { tag: "repaired", promptSubdir: "repaired" },
+      );
+      expect(await cardsInColumn(sandbox, "Ready to Merge")).toEqual(["- [ ] Fix the parser"]);
+      expect((await readEvents(sandbox)).filter((event) => event.type === "blocked")).toEqual([]);
+    },
+    COORDINATOR_TIMEOUT_MS * 2,
   );
 
   it(

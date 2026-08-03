@@ -9,6 +9,12 @@ import { resolveTicket } from "./tickets.js";
 
 let fixture: Fixture;
 
+/**
+ * A reset instant the fixture's zeroed usage-limit buffer reaches almost at
+ * once — long enough to be a real wait, short enough not to slow the suite.
+ */
+const RESET_SOON_MS = 5;
+
 /** Handler that sails a ticket through the pipeline (no gate configured). */
 function passingHandler(file: string) {
   return async (spec: { prompt: string }, options: { cwd: string }) => {
@@ -207,6 +213,56 @@ describe("integrateTicket", () => {
     );
     expect(second).toEqual({ status: "merged" });
     expect(await fs.readFile(path.join(fixture.repo, "feat5.txt"), "utf8")).toBe("reconciled\n");
+  });
+
+  /**
+   * Integration is the one stage the coordinator owns, and a failure there
+   * blocks the card. A provider that dies mid-resolution is not a resolution
+   * anyone disagreed with, so it must hold and re-run like every other stage.
+   */
+  it("holds the conflict resolution when the provider dies, instead of blocking the card", async () => {
+    const context = fixture.context(passingHandler("feat6.txt"));
+    const ticket = await resolveTicket("Held integration", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    if (outcome.status !== "passed") throw new Error("pipeline should pass");
+    await commitFile(fixture.repo, "feat6.txt", "main version\n", "collide");
+
+    let integrationSessions = 0;
+    const integrationContext = fixture.context(async (spec, options) => {
+      expect(stageOf(spec.prompt)).toBe("integration");
+      integrationSessions++;
+      if (integrationSessions === 1)
+        return {
+          ok: false,
+          text: "",
+          failure: {
+            kind: "usage-limit" as const,
+            resetsAtMs: Date.now() + RESET_SOON_MS,
+            detail: "You've hit your session limit",
+          },
+        };
+      await fs.writeFile(path.join(options.cwd, "feat6.txt"), "reconciled\n");
+      await git(options.cwd, "add", "-A");
+      await git(options.cwd, "-c", "core.editor=true", "rebase", "--continue");
+      await writeVerdict(spec.prompt, { resolution: "clean", notes: "kept both" });
+      return { ok: true, text: "" };
+    });
+    const pauseKinds: unknown[] = [];
+    integrationContext.log.on((event) => {
+      if (event.type === "harness_paused") pauseKinds.push(event.data?.kind);
+    });
+
+    const result = await integrateTicket(
+      integrationContext,
+      ticket,
+      outcome.worktree,
+      outcome.report,
+    );
+
+    expect(result).toEqual({ status: "merged" });
+    expect(pauseKinds).toEqual(["usage-limit"]);
+    expect(integrationSessions).toBe(2);
+    expect(await fs.readFile(path.join(fixture.repo, "feat6.txt"), "utf8")).toBe("reconciled\n");
   });
 
   it("detects a branch the human already merged and closes without double-merging", async () => {

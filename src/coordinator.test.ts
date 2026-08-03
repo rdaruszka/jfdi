@@ -100,6 +100,15 @@ async function rescan(coordinator: Coordinator): Promise<void> {
   await sleep(SCAN_SETTLE_MS);
 }
 
+/** A promise a test resolves by hand, to sequence two concurrent runs against each other. */
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve: () => void = () => undefined;
+  const promise = new Promise<void>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve: () => resolve() };
+}
+
 /** Poll a condition to a fixed attempt cap — never an unbounded wait. */
 async function waitUntil(isSatisfied: () => boolean): Promise<void> {
   for (let attempt = 0; attempt < WAIT_ATTEMPTS; attempt++) {
@@ -175,6 +184,25 @@ kanban-plugin: board
 ---
 
 ## Ready
+
+## In Progress
+
+- [ ] Add feature gamma
+
+## Done
+
+`;
+
+/** One card left mid-flight and one waiting behind it — two claims on one slot. */
+const STRANDED_AND_WAITING_BOARD = `---
+
+kanban-plugin: board
+
+---
+
+## Ready
+
+- [ ] Add feature alpha
 
 ## In Progress
 
@@ -636,6 +664,41 @@ describe("Coordinator", () => {
     expect(context.harness.calls.length).toBeGreaterThan(0);
   });
 
+  it("takes the stranded in-progress card before a waiting one, and counts it against max_concurrent", async () => {
+    // Both columns want the single slot. The in-progress card holds partial
+    // work already paid for, so it goes first; the waiting card gets the slot
+    // it frees, not a second one alongside it.
+    await fs.writeFile(path.join(fixture.jfdiDir, "board.md"), STRANDED_AND_WAITING_BOARD);
+    const context = fixture.context(autoHandler());
+    fixture.config.max_concurrent = 1;
+    fixture.config.integration.mode = "on-approval";
+    const dispatched: string[] = [];
+    context.log.on((event) => {
+      if (event.type === "dispatch" && event.ticketId) dispatched.push(event.ticketId);
+    });
+
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+    await coordinator.start();
+    await coordinator.drain();
+    expect(dispatched).toEqual([ticketIdFromCard("Add feature gamma")]);
+    expect(coordinator.activeCount()).toBe(0);
+
+    await sleep(SCAN_SETTLE_MS);
+    await coordinator.drain();
+    coordinator.stop();
+
+    expect(dispatched).toEqual([
+      ticketIdFromCard("Add feature gamma"),
+      ticketIdFromCard("Add feature alpha"),
+    ]);
+    const board = await readBoard();
+    expect(findColumn(board, "Blocked")?.cards).toHaveLength(0);
+    expect(findColumn(board, "Ready to Merge")?.cards.map((c) => c.text)).toEqual([
+      "Add feature gamma",
+      "Add feature alpha",
+    ]);
+  });
+
   it("respects max_concurrent", async () => {
     let peak = 0;
     let current = 0;
@@ -737,6 +800,70 @@ describe("Coordinator under a broken provider", () => {
     // The dead session cost a respawn, not a round.
     expect(implementationAttempts).toBe(2);
     expect((await loadReport(fixture.stateDir, ticketIdFromCard(ALPHA_TEXT)))?.rounds).toBe(1);
+  });
+
+  /**
+   * "Pause is global" is a claim about the runs already in flight, not only
+   * about dispatch: one card's provider failure has to stop the other card's
+   * next stage too, and one resume has to release both.
+   */
+  it("holds every run in flight on one failure, and releases them all on one resume", async () => {
+    const pauseSeen = deferred();
+    const betaStarted = deferred();
+    const sessions: string[] = [];
+    let alphaImplementations = 0;
+    const healthy = autoHandler();
+    const context = fixture.context(async (spec, options) => {
+      const stage = stageOf(spec.prompt);
+      const name = /feature (\w+)/.exec(spec.prompt)?.[1] ?? "unknown";
+      sessions.push(`${name}:${stage}`);
+      // Beta's session is live when the tool pauses and survives it, so the
+      // boundary it holds at is its next stage — the thing under test.
+      if (stage === "implementation" && name === "beta") {
+        betaStarted.resolve();
+        await pauseSeen.promise;
+      }
+      const isFirstAlpha =
+        stage === "implementation" && name === "alpha" && ++alphaImplementations === 1;
+      if (!isFirstAlpha) return healthy(spec, options);
+      // Only a human ends this one, so nothing resumes behind the test's back.
+      await betaStarted.promise;
+      return { ok: false, text: "", failure: { kind: "needs-human" as const, detail: "/login" } };
+    });
+    const pauseEvents: string[] = [];
+    context.log.on((event) => {
+      if (event.type === "harness_paused") {
+        pauseEvents.push(event.type);
+        pauseSeen.resolve();
+      }
+      if (event.type === "harness_resumed") pauseEvents.push(event.type);
+    });
+    fixture.config.integration.mode = "on-approval";
+    fixture.config.max_concurrent = 2;
+
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+    await coordinator.start();
+    await pauseSeen.promise;
+    await sleep(SCAN_SETTLE_MS);
+
+    // Beta finished a stage into a paused tool: it holds rather than starting
+    // its review, and alpha holds rather than retrying. The two runs are
+    // concurrent, so what matters is the set, not which spawned first.
+    expect([...sessions].sort()).toEqual(["alpha:implementation", "beta:implementation"]);
+    expect(findColumn(await readBoard(), "Blocked")?.cards).toHaveLength(0);
+
+    context.pause.retryNow();
+    await coordinator.drain();
+    await sleep(SCAN_SETTLE_MS);
+    await coordinator.drain();
+    coordinator.stop();
+
+    // One pause, one resume, and both runs finished on the far side of it.
+    expect(pauseEvents).toEqual(["harness_paused", "harness_resumed"]);
+    expect(sessions).toContain("beta:code-review");
+    expect(sessions).toContain("alpha:code-review");
+    expect(findColumn(await readBoard(), "Ready to Merge")?.cards).toHaveLength(2);
+    expect(findColumn(await readBoard(), "Blocked")?.cards).toHaveLength(0);
   });
 
   it("dispatches nothing while paused, and picks the board up again on resume", async () => {
