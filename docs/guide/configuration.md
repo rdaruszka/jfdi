@@ -1,8 +1,10 @@
 # Configuration Reference
 
 All project configuration lives in `.jfdi/config.json`, versioned with your
-repo. Every field is optional — a missing file means all defaults — but a config
-with the wrong *types* is a hard error with a message naming the field.
+repo. Every field is optional **except [`stages`](#stages)** — a missing file
+means all defaults, but a file that exists must carry a complete `stages`
+section. A config with the wrong *types* is a hard error with a message naming
+the field.
 
 A complete example (this is also what `jfdi init` writes, minus the gate, which
 init fills in for your repo):
@@ -29,7 +31,12 @@ init fills in for your repo):
   "pipeline": { "max_rounds": 3 },
   "integration": { "target_branch": "main", "mode": "on-approval" },
   "max_concurrent": 2,
-  "harness": "claude"
+  "stages": {
+    "implementation": { "harness": "claude", "model": "claude-opus-5", "effort": "high" },
+    "code-review":    { "harness": "codex",  "model": "gpt-5.6-sol",   "effort": "high" },
+    "qa":             { "harness": "claude", "model": "claude-opus-5", "effort": "high" },
+    "integration":    { "harness": "claude", "model": "claude-opus-5", "effort": "medium" }
+  }
 }
 ```
 
@@ -107,16 +114,56 @@ How many ticket pipelines the coordinator runs at once. Dispatch order is board
 order (top of the begin column first); integration is always serialized
 regardless of this setting.
 
-### `harness`
+### `stages`
 
-| Type | Default | Values |
-|---|---|---|
-| string | `claude` | `"claude"` or `"codex"` |
+**Required.** One entry per stage — `implementation`, `code-review`, `qa`,
+`integration` — choosing the agent that stage runs.
 
-Which agent CLI runs every session — pipeline stages, `jfdi init`, and
-`jfdi convo` alike. The binary must be on your `PATH`. Provider-specific flags
-are supplied by JFDI itself and are not configurable; a legacy `harnessArgs` key
-is rejected with an explicit error.
+| Field | Type | Required | Values |
+|---|---|---|---|
+| `harness` | string | yes | `"claude"` or `"codex"` |
+| `model` | string | no | Provider-native. Anything the CLI accepts: an alias (`opus`) or a full id (`claude-opus-5`, `gpt-5.6-sol`). |
+| `effort` | string | no | Provider-native. Claude Code: `low`, `medium`, `high`, `xhigh`, `max`. Codex: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. |
+
+There is **no global harness and no provider-neutral model vocabulary**: model
+strings go to the CLI verbatim, and the provider is the authority on what
+exists — an unknown model surfaces as a failed session. An `effort` the chosen
+harness does not accept is rejected at load, naming the stage and the accepted
+list, so a typo costs a startup error rather than a round.
+
+Omitting `model` or `effort` means **pass no flag**: the provider's own default.
+A value is never inherited from another stage or from the scaffolded example, so
+naming only a harness can't pair one provider with another's model.
+
+The selection is fixed per stage, which is what makes
+[continuations](pipeline.md#fresh-sessions-vs-continuations) safe — a session id is
+only meaningful to the harness that minted it, and a stage always re-enters its
+own. Each session's harness, model and effort are recorded on its `stage_start`
+event, so `jfdi logs` answers "which model produced this" after the fact.
+
+`jfdi init` scaffolds the mix in the example above. Its two deliberate choices:
+
+- **Code review runs on a different provider from implementation.** A reviewer
+  that isn't the author's own model doesn't share the author's blind spots.
+  The consequence is stated plainly: with only one provider's CLI installed, a
+  scaffolded project fails at code-review. The failure names the missing binary
+  and points at `stages.code-review` — change that entry, or install the CLI.
+- **Integration runs a strong model at medium effort.** It only spawns on
+  rebase conflicts, so the setting prices conflict resolution alone: rare
+  enough that cost is negligible, and its output lands directly on the target
+  branch where the gate cannot catch silently dropped logic.
+
+Whichever harness `implementation` names also runs the interactive commands —
+`jfdi init` and `jfdi convo` — with that stage's model and effort.
+
+Both selected CLIs must be on your `PATH`. Beyond model and effort,
+provider-specific flags are supplied by JFDI itself and are not configurable; a
+legacy `harnessArgs` key is rejected with an explicit error.
+
+> **Upgrading:** `stages` replaced a single top-level `harness` key, and there
+> is no migration. A config still carrying `harness`, missing `stages`, or
+> missing any of the four entries is rejected at load with the block to paste
+> in. Update `.jfdi/config.json` by hand.
 
 ## Other files under `.jfdi/`
 

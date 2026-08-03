@@ -45,10 +45,12 @@ Three properties are worth internalizing:
 
 ## Stages
 
-Each stage is one agent session (Claude Code or Codex, per your `harness` config),
-spawned headless in the ticket's worktree with a stage-specific prompt. The prompt
-templates live in `.jfdi/prompts/` and are yours to edit — see
-[Prompts & Customization](prompts-and-customization.md).
+Each stage is one agent session — Claude Code or Codex, with whatever model and
+effort that stage's [`stages` entry](configuration.md#stages) names — spawned
+headless in the ticket's worktree with a stage-specific prompt. Stages need not
+agree: the scaffolded default deliberately reviews on a different provider than
+it implements on. The prompt templates live in `.jfdi/prompts/` and are yours to
+edit — see [Prompts & Customization](prompts-and-customization.md).
 
 | Stage | Job | Can escalate? |
 |---|---|---|

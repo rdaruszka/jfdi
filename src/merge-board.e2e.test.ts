@@ -15,7 +15,8 @@
  * test on a plain file could never catch it.
  *
  * No stage agent runs in any of these — the branches are pre-built and the
- * gate is either empty or a shell builtin — but a stub `claude` sits on PATH
+ * gate is either empty or a shell builtin — but stub `claude` and `codex`
+ * binaries sit on PATH
  * so a regression that reaches for a session fails loudly instead of calling
  * the real CLI. `JFDI_HOME`/`HOME` always point inside the scratch tree.
  */
@@ -36,7 +37,7 @@ const repoRoot = path.dirname(import.meta.dirname);
 const cliPath = path.join(repoRoot, "dist", "index.js");
 
 /** Any stage session is a regression here; make it an obvious, loud failure. */
-const STUB_CLAUDE = `#!/bin/sh
+const STUB_AGENT = `#!/bin/sh
 echo "no stage agent should run during jfdi merge" >&2
 exit 97
 `;
@@ -73,7 +74,11 @@ async function makeSandbox(): Promise<Sandbox> {
   await fs.mkdir(home);
   await fs.mkdir(binDir);
   await fs.mkdir(vault);
-  await fs.writeFile(path.join(binDir, "claude"), STUB_CLAUDE, { mode: 0o755 });
+  // Both CLIs the scaffolded config selects, played by the same script:
+  // the default mix reviews on Codex and implements on Claude.
+  for (const executable of ["claude", "codex"]) {
+    await fs.writeFile(path.join(binDir, executable), STUB_AGENT, { mode: 0o755 });
+  }
 
   await git(project, "init", "-b", "main");
   await git(project, "config", "user.email", "test@jfdi.local");

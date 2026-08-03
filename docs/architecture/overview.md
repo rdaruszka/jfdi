@@ -84,8 +84,11 @@ flowchart TB
   queue), by `jfdi run` (auto mode), and by `jfdi merge` — same code path, three
   callers. History is strictly linear: rebase + fast-forward, no merge commits.
 - **Harness** ([src/harness/](../../src/harness/)) — the provider abstraction;
-  see [Harness](harness.md). It also classifies its own provider's failures, so
-  a usage limit or an outage is never mistaken for bad work.
+  see [Harness](harness.md). Constructed **per stage**, not per instance:
+  `config.stages` picks a harness (and optionally a model and effort) for each
+  of implementation, code review, QA and integration, so a run routinely spans
+  two providers. It also classifies its own provider's failures, so a usage
+  limit or an outage is never mistaken for bad work.
 - **Pause controller** ([src/pause.ts](../../src/pause.ts)) — the tool-wide hold
   that classification feeds. It lives on the `PipelineContext`, so `jfdi run`
   and every dispatched pipeline share one pause and one resume; the coordinator

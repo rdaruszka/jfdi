@@ -311,9 +311,9 @@ describe("integrateTicket", () => {
         return { ok: true, text: "" };
       };
       const integrationHarness = new FakeHarness(resolvingHandler);
-      const otherHarness = new FakeHarness(async () => {
-        throw new Error("only the integration harness may run here");
-      });
+      const otherHarness = new FakeHarness(() =>
+        Promise.reject(new Error("only the integration harness may run here")),
+      );
       const base = mixed.context(resolvingHandler);
       const integrationContext: PipelineContext = {
         ...base,

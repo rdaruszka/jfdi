@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { findColumn, parseBoard } from "../board.js";
+import { defaultConfig } from "../config.js";
 import { createWorktree, git } from "../git.js";
 import { worktreesDir } from "../pipeline.js";
 import { commitFile, type Fixture, makeFixture } from "../test-helpers.js";
@@ -115,7 +116,10 @@ describe("mergeCommand board bookkeeping", () => {
   it("moves the card to Blocked when integration blocks", async () => {
     await fs.writeFile(
       path.join(fixture.jfdiDir, "config.json"),
-      JSON.stringify({ gate: [{ name: "check", cmd: "exit 1" }] }),
+      JSON.stringify({
+        gate: [{ name: "check", cmd: "exit 1" }],
+        stages: defaultConfig().stages,
+      }),
     );
     await writeBoard(board([CARD]));
     await makeTicketBranch();

@@ -9,9 +9,11 @@
  * would stay green.
  *
  * These tests pin that contract from the outside: they drive `dist/index.js` in
- * a scratch repo under the OS temp dir with a stub `claude` on PATH, and assert
- * on what a user or a wrapper script can see — exit codes, the event stream,
- * state.json, the scaffolded files, and the board/ticket-note mutations.
+ * a scratch repo under the OS temp dir with stub `claude` and `codex` binaries
+ * on PATH — both, because the scaffolded config reviews on a different provider
+ * than it implements on — and assert on what a user or a wrapper script can
+ * see: exit codes, the event stream, state.json, the scaffolded files, the
+ * argv each stage's CLI was handed, and the board/ticket-note mutations.
  *
  * They also pin the three places where the sweep's assertions *deliberately*
  * changed behavior on malformed input, so the hardening cannot be silently
@@ -26,6 +28,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { defaultConfig } from "./config.js";
 import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
@@ -37,18 +40,19 @@ const BUILD_TIMEOUT_MS = 180_000;
 const PIPELINE_TIMEOUT_MS = 120_000;
 
 /**
- * A `claude` that never talks to the network. It replays stream-json lines and
- * writes the verdict file its prompt names; `STUB_MODE` selects which verdicts
- * so one stub drives the pass, review-fail and blocked paths.
+ * The agent both stubs play: read the prompt, write the verdict file it names,
+ * and record the argv, so a test can prove which CLI ran a stage and with which
+ * flags. `STUB_MODE` selects which verdicts, so one body drives the pass,
+ * review-fail and blocked paths. Neither stub ever talks to the network.
  */
-const STUB_CLAUDE = `#!/usr/bin/env node
+const STUB_BODY = `
 const fs = require("node:fs");
 const { execFileSync } = require("node:child_process");
-const argv = process.argv.slice(2);
-const prompt = argv[argv.indexOf("-p") + 1] || "";
 const match = prompt.match(/(\\/\\S+\\.verdict\\.json)/);
 const mode = process.env.STUB_MODE || "pass";
-process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "stub" }] } }) + "\\n");
+if (process.env.STUB_ARGV_LOG) {
+  fs.appendFileSync(process.env.STUB_ARGV_LOG, JSON.stringify({ cli: cliName, argv }) + "\\n");
+}
 if (match) {
   const verdictPath = match[1];
   const stage = verdictPath.split("/").pop().replace(".verdict.json", "");
@@ -70,7 +74,30 @@ if (match) {
   fs.mkdirSync(verdictPath.replace(/\\/[^/]+$/, ""), { recursive: true });
   fs.writeFileSync(verdictPath, JSON.stringify(verdict));
 }
+`;
+
+/** The stub speaking Claude Code's stream-json protocol: prompt after `-p`. */
+const STUB_CLAUDE = `#!/usr/bin/env node
+const cliName = "claude";
+const argv = process.argv.slice(2);
+const prompt = argv[argv.indexOf("-p") + 1] || "";
+process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "stub" }] } }) + "\\n");
+${STUB_BODY}
 process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done" }) + "\\n");
+`;
+
+/**
+ * The stub speaking Codex's protocol: prompt is the last positional argument,
+ * the thread id must be announced (its absence is classified as an outage), and
+ * success is inferred from a final agent message plus a clean exit.
+ */
+const STUB_CODEX = `#!/usr/bin/env node
+const cliName = "codex";
+const argv = process.argv.slice(2);
+const prompt = argv[argv.length - 1] || "";
+process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "stub-thread" }) + "\\n");
+${STUB_BODY}
+process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "done" } }) + "\\n");
 `;
 
 interface Sandbox {
@@ -80,7 +107,12 @@ interface Sandbox {
   jfdiHome: string;
   stateDir: string;
   binDir: string;
+  /** Every stub invocation's CLI name and argv, one JSON line each. */
+  argvLog: string;
 }
+
+/** The scaffolded mix, so a case can vary one entry without restating four. */
+const STAGES = defaultConfig().stages;
 
 const sandboxRoots: string[] = [];
 
@@ -96,6 +128,7 @@ async function makeSandbox(): Promise<Sandbox> {
   await fs.mkdir(home);
   await fs.mkdir(binDir);
   await fs.writeFile(path.join(binDir, "claude"), STUB_CLAUDE, { mode: 0o755 });
+  await fs.writeFile(path.join(binDir, "codex"), STUB_CODEX, { mode: 0o755 });
 
   await git(project, "init", "-b", "main");
   await git(project, "config", "user.email", "test@jfdi.local");
@@ -111,6 +144,7 @@ async function makeSandbox(): Promise<Sandbox> {
     home,
     jfdiHome,
     binDir,
+    argvLog: path.join(root, "argv.jsonl"),
     stateDir: path.join(jfdiHome, "projects", project.split(path.sep).join("-")),
   };
 }
@@ -132,6 +166,7 @@ async function runCli(
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
     STUB_MODE: options.stubMode ?? "pass",
+    STUB_ARGV_LOG: sandbox.argvLog,
     NO_COLOR: "1",
   };
   try {
@@ -318,6 +353,45 @@ describe("CLI surface", () => {
     },
     PIPELINE_TIMEOUT_MS,
   );
+
+  it(
+    "spawns each stage of a freshly scaffolded project with that stage's flags",
+    async () => {
+      const sandbox = await makeSandbox();
+      await initProject(sandbox);
+      expect((await runCli(sandbox, ["run", "Add a greeting"])).code).toBe(0);
+
+      // What each stage's CLI was actually handed, in the order they ran.
+      const invocations = (await fs.readFile(sandbox.argvLog, "utf8"))
+        .split("\n")
+        .filter((line) => line.trim() !== "")
+        .map((line) => JSON.parse(line) as { cli: string; argv: string[] })
+        .map(({ cli, argv }) => {
+          const valueAfter = (flag: string) => {
+            const at = argv.indexOf(flag);
+            return at === -1 ? undefined : argv[at + 1];
+          };
+          return {
+            cli,
+            stage: /(\w[\w-]*)\.verdict\.json/.exec(argv.join(" "))?.[1],
+            model: valueAfter("--model"),
+            // Claude spells effort as a flag; Codex as a `-c` config override.
+            effort:
+              valueAfter("--effort") ??
+              argv.find((arg) => arg.startsWith("model_reasoning_effort="))?.split("=")[1],
+          };
+        });
+
+      // The scaffolded mix, spelled each provider's own way: Claude takes
+      // --effort, Codex takes it as a -c config override.
+      expect(invocations).toEqual([
+        { cli: "claude", stage: "implementation", model: "claude-opus-5", effort: "high" },
+        { cli: "codex", stage: "code-review", model: "gpt-5.6-sol", effort: "high" },
+        { cli: "claude", stage: "qa", model: "claude-opus-5", effort: "high" },
+      ]);
+    },
+    PIPELINE_TIMEOUT_MS,
+  );
 });
 
 describe("pipeline behavior", () => {
@@ -468,10 +542,25 @@ describe("trust boundaries", () => {
         ["[]", "config root must be an object"],
         ['"hello"', "config root must be an object"],
         [
-          JSON.stringify({ pipeline: { max_rounds: "three" } }),
+          JSON.stringify({ pipeline: { max_rounds: "three" }, stages: STAGES }),
           "max_rounds must be a positive integer",
         ],
-        [JSON.stringify({ pipeline: { max_rounds: -1 } }), "max_rounds must be a positive integer"],
+        [
+          JSON.stringify({ pipeline: { max_rounds: -1 }, stages: STAGES }),
+          "max_rounds must be a positive integer",
+        ],
+        // `stages` is required, and the retired global key is a hard stop —
+        // the breaking config change, pinned from outside the process.
+        ["{}", 'missing the required "stages" section'],
+        [JSON.stringify({ harness: "claude", stages: STAGES }), "no longer supported"],
+        [
+          JSON.stringify({ stages: { ...STAGES, qa: undefined } }),
+          "stages is missing an entry for qa",
+        ],
+        [
+          JSON.stringify({ stages: { ...STAGES, qa: { harness: "claude", effort: "hgih" } } }),
+          "which the claude harness does not accept",
+        ],
       ];
       for (const [body, expected] of rejected) {
         await fs.writeFile(configPath, body);
@@ -482,8 +571,8 @@ describe("trust boundaries", () => {
         expect(status.stderr).not.toContain("    at ");
       }
 
-      // An empty object is still valid — every key has a default.
-      await fs.writeFile(configPath, "{}");
+      // Everything but `stages` still defaults: the section alone parses clean.
+      await fs.writeFile(configPath, JSON.stringify({ stages: STAGES }));
       expect((await runCli(sandbox, ["status"])).code).toBe(0);
       await fs.writeFile(configPath, goodConfig);
     },

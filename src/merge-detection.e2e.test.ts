@@ -44,17 +44,24 @@ const SLOW_SESSION_MS = 25_000;
 const SHUTDOWN_GRACE_MS = 500;
 
 /**
- * A `claude` that never talks to the network: it replays two stream-json lines
- * and writes the verdict file its prompt names. A ticket whose text says
+ * The agent both stubbed CLIs play; it never talks to the network. It replays
+ * two stream-json lines and writes the verdict file its prompt names. A ticket whose text says
  * "slow" gets an implementation session that sits there, which is how these
  * tests keep the coordinator process alive while they act on it from outside.
  * The wait is inside this process, so killing the session ends it — no orphan.
  */
-const STUB_CLAUDE = `#!/usr/bin/env node
+const STUB_AGENT = `#!/usr/bin/env node
 const fs = require("node:fs");
 const { execFileSync } = require("node:child_process");
 const argv = process.argv.slice(2);
-const prompt = argv[argv.indexOf("-p") + 1] || "";
+// Claude passes the prompt after -p; Codex passes it last. One stub
+// answers to both names, so a sandbox needs no second script.
+const dashP = argv.indexOf("-p");
+const prompt = (dashP === -1 ? argv[argv.length - 1] : argv[dashP + 1]) || "";
+// Codex reads a thread id (its absence is an outage) and infers success
+// from a final agent message; Claude's parser ignores both lines.
+process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "stub-thread" }) + "\\n");
+process.on("exit", () => process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "done" } }) + "\\n"));
 const match = prompt.match(/(\\/\\S+\\.verdict\\.json)/);
 process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "stub" }] } }) + "\\n");
 if (match) {
@@ -111,7 +118,11 @@ async function makeSandbox(): Promise<Sandbox> {
   await fs.mkdir(project, { recursive: true });
   await fs.mkdir(home);
   await fs.mkdir(binDir);
-  await fs.writeFile(path.join(binDir, "claude"), STUB_CLAUDE, { mode: 0o755 });
+  // Both CLIs the scaffolded config selects, played by the same script:
+  // the default mix reviews on Codex and implements on Claude.
+  for (const executable of ["claude", "codex"]) {
+    await fs.writeFile(path.join(binDir, executable), STUB_AGENT, { mode: 0o755 });
+  }
 
   await git(project, "init", "-b", "main");
   await git(project, "config", "user.email", "test@jfdi.local");

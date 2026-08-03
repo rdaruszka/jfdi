@@ -4,7 +4,8 @@
  * `jfdi run` used to be strictly boardless; now, when the ticket it is running
  * has a card on the board, the run walks that card through the same columns the
  * coordinator would. These tests drive the built CLI (`dist/index.js`) in a
- * scratch repo under the OS temp dir with a stub `claude` on PATH, so they
+ * scratch repo under the OS temp dir with stub `claude` and `codex` binaries on
+ * PATH, so they
  * cover the whole wiring — config-driven board path, card lookup, the atomic
  * symlink-preserving writes — from the outside, the way a human running the
  * command sees it.
@@ -33,8 +34,9 @@ const BUILD_TIMEOUT_MS = 180_000;
 const PIPELINE_TIMEOUT_MS = 120_000;
 
 /**
- * A `claude` that never talks to the network. It replays two stream-json lines
- * and writes the verdict file its prompt names; the implementation stage also
+ * The agent both stubbed CLIs play; it never talks to the network. It replays
+ * two stream-json lines and writes the verdict file its prompt names; the
+ * implementation stage also
  * commits, so there is a real commit to review, gate and merge.
  *
  * Four env hooks let a test act *during* the implementation stage, which is
@@ -43,11 +45,18 @@ const PIPELINE_TIMEOUT_MS = 120_000;
  * `STUB_DELETE_CARD` play a human dragging or deleting the card, and
  * `STUB_ESCALATE` blocks the run.
  */
-const STUB_CLAUDE = `#!/usr/bin/env node
+const STUB_AGENT = `#!/usr/bin/env node
 const fs = require("node:fs");
 const { execFileSync } = require("node:child_process");
 const argv = process.argv.slice(2);
-const prompt = argv[argv.indexOf("-p") + 1] || "";
+// Claude passes the prompt after -p; Codex passes it last. One stub
+// answers to both names, so a sandbox needs no second script.
+const dashP = argv.indexOf("-p");
+const prompt = (dashP === -1 ? argv[argv.length - 1] : argv[dashP + 1]) || "";
+// Codex reads a thread id (its absence is an outage) and infers success
+// from a final agent message; Claude's parser ignores both lines.
+process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "stub-thread" }) + "\\n");
+process.on("exit", () => process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "done" } }) + "\\n"));
 const match = prompt.match(/(\\/\\S+\\.verdict\\.json)/);
 process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "stub" }] } }) + "\\n");
 
@@ -116,7 +125,11 @@ async function makeSandbox(): Promise<Sandbox> {
   await fs.mkdir(project, { recursive: true });
   await fs.mkdir(home);
   await fs.mkdir(binDir);
-  await fs.writeFile(path.join(binDir, "claude"), STUB_CLAUDE, { mode: 0o755 });
+  // Both CLIs the scaffolded config selects, played by the same script:
+  // the default mix reviews on Codex and implements on Claude.
+  for (const executable of ["claude", "codex"]) {
+    await fs.writeFile(path.join(binDir, executable), STUB_AGENT, { mode: 0o755 });
+  }
 
   await git(project, "init", "-b", "main");
   await git(project, "config", "user.email", "test@jfdi.local");

@@ -61,7 +61,7 @@ One JSON object per line:
 | `dispatch` | `title`, `branch` | A run started for the ticket |
 | `resumed` | `commitCount`, `hasCheckpointedChanges`, `hasAbortedRebase` | The run continues prior partial work |
 | `round_start` | `round` | A feedback round began |
-| `stage_start` | `stage`, `isContinuation?` | An agent session started |
+| `stage_start` | `stage`, `harness`, `model?`, `effort?`, `isContinuation?` | An agent session started. The selection fields are the record of which agent produced the work — `model`/`effort` are absent when the stage configured none. |
 | `stage_end` | `stage`, `verdict` | …and ended (`pass`/`fail`/`done`/`escalate`/`clean`/`complicated`, or `invalid-verdict` / `session-failed`) |
 | `gate_start` / `gate_result` | — / `ok`, `step?` | Mechanical gate run; `step` names the failing command |
 | `session_activity` | `text` | Live narration (tool use, gate step names) |

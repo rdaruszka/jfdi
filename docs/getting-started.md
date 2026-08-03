@@ -6,9 +6,11 @@ ticket, then to continuous board-driven operation.
 ## Prerequisites
 
 - **Node 22+** and **git**
-- The **`claude`** (Claude Code) or **`codex`** (OpenAI Codex) CLI installed,
-  authenticated, and on your `PATH` — JFDI is a harness *around* a coding-agent
-  CLI, not an agent itself
+- The **`claude`** (Claude Code) and **`codex`** (OpenAI Codex) CLIs installed,
+  authenticated, and on your `PATH` — JFDI is a harness *around* coding-agent
+  CLIs, not an agent itself. Both, because the scaffolded config runs code
+  review on a different provider than implementation; to work with only one,
+  point every entry in [`stages`](guide/configuration.md#stages) at it
 - A project that lives in a git repository
 
 ## Install

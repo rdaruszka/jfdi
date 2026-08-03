@@ -82,6 +82,7 @@ Headless spawn:
 
 ```
 claude -p <prompt> --output-format stream-json --verbose --permission-mode bypassPermissions
+       [--model <model>] [--effort <effort>]  # from the stage's selection
        [--resume <sessionId>]                 # continuation
        [--settings <cwd>/.jfdi/claude-settings.json]   # when the file exists
 ```
@@ -95,16 +96,19 @@ claude -p <prompt> --output-format stream-json --verbose --permission-mode bypas
   `.jfdi/claude-settings.json` exists it is passed via `--settings`, wiring a
   PostToolUse hook that formats each edited file
   ([details](../guide/prompts-and-customization.md#the-format-hook)).
-- Interactive: `claude <prompt>`, or `claude --append-system-prompt <prompt>`
-  when `isSystemPrompt` is set.
+- Effort levels: `low`, `medium`, `high`, `xhigh`, `max` (`CLAUDE_EFFORT_LEVELS`).
+- Interactive: `claude [--model …] [--effort …] <prompt>`, with
+  `--append-system-prompt` before the prompt when `isSystemPrompt` is set.
 
 ### Codex
 
 Headless spawn:
 
 ```
-codex exec --json --dangerously-bypass-approvals-and-sandbox <prompt>
-codex exec resume --json --dangerously-bypass-approvals-and-sandbox <threadId> <prompt>   # continuation
+codex exec --json --dangerously-bypass-approvals-and-sandbox \
+     [--model <model>] [-c model_reasoning_effort=<effort>] <prompt>
+codex exec resume --json --dangerously-bypass-approvals-and-sandbox \
+     [--model …] [-c …] <threadId> <prompt>   # continuation; flags precede the positionals
 ```
 
 - Parses the Codex JSON event protocol: `thread.started` carries the thread id
@@ -117,8 +121,12 @@ codex exec resume --json --dangerously-bypass-approvals-and-sandbox <threadId> <
   event from the last agent message on a clean exit.
 - No hook system → no settings injection. The format-hook acceleration is
   simply absent: degraded, not broken.
-- Interactive: `codex --dangerously-bypass-approvals-and-sandbox <prompt>`;
-  `isSystemPrompt` is ignored.
+- Effort has no flag — it is a config override, and Codex validates nothing
+  locally: it forwards the value to the API, which answers an unknown one with a
+  400 mid-session. `CODEX_EFFORT_LEVELS` (`none`, `minimal`, `low`, `medium`,
+  `high`, `xhigh`, `max`) is what turns that into a config error at startup.
+- Interactive: `codex --dangerously-bypass-approvals-and-sandbox [--model …]
+  [-c …] <prompt>`; `isSystemPrompt` is ignored.
 
 Both implementations share the same shape deliberately: line-by-line stdout
 parsing mirrored to the log file, a rolling stderr tail for diagnostics when the
@@ -187,19 +195,42 @@ it is provider-neutral.
 
 ## Selection
 
-`config.harness` (`"claude"` | `"codex"`) selects the implementation via an
-exhaustive switch in [src/harness/index.ts](../../src/harness/index.ts). One
-harness serves the whole instance: every pipeline stage, `jfdi init`, and
-`jfdi convo`.
+Selection is **per stage**. `config.stages.<stage>` names a harness and,
+optionally, a provider-native model and effort
+([schema](../guide/configuration.md#stages)); `createStageHarnesses` in
+[src/harness/index.ts](../../src/harness/index.ts) builds one instance per stage
+at context construction, and `PipelineContext.harnesses` holds all four. There
+is no global harness and no instance-wide harness — the four stages routinely
+disagree, and the scaffolded default deliberately reviews on a different
+provider than it implements on.
+
+Constructors take the selection (`new ClaudeHarness({ stage, model, effort })`)
+and each implementation maps it to its own CLI's spelling; `SpawnOptions` is
+unchanged, so pipeline logic never sees a model name. An absent model or effort
+passes no flag at all. `stage` rides along purely as provenance: a spawn that
+fails names the `stages` entry that selected the missing binary.
+
+Fixing the harness per stage is also what keeps continuations honest — a session
+id is only meaningful to the harness that minted it, and a stage always
+re-enters its own. `jfdi init` and `jfdi convo` use the `implementation` stage's
+harness, model and effort included.
+
+Each implementation declares the effort values its CLI accepts in a table beside
+the flag mapping it feeds; `EFFORT_LEVELS_BY_HARNESS` gathers them for
+`parseConfig`, which rejects an unaccepted `(harness, effort)` pair at load.
 
 ## Adding a provider
 
-1. Extend the `HarnessName` union in [src/config.ts](../../src/config.ts) (and
-   its validation message).
+1. Extend the `HarnessName` union in
+   [src/harness/types.ts](../../src/harness/types.ts) (and the validation
+   message in `parseStageConfig`).
 2. Implement `Harness` in `src/harness/<name>.ts`: map the provider's headless
-   JSON output to `HarnessEvent`s, report a session/thread id for continuation,
-   implement `spawnInteractive`, honor `logPath`, never reject `done`.
-3. Add the case to `createHarness` and the export in `src/harness/index.ts`.
+   JSON output to `HarnessEvent`s, map `HarnessSelection` to the CLI's model and
+   effort flags (and export the effort levels it accepts), report a
+   session/thread id for continuation, implement `spawnInteractive`, honor
+   `logPath`, never reject `done`.
+3. Add the case to `createHarness`, the effort table to
+   `EFFORT_LEVELS_BY_HARNESS`, and the export, in `src/harness/index.ts`.
 4. Keep provider-specific accelerations inside the new file; their absence in
    other providers must degrade gracefully, and their presence must not leak
    into pipeline logic.

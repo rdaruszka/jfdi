@@ -7,7 +7,8 @@
  * reaches an agent session says "you are resuming", whether the checkpoint
  * commit really lands before the first session starts, and whether a restarted
  * coordinator really moves a stranded card. These drive `dist/index.js` in a
- * scratch repo under the OS temp dir with a stub `claude` on PATH and assert on
+ * scratch repo under the OS temp dir with stub `claude` and `codex` binaries on
+ * PATH, and assert on
  * what an agent, a renderer or a human can observe from outside the process.
  *
  * `JFDI_HOME`/`HOME` always point inside the scratch tree — nothing here can
@@ -42,18 +43,26 @@ const HOLD_PROOF_MS = 3_000;
 const RESUME_SOON_MS = 50;
 
 /**
- * A `claude` that never talks to the network. Beyond replaying stream-json and
+ * The agent both stubbed CLIs play; it never talks to the network. Beyond
+ * replaying stream-json and
  * writing the verdict its prompt names, it records two things the assertions
  * need: the full prompt text it was handed, and — for the implementation stage
  * — `git status --porcelain` as the session found the worktree, which is the
  * only way to observe "the agent started from a clean tree" from outside.
  */
-const STUB_CLAUDE = `#!/usr/bin/env node
+const STUB_AGENT = `#!/usr/bin/env node
 const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const argv = process.argv.slice(2);
-const prompt = argv[argv.indexOf("-p") + 1] || "";
+// Claude passes the prompt after -p; Codex passes it last. One stub
+// answers to both names, so a sandbox needs no second script.
+const dashP = argv.indexOf("-p");
+const prompt = (dashP === -1 ? argv[argv.length - 1] : argv[dashP + 1]) || "";
+// Codex reads a thread id (its absence is an outage) and infers success
+// from a final agent message; Claude's parser ignores both lines.
+process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "stub-thread" }) + "\\n");
+process.on("exit", () => process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "done" } }) + "\\n"));
 const match = prompt.match(/(\\/\\S+\\.verdict\\.json)/);
 const promptDir = process.env.STUB_PROMPT_DIR;
 const RESET_SECONDS_AHEAD = 3600;
@@ -137,7 +146,11 @@ async function makeSandbox(): Promise<Sandbox> {
   await fs.mkdir(project, { recursive: true });
   await fs.mkdir(home);
   await fs.mkdir(binDir);
-  await fs.writeFile(path.join(binDir, "claude"), STUB_CLAUDE, { mode: 0o755 });
+  // Both CLIs the scaffolded config selects, played by the same script:
+  // the default mix reviews on Codex and implements on Claude.
+  for (const executable of ["claude", "codex"]) {
+    await fs.writeFile(path.join(binDir, executable), STUB_AGENT, { mode: 0o755 });
+  }
 
   await git(project, "init", "-b", "main");
   await git(project, "config", "user.email", "test@jfdi.local");

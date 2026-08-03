@@ -12,10 +12,10 @@
  *    a branch that moved gets the pipeline, not a silent merge of stale work.
  *
  * Everything drives the built CLI (`dist/index.js`) in a scratch repo under the
- * OS temp dir, with a stub `claude` on PATH whose behavior is steered by a
- * control file (so it can change between coordinator scans). `JFDI_HOME`/`HOME`
- * always point inside the scratch tree — nothing here can reach the real
- * `~/.jfdi`.
+ * OS temp dir, with stub `claude` and `codex` binaries on PATH whose behavior
+ * is steered by a control file (so it can change between coordinator scans).
+ * `JFDI_HOME`/`HOME` always point inside the scratch tree — nothing here can
+ * reach the real `~/.jfdi`.
  */
 import { execFile, spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
@@ -42,17 +42,25 @@ const CARD_TEXT = "Add a feature";
 const CARD_LINE = `- [ ] ${CARD_TEXT}`;
 
 /**
- * A `claude` that never talks to the network. It replays two stream-json lines,
- * writes the verdict file its prompt names, and appends each stage it served to
- * `STUB_TRACE` so a test can count pipeline re-runs. `STUB_CONTROL` is re-read
- * on every invocation: `integration: "resolve"` finishes the conflicted rebase,
- * anything else walks away and leaves it in progress.
+ * The agent both stubbed CLIs play; it never talks to the network. It replays
+ * two stream-json lines, writes the verdict file its prompt names, and appends
+ * each stage it served to `STUB_TRACE` so a test can count pipeline re-runs.
+ * `STUB_CONTROL` is re-read on every invocation: `integration: "resolve"`
+ * finishes the conflicted rebase, anything else walks away and leaves it in
+ * progress.
  */
-const STUB_CLAUDE = `#!/usr/bin/env node
+const STUB_AGENT = `#!/usr/bin/env node
 const fs = require("node:fs");
 const { execFileSync } = require("node:child_process");
 const argv = process.argv.slice(2);
-const prompt = argv[argv.indexOf("-p") + 1] || "";
+// Claude passes the prompt after -p; Codex passes it last. One stub
+// answers to both names, so a sandbox needs no second script.
+const dashP = argv.indexOf("-p");
+const prompt = (dashP === -1 ? argv[argv.length - 1] : argv[dashP + 1]) || "";
+// Codex reads a thread id (its absence is an outage) and infers success
+// from a final agent message; Claude's parser ignores both lines.
+process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "stub-thread" }) + "\\n");
+process.on("exit", () => process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "done" } }) + "\\n"));
 const match = prompt.match(/(\\/\\S+\\.verdict\\.json)/);
 const controlPath = process.env.STUB_CONTROL;
 const control = controlPath && fs.existsSync(controlPath)
@@ -116,7 +124,11 @@ async function makeSandbox(): Promise<Sandbox> {
   await fs.mkdir(project, { recursive: true });
   await fs.mkdir(home);
   await fs.mkdir(binDir);
-  await fs.writeFile(path.join(binDir, "claude"), STUB_CLAUDE, { mode: 0o755 });
+  // Both CLIs the scaffolded config selects, played by the same script:
+  // the default mix reviews on Codex and implements on Claude.
+  for (const executable of ["claude", "codex"]) {
+    await fs.writeFile(path.join(binDir, executable), STUB_AGENT, { mode: 0o755 });
+  }
 
   await git(project, "init", "-b", "main");
   await git(project, "config", "user.email", "test@jfdi.local");
