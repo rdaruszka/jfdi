@@ -155,12 +155,16 @@ The shape:
 <body, written for a reader with zero context who was not in the session>
 
 JFDI <Stage> <outcome> — <where the run actually went>
+
 JFDI-Round: <n>/<max>
 ```
 
 The scribe writes the subject and body only. The status line and the trailer are
 appended by the pipeline, so they never depend on an agent getting a format
-right: `git log --format='%(trailers:key=JFDI-Round)'` always answers.
+right: `git log --format='%(trailers:key=JFDI-Round)'` always answers. The
+blank line above the trailer is load-bearing: git only reads a message's last
+paragraph as a trailer block when every line in it is trailer-shaped, so the
+trailer stands alone rather than sharing a paragraph with the status line.
 
 What comes back is subprocess output on its way into permanent history, so the
 pipeline enforces the rest of the shape rather than trusting it. A first line

@@ -26,6 +26,7 @@ describe("assembleCommitMessage", () => {
         "digits rather than 40.",
         "",
         "JFDI Implementation complete — moving to the mechanical gate",
+        "",
         "JFDI-Round: 2/3",
         "",
       ].join("\n"),
@@ -231,9 +232,11 @@ describe("assembleCommitMessage against hostile scribe output", () => {
     expect(hasControlCharacters(message)).toBe(false);
     const messageLines = message.trimEnd().split("\n");
     expect(messageLines[0]).toBe("fix-names: WIP — Implementation round 2");
-    // One line for the status, one for the trailer, in that order.
-    expect(messageLines.slice(-2)).toEqual([
+    // One line for the status, then the trailer alone in its own paragraph —
+    // git only parses an all-trailer last paragraph as a trailer block.
+    expect(messageLines.slice(-3)).toEqual([
       "JFDI Implementation interrupted: killed mid-edit second line[0m — returning to Implementation for round 3",
+      "",
       "JFDI-Round: 2/3",
     ]);
   });
@@ -252,6 +255,7 @@ describe("assembleCommitMessage against hostile scribe output", () => {
         "fix-names: Implementation round 2",
         "",
         "JFDI Implementation complete — moving on",
+        "",
         "JFDI-Round: 2/3",
         "",
       ].join("\n"),
@@ -269,8 +273,9 @@ describe("assembleCommitMessage against hostile scribe output", () => {
     for (const text of hostile) {
       const message = assembleCommitMessage(text, "fix-names", HANDOFF);
       expect(message.startsWith("fix-names: ")).toBe(true);
-      expect(message.trimEnd().split("\n").slice(-2)).toEqual([
+      expect(message.trimEnd().split("\n").slice(-3)).toEqual([
         "JFDI Implementation complete — moving to the mechanical gate",
+        "",
         "JFDI-Round: 2/3",
       ]);
       expect(message.endsWith("\n")).toBe(true);

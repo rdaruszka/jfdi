@@ -43,6 +43,7 @@ just ended, and the pipeline is committing what it left behind.
 
   ```
   {{STATUS_LINE}}
+
   JFDI-Round: {{ROUND}}/{{MAX_ROUNDS}}
   ```
 

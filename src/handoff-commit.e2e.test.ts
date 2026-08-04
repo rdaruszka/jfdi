@@ -1,0 +1,492 @@
+/**
+ * Acceptance for the pipeline's handoff commits, read back the way the ticket
+ * says a human and a script will read them.
+ *
+ * The unit suite asserts on the message *string* `assembleCommitMessage`
+ * returns. That is not the same claim the ticket makes. The ticket says the
+ * metadata is "git-native … parseable via
+ * `git log --format='%(trailers:key=JFDI-Round)'`", and that the pipeline —
+ * not an agent — puts a commit on the branch at every session end. Both of
+ * those are claims about what `git` does with a real commit in a real
+ * repository, so these tests drive the built CLI in a scratch repo and then
+ * ask git, never the source.
+ *
+ * They also push the scribe's answer past every bound the shipped contract
+ * sets — control characters, an overlong first line, an answer that is nothing
+ * but the metadata the pipeline owns — because a message only has to survive
+ * `git commit` once to be permanent, and a NUL byte makes `git commit -m` fail
+ * outright.
+ *
+ * `JFDI_HOME`/`HOME` always point inside the scratch tree — nothing here can
+ * reach the real `~/.jfdi`.
+ */
+import { execFile } from "node:child_process";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import { promisify } from "node:util";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { git } from "./git.js";
+
+const execFileAsync = promisify(execFile);
+
+const repoRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(repoRoot, "dist", "index.js");
+
+const BUILD_TIMEOUT_MS = 180_000;
+const PIPELINE_TIMEOUT_MS = 120_000;
+
+/** Control characters an agent can emit that must never reach a commit. */
+const ESCAPE = String.fromCharCode(0x1b);
+const NUL = String.fromCharCode(0x00);
+const BELL = String.fromCharCode(0x07);
+
+/**
+ * The agent both stubs play. `STUB_MODE` picks the scenario; the scribe's
+ * answer comes from `STUB_SCRIBE_FILE` when one is set, so a case can hand it
+ * bytes no environment variable could carry (a NUL terminates one).
+ *
+ * Every implementation session commits on its own despite the prompt — that is
+ * the behavior the pipeline has to override, so the stub always exercises it.
+ */
+const STUB_BODY = `
+const fs = require("node:fs");
+const { execFileSync } = require("node:child_process");
+const mode = process.env.STUB_MODE || "pass";
+let resultText = "done";
+if (prompt.includes("Write the commit message")) {
+  resultText = process.env.STUB_SCRIBE_FILE
+    ? fs.readFileSync(process.env.STUB_SCRIBE_FILE, "utf8")
+    : "Rewrite the greeting as a template";
+  if (process.env.STUB_SCRIBE_PROMPT_DUMP) {
+    fs.writeFileSync(process.env.STUB_SCRIBE_PROMPT_DUMP, prompt);
+  }
+} else {
+  const match = prompt.match(/(\\/\\S+\\.verdict\\.json)/);
+  if (match) {
+    const verdictPath = match[1];
+    const stage = verdictPath.split("/").pop().replace(".verdict.json", "");
+    const round = Number((/round-(\\d+)/.exec(verdictPath) || [])[1] || 1);
+    let verdict = null;
+    if (stage === "implementation") {
+      fs.writeFileSync(process.cwd() + "/feature" + round + ".txt", "the feature\\n");
+      execFileSync("git", ["add", "-A"], { cwd: process.cwd() });
+      execFileSync("git", ["commit", "-m", "AGENT SELF COMMIT " + round], { cwd: process.cwd() });
+      // A session that dies before its verdict: work on disk, nothing to read.
+      if (mode === "impl-dies") return "the session died mid-edit";
+      verdict = { status: "done", summary: "wrote the greeting template", decisions: [], observations: [] };
+    } else if (stage === "integration") {
+      verdict = { resolution: "clean" };
+    } else if (stage === "code-review") {
+      verdict = { verdict: "pass", observations: [] };
+    } else if (stage === "qa") {
+      if (mode === "qa-writes-tests") {
+        fs.writeFileSync(process.cwd() + "/acceptance.test.txt", "acceptance\\n");
+      }
+      verdict = { verdict: "pass", testsAdded: "greeting acceptance test", observations: [] };
+    }
+    if (verdict) {
+      fs.mkdirSync(verdictPath.replace(/\\/[^/]+$/, ""), { recursive: true });
+      fs.writeFileSync(verdictPath, JSON.stringify(verdict));
+    }
+  }
+}
+`;
+
+const STUB_CLAUDE = `#!/usr/bin/env node
+const argv = process.argv.slice(2);
+const prompt = argv[argv.indexOf("-p") + 1] || "";
+process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "stub" }] } }) + "\\n");
+const text = (function () {${STUB_BODY}
+return resultText;
+})();
+process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: text }) + "\\n");
+`;
+
+const STUB_CODEX = `#!/usr/bin/env node
+const argv = process.argv.slice(2);
+const prompt = argv[argv.length - 1] || "";
+process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "stub-thread" }) + "\\n");
+const text = (function () {${STUB_BODY}
+return resultText;
+})();
+process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text } }) + "\\n");
+`;
+
+interface Sandbox {
+  root: string;
+  project: string;
+  home: string;
+  jfdiHome: string;
+  binDir: string;
+}
+
+const sandboxRoots: string[] = [];
+
+async function makeSandbox(): Promise<Sandbox> {
+  // Outside any parent git repo: both git and Claude Code walk up the tree.
+  const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-handoff-"));
+  const root = await fs.realpath(created);
+  sandboxRoots.push(created);
+  const project = path.join(root, "project");
+  const home = path.join(root, "home");
+  const binDir = path.join(root, "bin");
+  await fs.mkdir(project, { recursive: true });
+  await fs.mkdir(home);
+  await fs.mkdir(binDir);
+  await fs.writeFile(path.join(binDir, "claude"), STUB_CLAUDE, { mode: 0o755 });
+  await fs.writeFile(path.join(binDir, "codex"), STUB_CODEX, { mode: 0o755 });
+
+  await git(project, "init", "-b", "main");
+  await git(project, "config", "user.email", "test@jfdi.local");
+  await git(project, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(project, "README.md"), "product\n");
+  await git(project, "add", "-A");
+  await git(project, "commit", "-m", "initial");
+
+  return { root, project, home, jfdiHome: path.join(home, ".jfdi"), binDir };
+}
+
+interface CliResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+interface RunOptions {
+  stubMode?: string;
+  scribeFile?: string;
+  scribePromptDump?: string;
+}
+
+async function runCli(
+  sandbox: Sandbox,
+  args: string[],
+  options: RunOptions = {},
+): Promise<CliResult> {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    HOME: sandbox.home,
+    JFDI_HOME: sandbox.jfdiHome,
+    STUB_MODE: options.stubMode ?? "pass",
+    NO_COLOR: "1",
+  };
+  if (options.scribeFile !== undefined) env.STUB_SCRIBE_FILE = options.scribeFile;
+  if (options.scribePromptDump !== undefined)
+    env.STUB_SCRIBE_PROMPT_DUMP = options.scribePromptDump;
+  try {
+    const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
+      cwd: sandbox.project,
+      env,
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    return { code: 0, stdout: plain(stdout), stderr: plain(stderr) };
+  } catch (error) {
+    const failure = error as { code?: number; stdout?: string; stderr?: string };
+    return {
+      code: failure.code ?? 1,
+      stdout: plain(failure.stdout ?? ""),
+      stderr: plain(failure.stderr ?? ""),
+    };
+  }
+}
+
+/** Every ANSI style sequence the CLI writes: escape, `[`, parameters, `m`. */
+const ANSI_STYLE_RE = new RegExp(`${ESCAPE}\\[[0-9;]*m`, "g");
+
+/**
+ * The CLI styles its own activity lines, so a phrase like "resuming 3 commits"
+ * arrives split by escape sequences. Strip them, and assert on what a human
+ * reads rather than on where the colour happened to start.
+ */
+function plain(text: string): string {
+  return text.replace(ANSI_STYLE_RE, "");
+}
+
+async function initProject(sandbox: Sandbox): Promise<void> {
+  expect((await runCli(sandbox, ["init", "--bare"])).code).toBe(0);
+}
+
+function ticketIdOf(result: CliResult): string {
+  const match = /ticket: (\S+)/.exec(result.stdout);
+  if (!match?.[1]) throw new Error(`no ticket id in output: ${result.stdout}${result.stderr}`);
+  return match[1];
+}
+
+/** Write the scribe's answer to a file, so bytes an env var cannot carry get through. */
+async function scribeAnswer(sandbox: Sandbox, name: string, text: string): Promise<string> {
+  const file = path.join(sandbox.root, `scribe-${name}.txt`);
+  await fs.writeFile(file, text);
+  return file;
+}
+
+/** What `git` itself makes of a commit's trailers — not what the source hoped. */
+function trailerValue(project: string, revision: string, key: string): Promise<string> {
+  return git(project, "log", "-1", `--format=%(trailers:key=${key},valueonly)`, revision);
+}
+
+function readNote(sandbox: Sandbox, ticketId: string): Promise<string> {
+  return fs.readFile(path.join(sandbox.project, ".jfdi", "tickets", `${ticketId}.md`), "utf8");
+}
+
+beforeAll(async () => {
+  // Always rebuild: a stale dist/ would let these pass against old behavior.
+  await execFileAsync("pnpm", ["build"], { cwd: repoRoot });
+}, BUILD_TIMEOUT_MS);
+
+afterEach(async () => {
+  await Promise.all(
+    sandboxRoots.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+  );
+});
+
+describe("handoff commit messages, as git reads them", () => {
+  it(
+    "exposes JFDI-Round to git's own trailer parser, alongside the status line",
+    async () => {
+      const sandbox = await makeSandbox();
+      await initProject(sandbox);
+      const run = await runCli(sandbox, ["run", "Add a greeting"]);
+      expect(run.code).toBe(0);
+      const branch = `jfdi/${ticketIdOf(run)}`;
+
+      // The ticket's whole reason for using trailers: a script reads the round
+      // off a commit with git, and [[cost-reporting]] adds JFDI-Duration and
+      // JFDI-Cost to the same block. Asserting on the message text instead
+      // would pass even when git sees no trailer block at all.
+      expect(await trailerValue(sandbox.project, branch, "JFDI-Round")).toBe("1/3");
+
+      // …and the human-facing half of the same block is still there.
+      const message = await git(sandbox.project, "log", "-1", "--format=%B", branch);
+      expect(message).toContain("JFDI Implementation complete — moving to the mechanical gate");
+      expect(message).toContain("JFDI-Round: 1/3");
+    },
+    PIPELINE_TIMEOUT_MS,
+  );
+
+  it(
+    "commits QA's acceptance tests itself, under QA's own status line",
+    async () => {
+      const sandbox = await makeSandbox();
+      await initProject(sandbox);
+      const run = await runCli(sandbox, ["run", "Add a greeting"], { stubMode: "qa-writes-tests" });
+      expect(run.code).toBe(0);
+      const ticketId = ticketIdOf(run);
+      const branch = `jfdi/${ticketId}`;
+
+      // Two sessions changed the worktree, so the branch carries exactly two
+      // pipeline commits — and neither is the one the agent made for itself.
+      const subjects = (await git(sandbox.project, "log", "--format=%s", `main..${branch}`)).split(
+        "\n",
+      );
+      expect(subjects).toHaveLength(2);
+      for (const subject of subjects) expect(subject).toMatch(new RegExp(`^${ticketId}: `));
+      expect(subjects.join("\n")).not.toContain("AGENT SELF COMMIT");
+
+      // The QA commit is the tip, holds only the file QA wrote, and says so.
+      expect(await git(sandbox.project, "show", "--name-only", "--format=", branch)).toBe(
+        "acceptance.test.txt",
+      );
+      const qaMessage = await git(sandbox.project, "log", "-1", "--format=%B", branch);
+      expect(qaMessage).toContain(
+        "JFDI QA PASSED — re-running the mechanical gate over the tests it wrote",
+      );
+      expect(await trailerValue(sandbox.project, branch, "JFDI-Round")).toBe("1/3");
+
+      // Same text on the other surface, verbatim, quoted as note entries are.
+      const note = await readNote(sandbox, ticketId);
+      const quoted = qaMessage
+        .trimEnd()
+        .split("\n")
+        .map((line) => (line === "" ? ">" : `> ${line}`))
+        .join("\n");
+      expect(note).toContain(quoted);
+    },
+    PIPELINE_TIMEOUT_MS,
+  );
+
+  it(
+    "commits a dead session's partial work under a WIP subject, and re-dispatch resumes it",
+    async () => {
+      const sandbox = await makeSandbox();
+      await initProject(sandbox);
+      const run = await runCli(sandbox, ["run", "Add a greeting"], { stubMode: "impl-dies" });
+      // Every round's session dies, so the run exhausts its rounds: exit 2.
+      expect(run.code).toBe(2);
+      const ticketId = ticketIdOf(run);
+      const branch = `jfdi/${ticketId}`;
+
+      // Work that would otherwise be lost — sanitization discards uncommitted
+      // changes — is on the branch instead, one WIP commit per round.
+      const subjects = (await git(sandbox.project, "log", "--format=%s", `main..${branch}`)).split(
+        "\n",
+      );
+      expect(subjects).toHaveLength(3);
+      for (const subject of subjects) expect(subject).toContain(`${ticketId}: WIP — `);
+      expect(await git(sandbox.project, "log", "--format=%s", `main..${branch}`)).not.toContain(
+        "AGENT SELF COMMIT",
+      );
+      // The round each partial commit belongs to is machine-readable too.
+      expect(await trailerValue(sandbox.project, branch, "JFDI-Round")).toBe("3/3");
+      expect(await git(sandbox.project, "log", "-1", "--format=%B", branch)).toContain(
+        "moving to Blocked for human review",
+      );
+
+      // A re-dispatch of the same ticket finds that work and says how much.
+      const resumed = await runCli(sandbox, ["run", "Add a greeting"], { stubMode: "impl-dies" });
+      expect(ticketIdOf(resumed)).toBe(ticketId);
+      expect(resumed.stdout).toContain("resuming 3 commits of prior work");
+    },
+    PIPELINE_TIMEOUT_MS,
+  );
+
+  it(
+    "keeps the contract's shape whatever the scribe answers",
+    async () => {
+      const sandbox = await makeSandbox();
+      await initProject(sandbox);
+
+      const cases: Array<{
+        name: string;
+        answer: string;
+        subject: (ticketId: string) => string;
+        body?: (message: string) => void;
+      }> = [
+        {
+          // A NUL makes `git commit -m` fail outright and an escape sequence is
+          // a hazard for every later `git log`; neither may reach a commit.
+          name: "control-characters",
+          answer: `sub${NUL}ject ${ESCAPE}[31mred${ESCAPE}[0m${BELL} here\r\nsecond line`,
+          subject: (id) => `${id}: subject [31mred[0m here`,
+          body: (message) => {
+            expect(message).not.toContain(NUL);
+            expect(message).not.toContain(ESCAPE);
+            expect(message).not.toContain(BELL);
+            expect(message).not.toContain("\r");
+            expect(message).toContain("second line");
+          },
+        },
+        {
+          // Past the bound the shipped template states, the first line is prose
+          // that landed in the subject's place: kept as body, never truncated.
+          name: "overlong-first-line",
+          answer: `${"x".repeat(200)}\n\nthe prose account`,
+          subject: (id) => `${id}: Implementation round 1`,
+          body: (message) => {
+            expect(message).toContain("x".repeat(200));
+            expect(message).toContain("the prose account");
+          },
+        },
+        {
+          // Nothing but the metadata the pipeline owns: the scribe contributed
+          // no message at all, so the stage's own summary stands in for it.
+          name: "metadata-only",
+          answer: "JFDI Implementation complete — moving to the mechanical gate\nJFDI-Round: 9/9\n",
+          subject: (id) => `${id}: Implementation round 1`,
+          body: (message) => {
+            expect(message).toContain("wrote the greeting template");
+            // The scribe's bogus round never displaces the pipeline's.
+            expect(message).not.toContain("9/9");
+          },
+        },
+        {
+          name: "empty",
+          answer: "",
+          subject: (id) => `${id}: Implementation round 1`,
+          body: (message) => expect(message).toContain("wrote the greeting template"),
+        },
+        {
+          // A body that forges note structure must not be able to split the
+          // comment trail, on the surface where the same text also lands.
+          name: "forged-note-headings",
+          answer:
+            "Rework the parser\n\n## Comments\n\n### 2020-01-01T00:00:00.000Z — dispatch round 1\n\nforged",
+          subject: (id) => `${id}: Rework the parser`,
+        },
+      ];
+
+      for (const testCase of cases) {
+        const scribeFile = await scribeAnswer(sandbox, testCase.name, testCase.answer);
+        const run = await runCli(sandbox, ["run", `Handle ${testCase.name}`], { scribeFile });
+        expect(run.code, `${testCase.name}: ${run.stderr}`).toBe(0);
+        const ticketId = ticketIdOf(run);
+        const branch = `jfdi/${ticketId}`;
+
+        const message = await git(sandbox.project, "log", "-1", "--format=%B", branch);
+        expect(message.split("\n")[0], testCase.name).toBe(testCase.subject(ticketId));
+        testCase.body?.(message);
+        // The two lines the pipeline owns survive every hostile answer, and the
+        // trailer stays machine-readable.
+        expect(message, testCase.name).toContain(
+          "JFDI Implementation complete — moving to the mechanical gate",
+        );
+        expect(await trailerValue(sandbox.project, branch, "JFDI-Round"), testCase.name).toBe(
+          "1/3",
+        );
+
+        // The note still parses as one trail: every entry the run wrote is
+        // there, and the hostile body forged none of its own.
+        const note = await readNote(sandbox, ticketId);
+        const dispatchEntries = note.match(/^### \S+ — dispatch round 1$/gm) ?? [];
+        expect(dispatchEntries, testCase.name).toHaveLength(1);
+      }
+    },
+    PIPELINE_TIMEOUT_MS,
+  );
+
+  it(
+    "builds the scribe's prompt from the diff, the ticket and the stage's summary",
+    async () => {
+      const sandbox = await makeSandbox();
+      await initProject(sandbox);
+      const ticketsDir = path.join(sandbox.project, ".jfdi", "tickets");
+      await fs.mkdir(ticketsDir, { recursive: true });
+      await fs.writeFile(
+        path.join(ticketsDir, "marmalade-export.md"),
+        "# Marmalade export\n\nExport preserves in the marmalade interchange format.\n",
+      );
+
+      const promptDump = path.join(sandbox.root, "scribe-prompt.txt");
+      const run = await runCli(sandbox, ["run", "[[marmalade-export]]"], {
+        scribePromptDump: promptDump,
+      });
+      expect(run.code).toBe(0);
+
+      const prompt = await fs.readFile(promptDump, "utf8");
+      // The three inputs the ticket names, plus the routing the pipeline computed.
+      expect(prompt).toContain("Export preserves in the marmalade interchange format.");
+      expect(prompt).toContain("diff --git");
+      expect(prompt).toContain("feature1.txt");
+      expect(prompt).toContain("wrote the greeting template");
+      expect(prompt).toContain("JFDI Implementation complete — moving to the mechanical gate");
+      // The agent's own commit was folded away before the scribe saw anything,
+      // so the house style it matches is the pipeline's, never the agent's.
+      expect(prompt).not.toContain("AGENT SELF COMMIT");
+    },
+    PIPELINE_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a config that never says which harness writes commit messages",
+    async () => {
+      const sandbox = await makeSandbox();
+      await initProject(sandbox);
+      const configPath = path.join(sandbox.project, ".jfdi", "config.json");
+      const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
+        stages: Record<string, unknown>;
+      };
+      delete config.stages["commit-message"];
+      await fs.writeFile(configPath, JSON.stringify(config, null, 2));
+
+      const status = await runCli(sandbox, ["status"]);
+      expect(status.code).toBe(1);
+      // Actionable: it names the missing entry, says what it selects, and
+      // prints the block to paste in.
+      expect(status.stderr).toContain("stages is missing an entry for commit-message");
+      expect(status.stderr).toContain('"commit-message": { "harness": "claude"');
+      expect(status.stderr).not.toContain("    at ");
+    },
+    PIPELINE_TIMEOUT_MS,
+  );
+});

@@ -158,14 +158,19 @@ export function assembleCommitMessage(
   const writtenBody = summary === null ? written : lines.slice(1).join("\n");
   const fallbackBody = scrubControlCharacters(handoff.summary);
   const body = boundBody((writtenBody.trim() !== "" ? writtenBody : fallbackBody).trim());
-  const trailers = [
-    // The status line is one line by definition: a reason quoted from a dead
-    // session's output would otherwise wrap the trailer onto a line of its own,
-    // where `git log --format='%(trailers:…)'` stops finding it.
-    statusLine(handoff.stage, flattenToLine(handoff.outcome), flattenToLine(handoff.routing)),
-    `JFDI-Round: ${handoff.round}/${handoff.maxRounds}`,
-  ].join("\n");
-  const message = `${[subject, body, trailers].filter((part) => part !== "").join("\n\n")}\n`;
+  // The status line is one line by definition: a reason quoted from a dead
+  // session's output would otherwise wrap onto a line of its own. It is NOT
+  // part of the trailer paragraph: git only treats the last paragraph as a
+  // trailer block when every line in it is trailer-shaped, so the status line
+  // sharing a paragraph with `JFDI-Round:` would make the trailer invisible
+  // to `git log --format='%(trailers:…)'`.
+  const status = statusLine(
+    handoff.stage,
+    flattenToLine(handoff.outcome),
+    flattenToLine(handoff.routing),
+  );
+  const trailers = `JFDI-Round: ${handoff.round}/${handoff.maxRounds}`;
+  const message = `${[subject, body, status, trailers].filter((part) => part !== "").join("\n\n")}\n`;
   // Belt and braces over every fragment at once: newlines survive this, so the
   // shape above is untouched and a fragment nobody scrubbed still cannot put a
   // NUL — which `git commit -m` rejects outright — into repository history.

@@ -1157,6 +1157,7 @@ describe("pipeline-owned commits", () => {
       "Written by the scribe.",
       "",
       "JFDI Implementation complete — moving to the mechanical gate",
+      "",
       "JFDI-Round: 1/3",
     ]);
 
