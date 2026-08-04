@@ -257,6 +257,8 @@ describe("integrateTicket", () => {
           notes: "had to rework logic",
         });
       } else if (stage === "qa") {
+        // Re-QA commits its regression test, as the real stage does.
+        await commitFile(options.cwd, "requalify.test.txt", "re-verified\n", "add regression test");
         await writeVerdict(spec.prompt, { verdict: "pass", testsAdded: "re-verified" });
       }
       return { ok: true, text: "" };
@@ -268,6 +270,8 @@ describe("integrateTicket", () => {
       outcome.report,
     );
     expect(result.status).toBe("merged");
+    // What lands is the tree as it stood after re-QA, not the pre-QA one.
+    expect(await git(fixture.repo, "show", "main:requalify.test.txt")).toBe("re-verified");
     expect(stages).toEqual(["integration", "qa"]);
     expect(await fs.readFile(path.join(fixture.repo, "feat2.txt"), "utf8")).toBe("reconciled\n");
   });
@@ -345,6 +349,27 @@ describe("integrateTicket", () => {
     );
     expect(second).toEqual({ status: "merged" });
     expect(await fs.readFile(path.join(fixture.repo, "feat5.txt"), "utf8")).toBe("reconciled\n");
+  });
+
+  /**
+   * A worktree deleted by hand has no merge to abort and nowhere to merge: the
+   * absence has to read as a blocked integration with a reason, not a crash.
+   */
+  it("blocks with a reason when the worktree is gone", async () => {
+    const context = fixture.context(passingHandler("feat8.txt"));
+    const ticket = await resolveTicket("Vanished worktree", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    if (outcome.status !== "passed") throw new Error("pipeline should pass");
+    await commitFile(fixture.repo, "other.txt", "other\n", "unrelated");
+    const targetHead = await revParse(fixture.repo, "main");
+    await fs.rm(outcome.worktree.path, { recursive: true, force: true });
+
+    const result = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
+
+    expect(result.status).toBe("blocked");
+    if (result.status !== "blocked") return;
+    expect(result.reason).toContain(`merging main into ${outcome.worktree.branch} failed`);
+    expect(await revParse(fixture.repo, "main")).toBe(targetHead);
   });
 
   /**

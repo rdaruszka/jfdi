@@ -56,6 +56,9 @@ In detail:
    when the target isn't checked out). Always a merge commit, even when a
    fast-forward would do. If the target branch is checked out with uncommitted
    changes, integration blocks rather than stepping on your working tree.
+   Conflict resolutions and any re-QA commits made in the worktree land *inside*
+   that merge commit rather than as commits of their own — the same shape a
+   hand-resolved `git merge` produces.
 7. **Cleanup.** On success the worktree is removed and the `jfdi/<id>` branch
    deleted; the card moves to Done, checked off, and a dated `## Report` entry is
    appended to the ticket note.
