@@ -46,6 +46,54 @@ describe("resolveTicket", () => {
     expect(ticket.spec).toBe("Sensitive work.");
   });
 
+  it("pins the spec slice: the whole note body, minus frontmatter", async () => {
+    await fs.writeFile(
+      path.join(ticketsDir, "full.md"),
+      [
+        "---",
+        "mode: ask",
+        "---",
+        "",
+        "# Fix the thing",
+        "",
+        "Detailed spec here.",
+        "",
+        "## Questions",
+        "",
+        "**Q:** which database?",
+        "",
+        "## Decisions",
+        "",
+        "- (round 1, implementation) chose sqlite",
+        "",
+        "## Report",
+        "",
+        "Shipped in 2 rounds.",
+        "",
+      ].join("\n"),
+    );
+    const ticket = await resolveTicket("[[full]]", ticketsDir);
+    expect(ticket.spec).toBe(
+      [
+        "# Fix the thing",
+        "",
+        "Detailed spec here.",
+        "",
+        "## Questions",
+        "",
+        "**Q:** which database?",
+        "",
+        "## Decisions",
+        "",
+        "- (round 1, implementation) chose sqlite",
+        "",
+        "## Report",
+        "",
+        "Shipped in 2 rounds.",
+      ].join("\n"),
+    );
+  });
+
   it("wikilink with missing note falls back to card text as spec", async () => {
     const ticket = await resolveTicket("Do it [[ghost]]", ticketsDir);
     expect(ticket.spec).toBe("Do it [[ghost]]");
