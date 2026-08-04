@@ -93,7 +93,9 @@ review prose is the core system value — the gate is the cheapest reviewer.
 | `pipeline.max_rounds` | integer | `3` | ≥ 1 |
 
 The feedback-round cap per run. On exhaustion the card moves to Blocked with the
-round history in the ticket note.
+round history in the ticket note. Gate failures after Implementation do not
+consume a round — they feed back into the same session, up to 10 fix sessions
+per round; rounds count trips through the review stages.
 
 ### `integration`
 

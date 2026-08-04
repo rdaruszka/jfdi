@@ -14,15 +14,26 @@ export type PromptName =
   | "init";
 
 /**
- * The one rule every code-producing stage prompt carries: the agent does not
- * commit. Enforcement is mechanical (the pipeline soft-resets any commit a
- * session made and commits once itself), so this is the courtesy of saying so
- * rather than the mechanism.
+ * Carried by the QA prompt, whose sandbox habits otherwise end in a commit.
+ * The implementation prompt says nothing about commits at all — committing is
+ * pipeline responsibility, and enforcement is mechanical either way (the
+ * pipeline soft-resets any commit a session made and commits once itself).
  */
 const NO_COMMIT_RULE = `- Do NOT commit, amend, reset, or otherwise move the branch — the pipeline commits
   your work for you when your session ends, on success and on failure both, with a
   message written from your summary and your diff. Leave what you did in the
   worktree; scratch artifacts you do not want committed, delete.`;
+
+/**
+ * The gate is pipeline-run, not agent-run: the pipeline executes it after the
+ * session ends and hands any failure straight back as feedback, without
+ * spending a round. Telling the agent to run it bought slow, token-hungry
+ * sessions re-running the whole suite mid-edit.
+ */
+const GATE_IS_PIPELINE_RUN_RULE = `- Do NOT run the mechanical gate — the pipeline runs it for you after your session
+  ends, and a failure comes straight back to you as feedback. These are the checks
+  your work will face:
+{{GATE_COMMANDS}}`;
 
 const COMMON_POSTURE = `## Working posture
 
@@ -32,11 +43,13 @@ and continue. Escalation is a last resort reserved for genuine hard blocks:
 contradictory requirements, missing access, work that is impossible as specified.
 An escalation must include a recommended answer — never a bare question.
 
-Out-of-scope issues you notice (pre-existing bugs, dead code, tooling gaps) go in
-your \`observations\` array — one line each, concrete. They become proposal cards a
-human triages later. Never fix them inline; never omit them because they're "not
-your job". **Fail loud:** your report must match what actually happened — anything
-skipped, stubbed, or degraded is stated prominently, never silently.`;
+Out-of-scope issues you happen to notice in passing (a pre-existing bug, dead code,
+a tooling gap) go in your \`observations\` array — one line each, concrete. They
+become proposal cards a human triages later. Observations are "oh, by the way, I
+saw" — not something to hunt for: do not go looking for problems beyond your task,
+and never fix one inline. **Fail loud:** your report must match what actually
+happened — anything skipped, stubbed, or degraded is stated prominently, never
+silently.`;
 
 const VERDICT_INSTRUCTIONS = `## Reporting your result (required)
 
@@ -60,9 +73,7 @@ worktree on branch \`{{BRANCH}}\`.
 - Write unit tests alongside the code; they are part of "done". If the ticket is a
   bug fix, write a failing test that reproduces the bug FIRST, then make it pass;
   if a repro is genuinely impractical, record why in \`decisions\`.
-- The mechanical gate must pass before you finish. Run it yourself and fix failures:
-{{GATE_COMMANDS}}
-${NO_COMMIT_RULE}
+${GATE_IS_PIPELINE_RUN_RULE}
 - Do not touch any branch other than \`{{BRANCH}}\`. Never push.
 - Stay inside this worktree.
 
@@ -242,11 +253,8 @@ way as before.
 
 ## Rules (unchanged from your original instructions)
 
-- Address every item. The pipeline commits this round's work as a NEW commit when
-  your session ends; commits a reviewer has already seen are never amended or
-  squashed. Do NOT commit, amend or reset yourself.
-- The mechanical gate must pass before you finish. Run it yourself and fix failures:
-{{GATE_COMMANDS}}
+- Address every item.
+${GATE_IS_PIPELINE_RUN_RULE}
 - Stay inside this worktree; touch no branch other than \`{{BRANCH}}\`.
 
 ${VERDICT_INSTRUCTIONS}

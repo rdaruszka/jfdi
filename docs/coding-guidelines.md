@@ -119,7 +119,7 @@ JFDI wires these tiers in for you: the gate is tier M, the Code Review stage pro
     *Check:* identify anything in this diff not required by the request. Anything found fails.
 
 24. **Surgical changes.** [P + R]
-    Every changed line traces to the request. Clean up orphans *your* change created (now-unused imports, variables, functions); don't touch pre-existing mess — flag it through the project's proposal channel instead. Exception: docs your change falsified are your mess (rule 33).
+    Every changed line traces to the request. Clean up orphans *your* change created (now-unused imports, variables, functions); don't touch pre-existing mess — flag it through the project's proposal channel instead. Exception: docs your change falsified are your mess (rule 32).
     *Why:* scope creep doesn't just risk breakage — it destroys the reviewer's ability to reason about the diff.
     *Check:* trace each changed line to the request.
 
@@ -148,15 +148,12 @@ JFDI wires these tiers in for you: the gate is tier M, the Code Review stage pro
     *Why:* a TODO with no owner is a wish (see the enforcement meta-rule), and commented-out code is dead code with worse ergonomics.
     *Check:* does the diff introduce commented-out code, or a TODO that points nowhere?
 
-31. **The harness owns the commits.** [P]
-    Do not commit, amend, or reset — leave your work in the worktree and let the pipeline commit your handoff for you, on success and on failure alike. What you leave uncommitted is what lands, so delete scratch artifacts before you finish. Fix-round work becomes a *new* commit; nothing a reviewer has already seen is ever amended or squashed, so reviewers can diff exactly what changed since their sign-off.
-
-32. **Fail loud.** [M partial + R]
+31. **Fail loud.** [M partial + R]
     "Completed" is false if anything was skipped silently; "tests pass" is false if any were skipped. Completion claims must match actual gate output. Anything skipped, stubbed, or degraded is stated prominently in the report, not buried. Mechanically: lint bans focused/skipped tests from landing.
     *Why:* in an interactive session a silent skip costs an afternoon; in an autonomous pipeline it corrupts the main branch.
 
 ## Documentation
 
-33. **Record what the code cannot say.** [P + R]
+32. **Record what the code cannot say.** [P + R]
     Docs carry intent, decisions, vocabulary, and invariants — never restatements of structure the repo can answer itself (any doc derivable from the code is a cache with no invalidation). If your change falsifies a doc — glossary, invariant, guide — updating it is part of your diff, not a separate task.
     *Check:* does the diff contradict anything the project's docs assert?

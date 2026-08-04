@@ -50,10 +50,11 @@ and continue. Escalation is a last resort reserved for genuine hard blocks:
 contradictory requirements, missing access, work that is impossible as specified.
 An escalation must include a recommended answer — never a bare question.
 
-Out-of-scope issues you notice (pre-existing bugs, dead code, tooling gaps) go in
-your `observations` array — one line each, concrete. They become proposal cards a
-human triages later. Never fix them inline; never omit them because they're "not
-your job". **Fail loud:** your report must match what actually happened — anything
+Out-of-scope issues you happen to notice in passing (a pre-existing bug, dead code,
+a tooling gap) go in your `observations` array — one line each, concrete. They
+become proposal cards a human triages later. Observations are "oh, by the way, I
+saw" — not something to hunt for: do not go looking for problems beyond your task,
+and never fix one inline. **Fail loud:** your report must match what actually happened — anything
 skipped, stubbed, or degraded is stated prominently, never silently.
 
 ## Reporting your result (required)

@@ -32,7 +32,7 @@ JFDI is self-hosting from milestone 1: JFDI's own tickets become its first board
 
 ## Architecture (one paragraph)
 
-The **coordinator** watches `board.md` (Obsidian Kanban format), dispatches each ready card into its own **git worktree** on branch `jfdi/<ticket-id>`, and runs a per-ticket pipeline of fresh Claude Code or Codex sessions: **Implementation → mechanical gate → Code Review → QA**, with feedback rounds (cap: `pipeline.max_rounds`, default 3). Agents never commit: the pipeline commits each session's handoff itself, with a **scribe** session writing the message, and appends that same text to the ticket note as a comment. **Integration** is coordinator-owned and globally serialized — one merge at a time: merge the target branch into the ticket branch, rerun the gate, then land that tested tree on the target as a merge commit (target's prior head first parent, signed-off branch head second). Every transition appends to the project's `events.jsonl` under `~/.jfdi/projects/<project-key>/`; `state.json` is a derived snapshot; the TUI is a pure renderer over that stream.
+The **coordinator** watches `board.md` (Obsidian Kanban format), dispatches each ready card into its own **git worktree** on branch `jfdi/<ticket-id>`, and runs a per-ticket pipeline of fresh Claude Code or Codex sessions: **Implementation → mechanical gate → Code Review → QA**, with feedback rounds (cap: `pipeline.max_rounds`, default 3; a gate failure feeds back into the same Implementation session *within* the round, up to 10 fix sessions, before it may consume one). Agents never commit: the pipeline commits each session's handoff itself, with a **scribe** session writing the message, and appends that same text to the ticket note as a comment. **Integration** is coordinator-owned and globally serialized — one merge at a time: merge the target branch into the ticket branch, rerun the gate, then land that tested tree on the target as a merge commit (target's prior head first parent, signed-off branch head second). Every transition appends to the project's `events.jsonl` under `~/.jfdi/projects/<project-key>/`; `state.json` is a derived snapshot; the TUI is a pure renderer over that stream.
 
 ## Layout
 
@@ -92,8 +92,8 @@ Use these terms exactly; introduce no synonyms. The list grows only by editing t
 - **state directory** — `~/.jfdi/projects/<project-key>/`, where one project's run state lives: `runs/`, `events.jsonl`, `state.json`.
 - **stage** — one fresh agent session within a run: Implementation, Code Review, QA.
 - **scribe** — the cheap, read-only, single-shot session that writes one commit message from the staged diff, the ticket, and the completing stage's summary. Pipeline plumbing that uses a session, selected by `stages["commit-message"]`: no verdict, no round, no sign-off — not a stage.
-- **gate** — the mechanical check (`pnpm build && pnpm test && pnpm lint`); all must exit zero.
-- **round** — one feedback cycle: fix → gate → reviews (cap: `pipeline.max_rounds`).
+- **gate** — the mechanical check (`pnpm build && pnpm test && pnpm lint`); all must exit zero. Pipeline-run: agents are told not to run it.
+- **round** — one feedback cycle ending at another agent: fix → gate (with in-round gate-fix sessions, capped at 10) → reviews (cap: `pipeline.max_rounds`). Gate failures alone do not consume a round.
 - **sign-off** — a review stage's approval, bound to a specific commit — the pipeline's handoff commit for the session under review.
 - **integration** — the coordinator-owned merge → gate → land step; globally serialized. Lands one merge commit per ticket; the signed-off commit stays reachable as its second parent.
 - **coordinator** — the long-running process that watches the board and dispatches runs.
@@ -143,7 +143,6 @@ The generic rules with rationale and check questions live in [docs/coding-guidel
 - Tests verify intent: a test that couldn't fail if the business logic broke is wrong. No implementation-mirroring (asserting methods were called), no tautologies.
 - Tests are deterministic and order-independent: wait on conditions, never sleep for durations; control time and randomness. A flaky test is a defect against the gate itself.
 - No commented-out code (git remembers); a TODO must reference a ticket or an inbox observation — otherwise do it or delete it.
-- Leave your work in the worktree; do not commit. Under JFDI the pipeline commits each session's handoff and the scribe writes the message; a fix round is a new commit, never an amend or a squash of one a reviewer has seen. Gate-green is required at handoff, and what you leave uncommitted is what lands — delete scratch artifacts.
 - Fail loud: completion claims must match actual gate output. Anything skipped, stubbed, or degraded is stated prominently in the report, not buried.
 
 **Docs**

@@ -165,26 +165,32 @@ describe("runPipeline", () => {
     if (outcome.status === "passed") expect(outcome.report.rounds).toBe(2);
   });
 
-  it("gate failure short-circuits reviews and feeds output back", async () => {
-    let implementationRounds = 0;
+  it("gate failure feeds back into a fix session without consuming the round", async () => {
+    let implementationSessions = 0;
     const stages: string[] = [];
     const context = fixture.context(async (spec, options) => {
       const stage = sessionKindOf(spec.prompt);
       stages.push(stage);
       if (stage === "implementation") {
-        implementationRounds++;
-        if (implementationRounds === 2) expect(spec.prompt).toContain("Mechanical gate failed");
-        // Round 1 forgets impl.txt → gate fails; round 2 fixes it.
+        implementationSessions++;
+        if (implementationSessions === 2) {
+          // The fix session continues the same conversation, carrying the
+          // gate's own output — not a fresh session in a fresh round.
+          expect(spec.prompt).toContain("Your implementation session is being continued");
+          expect(spec.prompt).toContain("Mechanical gate failed");
+        }
+        // The first session forgets impl.txt → gate fails; the fix session
+        // inside the same round writes it.
         await commitFile(
           options.cwd,
-          implementationRounds === 1 ? "wrong.txt" : "impl.txt",
+          implementationSessions === 1 ? "wrong.txt" : "impl.txt",
           "x\n",
-          `attempt ${implementationRounds}`,
+          `attempt ${implementationSessions}`,
         );
         await writeVerdict(spec.prompt, { status: "done" });
-      } else {
-        await writeVerdict(spec.prompt, { verdict: "pass" });
+        return { ok: true, text: "", sessionId: "impl-session" };
       }
+      await writeVerdict(spec.prompt, { verdict: "pass" });
       return { ok: true, text: "" };
     });
 
@@ -192,6 +198,52 @@ describe("runPipeline", () => {
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     expect(stages).toEqual(["implementation", "implementation", "code-review", "qa"]);
+    // The gate cycle stayed inside round 1: rounds mean moving on to other
+    // agents, not iterating with the machine.
+    if (outcome.status === "passed") expect(outcome.report.rounds).toBe(1);
+    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
+    expect(note).toContain(
+      "JFDI gate FAILED at `check` — returning to Implementation for gate fix 1 of 10",
+    );
+  });
+
+  // Two rounds of eleven sessions each: real git traffic, so a real budget.
+  it("gate fixes exhaust their in-round cap before the failure consumes the round", {
+    timeout: 30_000,
+  }, async () => {
+    const capped = await makeFixture({
+      gate: [{ name: "check", cmd: "test -f impl.txt" }],
+      pipeline: { max_rounds: 2 },
+    });
+    try {
+      let implementationSessions = 0;
+      const roundsSeen: number[] = [];
+      const context = capped.context(async (spec, options) => {
+        const stage = sessionKindOf(spec.prompt);
+        if (stage !== "implementation") {
+          await writeVerdict(spec.prompt, { verdict: "pass" });
+          return { ok: true, text: "" };
+        }
+        implementationSessions++;
+        // Never write impl.txt: every session leaves the gate red.
+        await commitFile(options.cwd, "wrong.txt", `${implementationSessions}\n`, "still wrong");
+        await writeVerdict(spec.prompt, { status: "done" });
+        return { ok: true, text: "" };
+      });
+      context.log.on((event) => {
+        if (event.type === "round_start") roundsSeen.push(Number(event.data?.round));
+      });
+
+      const ticket = await resolveTicket("Never green", capped.ticketsDir);
+      const outcome = await runPipeline(context, ticket);
+      expect(outcome.status).toBe("blocked");
+      // Each round pays for one implementation session plus ten gate fixes,
+      // and only then lets the gate failure consume the round.
+      expect(roundsSeen).toEqual([1, 2]);
+      expect(implementationSessions).toBe(2 * 11);
+    } finally {
+      await capped.cleanup();
+    }
   });
 
   it("escalation blocks the ticket and writes Questions with a recommendation", async () => {
@@ -877,7 +929,7 @@ describe("runPipeline under a broken provider", () => {
  * sessions must carry no model or effort at all.
  */
 const MIXED_STAGES: JfdiConfig["stages"] = {
-  implementation: { harness: "claude", model: "claude-opus-5", effort: "high" },
+  implementation: { harness: "claude", model: "claude-opus-4-8", effort: "high" },
   "code-review": { harness: "codex", model: "gpt-5.6-sol", effort: "low" },
   qa: { harness: "claude" },
   integration: { harness: "codex", effort: "medium" },
@@ -980,8 +1032,8 @@ describe("runPipeline with per-stage harness selection", () => {
             effort: event.data?.effort,
           }));
       expect(selectionOf("implementation")).toEqual([
-        { harness: "claude", model: "claude-opus-5", effort: "high" },
-        { harness: "claude", model: "claude-opus-5", effort: "high" },
+        { harness: "claude", model: "claude-opus-4-8", effort: "high" },
+        { harness: "claude", model: "claude-opus-4-8", effort: "high" },
       ]);
       expect(selectionOf("code-review")[0]).toEqual({
         harness: "codex",

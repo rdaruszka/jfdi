@@ -683,7 +683,7 @@ async function runImplementationStage(
     return staged({
       kind: "retry",
       feedback: outcome.ok
-        ? "The previous implementation session ended without writing a valid verdict file. Re-verify the work is complete and gate-passing, then write the verdict file as instructed."
+        ? "The previous implementation session ended without writing a valid verdict file. Re-verify the work is complete, then write the verdict file as instructed."
         : `The previous implementation session failed: ${outcome.resultText.slice(0, MAX_SESSION_ERROR_CHARS)}`,
     });
   }
@@ -856,16 +856,169 @@ interface RoundInput {
   roundDir: string;
   notePath: string;
   round: number;
+  runNumber: number;
   history: FeedbackItem[];
   resume: ResumeState | null;
   memory: SessionMemory;
 }
 
 /**
- * One round: Implementation → gate → Code Review → QA → gate again if QA
- * committed, stopping at the first step that wants another round. Reviews are
- * sequential — Code Review gates QA, so a code-review failure never pays for a
- * sandbox run. Stages that already ran this run are continued, not restarted.
+ * How many gate-fix sessions one round pays for before the gate failure is
+ * allowed to consume the round. Gate fixes can get complicated, so this is
+ * provisioned generously — the round cap still bounds the run as a whole.
+ */
+const MAX_GATE_FIX_SESSIONS_PER_ROUND = 10;
+
+/** What the Implementation-gate cycle collected before it ended, either way. */
+interface ImplementationCycleCollected {
+  decisions: string[];
+  observations: string[];
+  summary: string | undefined;
+  implementationSession: StageSessionMemory;
+}
+
+/** How the Implementation-gate cycle ended: onward to reviews, or out of the round. */
+type ImplementationCycleResult =
+  | ({ kind: "proceed"; gate: GateResult; headCommit: string } & ImplementationCycleCollected)
+  | ({ kind: "exit"; step: RoundStep } & ImplementationCycleCollected);
+
+/**
+ * The round-ending step a session outcome forces, or null when the session
+ * completed and the cycle may continue to the gate. Escalations are narrated
+ * (Questions entry, blocked event) here, on their way out.
+ */
+async function implementationExitStep(
+  context: PipelineContext,
+  ticket: Ticket,
+  notePath: string,
+  step: ImplementationStep,
+): Promise<RoundStep | null> {
+  if (step.kind === "retry")
+    return { kind: "retry", source: "implementation", feedback: step.feedback };
+  if (step.kind !== "escalate") return null;
+  await recordEscalation(
+    context,
+    ticket,
+    notePath,
+    "implementation",
+    step.question,
+    step.recommendation,
+  );
+  context.log.emit("blocked", ticket.id, {
+    reason: `escalated: ${step.question.slice(0, MAX_REASON_CHARS)}`,
+  });
+  return { kind: "blocked", reason: step.question };
+}
+
+/**
+ * Where one cycle session's artifacts (verdict, logs, scribe log) land: the
+ * round directory itself for the round's first session, a gate-fix subdirectory
+ * for each fix session after it — so no session overwrites another's files.
+ */
+function cycleSessionDir(roundDir: string, fixSession: number): string {
+  return fixSession === 0 ? roundDir : path.join(roundDir, `gate-fix-${fixSession}`);
+}
+
+/** Narrate an in-round gate failure to the note: why the round grew another commit. */
+function recordGateFixTransition(
+  notePath: string,
+  round: number,
+  gate: GateResult,
+  fixSession: number,
+): Promise<void> {
+  const failedStep = gate.results.at(-1)?.name ?? "unknown step";
+  return recordTransition(
+    notePath,
+    "gate",
+    round,
+    `JFDI gate FAILED at \`${failedStep}\` — returning to Implementation for gate fix ${fixSession + 1} of ${MAX_GATE_FIX_SESSIONS_PER_ROUND}; the round continues`,
+  );
+}
+
+/**
+ * The Implementation-gate cycle: sessions until the gate is green. A gate
+ * failure stays inside the round — it returns to the same Implementation
+ * session as feedback and the gate reruns, up to
+ * MAX_GATE_FIX_SESSIONS_PER_ROUND fix sessions — because rounds mean moving on
+ * to other agents, not iterating with the machine. Only a gate still red after
+ * those fixes leaves as a round-consuming retry step.
+ */
+async function runImplementationGateCycle(
+  context: PipelineContext,
+  ticket: Ticket,
+  worktree: Worktree,
+  input: RoundInput,
+): Promise<ImplementationCycleResult> {
+  const { roundDir, notePath, round, runNumber, history, resume } = input;
+  const maxRounds = context.config.pipeline.max_rounds;
+  const decisions: string[] = [];
+  const observations: string[] = [];
+  let summary: string | undefined;
+  let implementationSession: StageSessionMemory = input.memory.implementation ?? {};
+  let lastHandoffCommit: string | null = null;
+  // Gate failures this round, oldest first — feedback for the next fix
+  // session, never persisted: the round either goes green (the failures are
+  // history) or its last failure leaves via the retry step below.
+  const gateFailures: FeedbackItem[] = [];
+  const collected = () => ({ decisions, observations, summary, implementationSession });
+
+  // Termination: each pass either returns (gate green, session retry/escalate,
+  // or the fix-session cap); fixSession strictly increases toward the cap.
+  for (let fixSession = 0; ; fixSession++) {
+    const sessionDir = cycleSessionDir(roundDir, fixSession);
+    await ensureDir(sessionDir);
+    const implementation = await runImplementationStage(context, ticket, worktree, {
+      roundDir: sessionDir,
+      notePath,
+      round,
+      history: [...history, ...gateFailures],
+      resume: fixSession === 0 ? resume : null,
+      previousSession: implementationSession,
+    });
+    implementationSession = { sessionId: implementation.sessionId };
+    // Before any branching: whatever the session left becomes one commit, on
+    // the way out of every exit below. Partial work in a commit is work a
+    // re-dispatch can continue; uncommitted, sanitization would throw it away.
+    lastHandoffCommit =
+      (await commitSessionHandoff(context, ticket, {
+        worktree,
+        notePath,
+        roundDir: sessionDir,
+        handoff: implementationHandoff(implementation.step, round, maxRounds),
+        preSessionHead: implementation.preSessionHead,
+      })) ?? lastHandoffCommit;
+    const exitStep = await implementationExitStep(context, ticket, notePath, implementation.step);
+    if (exitStep) return { kind: "exit", ...collected(), step: exitStep };
+    if (implementation.step.kind !== "done")
+      throw new Error(
+        `implementation step "${implementation.step.kind}" escaped implementationExitStep — only "done" may reach the gate`,
+      );
+    decisions.push(...implementation.step.decisions);
+    observations.push(...implementation.step.observations);
+    summary = implementation.step.summary ?? summary;
+
+    const gate = await runGateStage(context, ticket, worktree);
+    if (gate.ok) {
+      // The sign-offs bind to the pipeline's own handoff commit; only a cycle
+      // that committed nothing (an unchanged tree) reviews the branch as it stood.
+      const headCommit = lastHandoffCommit ?? (await revParse(worktree.path, "HEAD"));
+      return { kind: "proceed", ...collected(), gate, headCommit };
+    }
+    const feedback = formatGateFailure(gate);
+    if (fixSession >= MAX_GATE_FIX_SESSIONS_PER_ROUND) {
+      return { kind: "exit", ...collected(), step: { kind: "retry", source: "gate", feedback } };
+    }
+    gateFailures.push({ run: runNumber, round, source: "gate", feedback });
+    await recordGateFixTransition(notePath, round, gate, fixSession);
+  }
+}
+
+/**
+ * One round: the Implementation-gate cycle → Code Review → QA → gate again if
+ * QA committed, stopping at the first step that wants another round. Reviews
+ * are sequential — Code Review gates QA, so a code-review failure never pays
+ * for a sandbox run. Stages that already ran this run are continued, not
+ * restarted.
  */
 async function runRound(
   context: PipelineContext,
@@ -873,73 +1026,17 @@ async function runRound(
   worktree: Worktree,
   input: RoundInput,
 ): Promise<RoundResult> {
-  const { roundDir, notePath, round, history, resume } = input;
-  const maxRounds = context.config.pipeline.max_rounds;
+  const { roundDir, notePath, round, history } = input;
   const memory: SessionMemory = { ...input.memory };
   const previousFailure = history.at(-1);
-  const decisions: string[] = [];
-  const observations: string[] = [];
-  // Nothing has been collected until Implementation returns, so the two exits
-  // below report empty rather than sharing the arrays the rest of the function
-  // pushes into. Fresh arrays per call: no exit aliases another's.
-  const nothingCollected = (): Pick<RoundResult, "decisions" | "observations" | "summary"> => ({
-    decisions: [],
-    observations: [],
-    summary: undefined,
-  });
 
-  const implementation = await runImplementationStage(context, ticket, worktree, {
-    roundDir,
-    notePath,
-    round,
-    history,
-    resume,
-    previousSession: memory.implementation,
-  });
-  memory.implementation = { sessionId: implementation.sessionId };
-  // Before any branching: whatever the session left becomes one commit, on the
-  // way out of every exit below. Partial work in a commit is work a re-dispatch
-  // can continue; uncommitted, sanitization would throw it away.
-  const handoffCommit = await commitSessionHandoff(context, ticket, {
-    worktree,
-    notePath,
-    roundDir,
-    handoff: implementationHandoff(implementation.step, round, maxRounds),
-    preSessionHead: implementation.preSessionHead,
-  });
-  if (implementation.step.kind === "retry") {
-    const { feedback } = implementation.step;
-    return {
-      ...nothingCollected(),
-      memory,
-      step: { kind: "retry", source: "implementation", feedback },
-    };
-  }
-  if (implementation.step.kind === "escalate") {
-    const { question, recommendation } = implementation.step;
-    await recordEscalation(context, ticket, notePath, "implementation", question, recommendation);
-    context.log.emit("blocked", ticket.id, {
-      reason: `escalated: ${question.slice(0, MAX_REASON_CHARS)}`,
-    });
-    return { ...nothingCollected(), memory, step: { kind: "blocked", reason: question } };
-  }
-  decisions.push(...implementation.step.decisions);
-  observations.push(...implementation.step.observations);
-  const summary = implementation.step.summary;
-
-  const gate = await runGateStage(context, ticket, worktree);
-  if (!gate.ok)
-    return {
-      decisions,
-      observations,
-      summary,
-      memory,
-      step: { kind: "retry", source: "gate", feedback: formatGateFailure(gate) },
-    };
-
-  // The sign-offs bind to the pipeline's own handoff commit; only a round that
-  // committed nothing (an unchanged tree) reviews the branch as it stood.
-  const headCommit = handoffCommit ?? (await revParse(worktree.path, "HEAD"));
+  const cycle = await runImplementationGateCycle(context, ticket, worktree, input);
+  memory.implementation = cycle.implementationSession;
+  const decisions = [...cycle.decisions];
+  const observations = [...cycle.observations];
+  const summary = cycle.summary;
+  if (cycle.kind === "exit") return { decisions, observations, summary, memory, step: cycle.step };
+  const { gate, headCommit } = cycle;
   const review = await runCodeReviewStage(context, ticket, worktree, {
     roundDir,
     notePath,
@@ -1227,6 +1324,7 @@ export async function runPipeline(
       roundDir,
       notePath,
       round,
+      runNumber: runDirs.runNumber,
       history: [...priorHistory, ...history],
       // Only the first session of the run inherits an interrupted state; later
       // rounds work on top of commits this run made itself.

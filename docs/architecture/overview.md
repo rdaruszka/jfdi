@@ -78,7 +78,9 @@ flowchart TB
   sibling `add` is still writing, so concurrent dispatches would otherwise kill
   one another's run), resume sanitization, then up to `max_rounds` rounds of
   Implementation → gate → Code Review → QA, with session continuation between
-  rounds. It also owns the branch: agents never commit, and each session ends
+  rounds. The gate is pipeline-run and its failures stay inside the round —
+  they return to the Implementation session as feedback, up to 10 fix sessions,
+  before a still-red gate may consume the round. It also owns the branch: agents never commit, and each session ends
   with one pipeline commit whose message the **scribe**
   ([src/scribe.ts](../../src/scribe.ts)) writes and whose text is appended to
   the ticket note as a transition comment ([src/transitions.ts](../../src/transitions.ts)).
@@ -131,10 +133,12 @@ sequenceDiagram
     C->>P: dispatch (worktree jfdi/<id>)
     P->>P: resume sanitization (if prior work)
     loop up to max_rounds
-        P->>A: Implementation (fresh, then continued)
-        P->>A: scribe (commit message)
-        P->>P: commit the handoff + comment on the note
-        P->>P: gate
+        loop until gate green (≤10 fixes, same round)
+            P->>A: Implementation (fresh, then continued)
+            P->>A: scribe (commit message)
+            P->>P: commit the handoff + comment on the note
+            P->>P: gate
+        end
         P->>A: Code Review (gates QA)
         P->>A: QA (sandbox + regression tests)
     end

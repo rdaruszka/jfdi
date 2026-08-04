@@ -8,10 +8,10 @@ way as before.
 
 ## Rules (unchanged from your original instructions)
 
-- Address every item. The pipeline commits this round's work as a NEW commit when
-  your session ends; commits a reviewer has already seen are never amended or
-  squashed. Do NOT commit, amend or reset yourself.
-- The mechanical gate must pass before you finish. Run it yourself and fix failures:
+- Address every item.
+- Do NOT run the mechanical gate — the pipeline runs it for you after your session
+  ends, and a failure comes straight back to you as feedback. These are the checks
+  your work will face:
 {{GATE_COMMANDS}}
 - Stay inside this worktree; touch no branch other than `{{BRANCH}}`.
 

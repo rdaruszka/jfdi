@@ -20,9 +20,9 @@ flowchart TD
     IMPL[Implementation session] --> CHK[Pipeline commits<br/>the session's handoff]
     CHK -->|status: done| GATE{Mechanical gate}
     CHK -->|status: escalate| BLOCKED([Card → Blocked])
-    GATE -->|fail| RETRY([Next round:<br/>feedback → Implementation])
+    GATE -->|"fail (up to 10 fixes,<br/>same round)"| IMPL
     GATE -->|pass| CR[Code Review session]
-    CR -->|fail| RETRY
+    CR -->|fail| RETRY([Next round:<br/>feedback → Implementation])
     CR -->|pass| QA[QA session]
     QA --> QACOMMIT[Pipeline commits QA's tests,<br/>if it wrote any]
     QACOMMIT -->|fail| RETRY
@@ -34,8 +34,13 @@ flowchart TD
 
 Three properties are worth internalizing:
 
-- **Every failure re-enters at Implementation.** There is no partial re-entry: a
-  Code Review fail, a QA fail, or a gate fail all start the next round at the top.
+- **A gate failure after Implementation stays inside the round.** The pipeline
+  runs the gate — the agent is told not to — and hands a failure straight back
+  to the same Implementation session as feedback, up to 10 fix sessions per
+  round. Rounds mean moving on to other agents, not iterating with the machine;
+  only a gate that is still red after those fixes consumes the round.
+- **Every agent failure re-enters at Implementation.** There is no partial
+  re-entry: a Code Review fail or a QA fail starts the next round at the top.
   Both review sign-offs bind to a specific commit, so any code change invalidates
   both and the new commit repeats the gate and both reviews.
 - **Code Review gates QA.** A round where Code Review fails never runs the sandbox —
@@ -57,7 +62,7 @@ edit — see [Prompts & Customization](prompts-and-customization.md).
 
 | Stage | Job | Can escalate? |
 |---|---|---|
-| **Implementation** | Does the work, writes unit tests alongside the code, runs the gate itself before finishing. | Yes |
+| **Implementation** | Does the work, writes unit tests alongside the code. It does not run the gate — the pipeline runs it after the session and returns any failure as feedback. | Yes |
 | **Code Review** | Judges the diff on structure, clarity, conventions, and maintainability — *not* functionality. | No — an attempted escalation is treated as an invalid verdict and costs a round |
 | **QA** | Exercises the built artifact per the [sandbox contract](prompts-and-customization.md#the-sandbox-contract), validates behavior against the *ticket* (not the diff), and writes what it verified as automated regression tests. | Yes |
 
@@ -206,7 +211,7 @@ The gate is the ordered list of shell commands in `config.json`'s `gate` array
 (build, test, lint — whatever must exit zero). Commands run sequentially in the
 worktree via `/bin/sh -c`, stopping at the first failure; the failing command's
 interleaved output (last 20,000 characters) becomes the feedback for the next
-round.
+Implementation fix session. The pipeline runs the gate; agents are told not to.
 
 The gate runs at five points:
 
@@ -223,12 +228,18 @@ re-run it; QA runs only the tests it adds.
 
 ## Rounds and feedback
 
-A **round** is one trip through the flowchart above. When any step fails, the
+A **round** is one trip through the flowchart above. When a step fails, the
 pipeline records a feedback item — `{run, round, source, feedback}` where source is
 `gate`, `code-review`, `qa`, or `implementation` — and starts the next round.
 When rounds are exhausted, the card moves to **Blocked** and the round history is
 written into the ticket note's `## Questions` section with instructions for
 retrying.
+
+The post-Implementation gate is the exception: its failure feeds back into the
+same Implementation session *within* the round, and the gate reruns — up to 10
+fix sessions per round. A round is spent when the work moves to other agents (or
+when the gate is still red after those fixes), so a hard-to-green gate cannot
+silently eat the whole round budget one compile error at a time.
 
 ### Fresh sessions vs. continuations
 
