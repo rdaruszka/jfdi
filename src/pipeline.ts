@@ -29,7 +29,7 @@ import {
   formatQaProvenance,
   formatReviewProvenance,
 } from "./stage-context.js";
-import { appendComment, appendToSection, escapeNoteHeadings } from "./ticket-note.js";
+import { appendComment, appendToSection, quoteAgentText } from "./ticket-note.js";
 import { ensureTicketNote, type Ticket } from "./tickets.js";
 import { todayIsoDate } from "./util/dates.js";
 import { ensureDir, fileExists, readIfExists } from "./util/fsx.js";
@@ -402,9 +402,11 @@ async function recordEscalation(
     [
       `### ${todayIsoDate()} — ${stage}`,
       "",
-      `**Q:** ${escapeNoteHeadings(question)}`,
+      "**Q:**",
+      quoteAgentText(question),
       "",
-      `**Recommendation:** ${escapeNoteHeadings(recommendation)}`,
+      "**Recommendation:**",
+      quoteAgentText(recommendation),
       "",
       `_Answer by editing this note, then move the card back to "${beginColumn}"._`,
     ].join("\n"),

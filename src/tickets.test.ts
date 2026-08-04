@@ -106,7 +106,7 @@ describe("resolveTicket", () => {
         "",
         "### 2026-08-03T10:05:00.000Z — Decision (implementation, round 1)",
         "",
-        "Chose sqlite: already a dependency.",
+        "> Chose sqlite: already a dependency.",
       ].join("\n"),
     );
     expect(ticket.spec).not.toContain("Dispatched, gate green.");

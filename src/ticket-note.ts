@@ -62,25 +62,31 @@ const DECISION_HEADING_RE = /^###\s+(\S+)\s+—\s+Decision\s+\((.+?),\s*round\s+
 const TRANSITION_HEADING_RE = /^###\s+(\S+)\s+—\s+(.+?)\s+round\s+(\d+)\s*$/;
 const FRONTMATTER_KEY_RE = /^([A-Za-z][\w-]*)\s*:\s*(.*)$/;
 const FRONTMATTER_ITEM_RE = /^\s*-\s+(.*)$/;
-const HEADING_LINE_RE = /^([ \t]*)(#{1,6}\s)/gm;
-const ESCAPED_HEADING_LINE_RE = /^([ \t]*)\\(#{1,6}\s)/gm;
 
 /**
- * Neutralize the markdown headings in text JFDI did not author, before it is
- * appended to a note. Such text arrives from agent verdict JSON — a trust
- * boundary — and a line there beginning with `#` would forge a section or an
- * entry heading: the trail splits at the forgery, the parser keeps only the
- * first section of a name, and everything after it silently stops reaching
- * later prompts. A leading backslash renders as a literal `#` in Obsidian and
- * CommonMark, so the text still reads as written; `parseTicketNote` strips the
- * backslash again, leaving the round trip exact.
+ * Wrap text JFDI did not author in a markdown blockquote before it lands in a
+ * note. Such text arrives from agent verdict JSON — a trust boundary — and a
+ * line in it beginning with `#` would forge a section or an entry heading: the
+ * trail splits at the forgery, the parser keeps only the first section of a
+ * name, and everything after it silently stops reaching later prompts. Quoted,
+ * no line of the text sits at the start of a line anymore, so nothing in it
+ * can read as note structure — whatever pattern that structure grows next.
+ * Quoting nests (`> ` becomes `> > `), so `unquoteAgentText` strips exactly
+ * the one level this added and the round trip is exact for any body.
  */
-export function escapeNoteHeadings(text: string): string {
-  return text.replace(HEADING_LINE_RE, "$1\\$2");
+export function quoteAgentText(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => (line === "" ? ">" : `> ${line}`))
+    .join("\n");
 }
 
-function unescapeNoteHeadings(text: string): string {
-  return text.replace(ESCAPED_HEADING_LINE_RE, "$1$2");
+/** Strip exactly one blockquote level — the inverse of `quoteAgentText`. */
+function unquoteAgentText(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => (line.startsWith("> ") ? line.slice(2) : line === ">" ? "" : line))
+    .join("\n");
 }
 
 /** Parse a note into its anatomy. Absent sections are empty, never an error. */
@@ -126,15 +132,17 @@ export function ticketSpec(note: TicketNote): string {
 
 /**
  * Render a comment as it appears in the note — the format `parseComments`
- * reads back. The body is escaped, so a comment carrying a heading of its own
- * (an agent quoting this very format in a decision) stays one entry.
+ * reads back. The body is blockquoted, so a comment carrying a heading of its
+ * own (an agent quoting this very format in a decision) stays one entry — and
+ * in Obsidian the quote bar marks the body as an utterance, the way a JIRA
+ * comment reads.
  */
 export function formatComment(comment: TicketComment): string {
   const heading =
     comment.kind === "decision"
       ? `### ${comment.timestamp} — Decision (${comment.stage}, round ${comment.round})`
       : `### ${comment.timestamp} — ${comment.stage} round ${comment.round}`;
-  return `${heading}\n\n${escapeNoteHeadings(comment.body.trim())}`;
+  return `${heading}\n\n${quoteAgentText(comment.body.trim())}`;
 }
 
 /** Append one entry to the note's `## Comments` trail, creating the section if absent. */
@@ -262,7 +270,7 @@ function toComment(heading: string, body: string): TicketComment | null {
       timestamp: decision[1],
       stage: decision[2],
       round: Number(decision[3]),
-      body: unescapeNoteHeadings(body),
+      body: unquoteAgentText(body),
     };
   const transition = TRANSITION_HEADING_RE.exec(heading);
   if (transition?.[1] && transition[2] && transition[3])
@@ -271,7 +279,7 @@ function toComment(heading: string, body: string): TicketComment | null {
       timestamp: transition[1],
       stage: transition[2],
       round: Number(transition[3]),
-      body: unescapeNoteHeadings(body),
+      body: unquoteAgentText(body),
     };
   return null;
 }

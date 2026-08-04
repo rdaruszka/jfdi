@@ -150,10 +150,12 @@ Sections JFDI does not recognize — your own, or a legacy `## Decisions` block
 from before the anatomy — are never rewritten and never appended to.
 
 Text an agent wrote — a decision, a question, a summary — reaches the note
-through a verdict, so JFDI escapes any line in it that would read as a markdown
-heading (`## Comments` becomes `\## Comments`, which renders the same). Without
-that, one entry quoting the format could forge a second section or entry, and
-everything after the forgery would silently stop reaching later prompts.
+through a verdict, so JFDI wraps it in a markdown blockquote (`> ` on every
+line): in Obsidian the quote bar marks it as an utterance, the way a JIRA
+comment reads, and no line of it can read as note structure. Without that, one
+entry quoting the format could forge a second section or entry, and everything
+after the forgery would silently stop reaching later prompts. Quoting nests, so
+an agent's own `> ` lines survive the round trip untouched.
 
 ### What the agents actually read
 

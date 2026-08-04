@@ -2,7 +2,7 @@ import * as path from "node:path";
 import { addCardIfAbsent } from "./board.js";
 import type { PipelineContext, RunReport } from "./pipeline.js";
 import { runsDir } from "./pipeline.js";
-import { appendToSection, escapeNoteHeadings } from "./ticket-note.js";
+import { appendToSection, quoteAgentText } from "./ticket-note.js";
 import { todayIsoDate } from "./util/dates.js";
 import { atomicWrite, fileExists, readIfExists } from "./util/fsx.js";
 
@@ -85,17 +85,19 @@ export async function recordMergeReady(
   const lines = [
     `### ${todayIsoDate()} — ready to merge`,
     "",
-    `**Summary:** ${escapeNoteHeadings(report.summary) || "(none recorded)"}`,
+    report.summary
+      ? `**Summary:**\n${quoteAgentText(report.summary)}`
+      : "**Summary:** (none recorded)",
     "",
     `**Rounds:** ${report.rounds} · **Commit:** \`${report.commit.slice(0, 10)}\``,
   ];
   if (report.testsAdded)
-    lines.push("", `**QA tests added:** ${escapeNoteHeadings(report.testsAdded)}`);
+    lines.push("", `**QA tests added:**\n${quoteAgentText(report.testsAdded)}`);
   if (report.decisions.length > 0)
     lines.push(
       "",
       "**Decisions made autonomously:**",
-      ...report.decisions.map((decision) => `- ${escapeNoteHeadings(decision)}`),
+      ...report.decisions.flatMap((decision) => ["", quoteAgentText(decision)]),
     );
   lines.push("", `_Approve with \`jfdi merge ${ticketId}\`, or merge the branch by hand._`);
   await appendToSection(notePath, "Report", lines.join("\n"));

@@ -5,9 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   appendComment,
   appendToSection,
-  escapeNoteHeadings,
   formatComment,
   parseTicketNote,
+  quoteAgentText,
   type TicketComment,
   ticketSpec,
 } from "./ticket-note.js";
@@ -154,11 +154,11 @@ describe("ticketSpec", () => {
         "",
         "### 2026-08-03T09:30:00.000Z — Decision (implementation, round 1)",
         "",
-        "Matched case-insensitively; the ticket did not say.",
+        "> Matched case-insensitively; the ticket did not say.",
         "",
         "### 2026-08-03T11:00:00.000Z — Decision (qa, round 2)",
         "",
-        "Covered the empty-ledger path too.",
+        "> Covered the empty-ledger path too.",
       ].join("\n"),
     );
     expect(spec).not.toContain("Dispatched onto jfdi/filter.");
@@ -217,23 +217,41 @@ describe("ticketSpec", () => {
   });
 });
 
-describe("escapeNoteHeadings", () => {
-  it("neutralizes every heading line and leaves the rest of the text alone", () => {
+describe("quoteAgentText", () => {
+  it("quotes every line, blank ones included, so none sits at the start of a line", () => {
     expect(
-      escapeNoteHeadings(
-        ["## Comments", "prose with a # inside", "  ### indented", "###### six", "#no space"].join(
+      quoteAgentText(
+        ["## Comments", "", "prose with a # inside", "  ### indented", "> already quoted"].join(
           "\n",
         ),
       ),
     ).toBe(
       [
-        "\\## Comments",
-        "prose with a # inside",
-        "  \\### indented",
-        "\\###### six",
-        "#no space",
+        "> ## Comments",
+        ">",
+        "> prose with a # inside",
+        ">   ### indented",
+        "> > already quoted",
       ].join("\n"),
     );
+  });
+
+  it("round-trips a body that already carries its own quoting", async () => {
+    // The injectivity gap the backslash escape had: an already-escaped line
+    // lost its marker on read. Quoting nests instead, so one level on, one
+    // level off is exact whatever the body starts with.
+    const notePath = path.join(dir, "n.md");
+    await fs.writeFile(notePath, "# T\n\nBody.\n");
+    const body = ["> ## Comments", ">", "> quoted quote", "and a plain line"].join("\n");
+    await appendComment(notePath, {
+      kind: "decision",
+      timestamp: "2026-08-04T03:00:00.000Z",
+      stage: "implementation",
+      round: 1,
+      body,
+    });
+    const note = parseTicketNote(await fs.readFile(notePath, "utf8"));
+    expect(note.comments[0]?.body).toBe(body);
   });
 
   it("survives an append and comes back out of the note as it went in", async () => {
@@ -251,7 +269,7 @@ describe("escapeNoteHeadings", () => {
     // Exactly one Comments section: the forged one never becomes a heading, so
     // it cannot split the trail — nor be found as an insertion point later.
     expect(content.match(/^## Comments$/gm)).toHaveLength(1);
-    expect(content).toContain("\\## Comments");
+    expect(content).toContain("> ## Comments");
     const note = parseTicketNote(content);
     expect(note.comments).toEqual([
       {
@@ -351,7 +369,7 @@ describe("appendComment", () => {
         "",
         "### 2026-08-03T12:00:00.000Z — Decision (implementation, round 2)",
         "",
-        "Kept the existing flag name.",
+        "> Kept the existing flag name.",
         "",
       ].join("\n"),
     );
@@ -412,7 +430,7 @@ describe("appendComment", () => {
         "",
         "### 2026-08-03T12:00:00.000Z — Decision (implementation, round 2)",
         "",
-        "Kept the existing flag name.",
+        "> Kept the existing flag name.",
         "",
       ].join("\n"),
     );

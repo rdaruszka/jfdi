@@ -374,7 +374,7 @@ describe("a pipeline append to a ticket note", () => {
       const after = await readNote(sandbox, "bare");
       expect(after).toContain("# Bare\n\nLEGACY_BODY here.\n");
       expect(after).toMatch(
-        /## Comments\n\n### \S+ — Decision \(implementation, round 1\)\n\nONLY_DECISION made/,
+        /## Comments\n\n### \S+ — Decision \(implementation, round 1\)\n\n> ONLY_DECISION made/,
       );
     },
     PIPELINE_TIMEOUT_MS,

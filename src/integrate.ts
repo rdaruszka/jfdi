@@ -21,7 +21,7 @@ import {
   worktreesDir,
 } from "./pipeline.js";
 import { formatGateCommands, loadPrompt, renderPrompt } from "./prompts.js";
-import { appendToSection, escapeNoteHeadings } from "./ticket-note.js";
+import { appendToSection, quoteAgentText } from "./ticket-note.js";
 import { ensureTicketNote, type Ticket } from "./tickets.js";
 import { todayIsoDate } from "./util/dates.js";
 import { ensureDir, fileExists } from "./util/fsx.js";
@@ -45,18 +45,18 @@ async function appendReport(
     `### ${todayIsoDate()}`,
     "",
     report?.summary
-      ? `**Summary:** ${escapeNoteHeadings(report.summary)}`
+      ? `**Summary:**\n${quoteAgentText(report.summary)}`
       : "**Summary:** (none recorded)",
     "",
     `**Rounds:** ${report?.rounds ?? "?"} · **Branch:** \`${ticketBranch(ticket.id)}\``,
   ];
   if (report?.testsAdded)
-    lines.push("", `**QA tests added:** ${escapeNoteHeadings(report.testsAdded)}`);
+    lines.push("", `**QA tests added:**\n${quoteAgentText(report.testsAdded)}`);
   if (report && report.decisions.length > 0)
     lines.push(
       "",
       "**Decisions made autonomously:**",
-      ...report.decisions.map((decision) => `- ${escapeNoteHeadings(decision)}`),
+      ...report.decisions.flatMap((decision) => ["", quoteAgentText(decision)]),
     );
   lines.push("", mergeNote);
   await appendToSection(notePath, "Report", lines.join("\n"));
@@ -245,11 +245,13 @@ export async function integrateTicket(
     return blocked(context, ticket, notePath, `merge failed: ${(error as Error).message}`);
   }
   context.log.emit("merged", ticket.id);
+  // The resolution notes come from the Integration agent's verdict — quoted,
+  // like every other piece of agent text a note carries.
   await appendReport(
     notePath,
     ticket,
     report,
-    `Merged into \`${target}\`.${resolutionNote ? ` Conflict resolution: ${resolutionNote}` : ""}`,
+    `Merged into \`${target}\`.${resolutionNote ? `\n\nConflict resolution:\n${quoteAgentText(resolutionNote)}` : ""}`,
   );
   await cleanup(context, worktree);
   await deleteBranch(context.repoRoot, worktree.branch);
@@ -272,7 +274,7 @@ async function blocked(
     [
       `### ${todayIsoDate()} — integration`,
       "",
-      escapeNoteHeadings(reason),
+      quoteAgentText(reason),
       "",
       `_The worktree is kept for inspection under \`.jfdi/worktrees/\`. Fix, then move the card back to "${context.config.board.columns.begin}"._`,
     ].join("\n"),
