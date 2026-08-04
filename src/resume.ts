@@ -35,6 +35,10 @@ export interface ResumeState {
  * session, so the agent always starts from a clean, committed tree. Returns
  * null for a genuinely fresh ticket — nothing to resume, and the
  * implementation prompt stays as it was.
+ *
+ * Throws if the merge cannot be aborted: dispatching on a half-merged tree
+ * would hand the agent conflict markers and checkpoint-commit them, so the run
+ * fails loudly instead (the card lands in Blocked with the git failure).
  */
 export async function prepareResume(
   worktreePath: string,

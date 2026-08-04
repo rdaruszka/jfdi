@@ -74,6 +74,28 @@ describe("prepareResume", () => {
       "branch version\n",
     );
   });
+
+  /**
+   * Sanitizing is what earns the "clean, committed tree" promise the resume
+   * section makes. A merge git cannot abort (here a stale `index.lock`) must
+   * stop the dispatch, not get checkpoint-committed with its conflict markers
+   * and announced to the agent as recovered.
+   */
+  it("refuses to resume when the in-progress merge cannot be aborted", async () => {
+    await commitFile(worktree.path, "shared.txt", "branch version\n", "branch edit");
+    await commitFile(fixture.repo, "shared.txt", "main version\n", "main edit");
+    expect((await mergeTargetIntoBranch(worktree.path, "main")).hasConflict).toBe(true);
+    const gitDir = await git(worktree.path, "rev-parse", "--absolute-git-dir");
+    await fs.writeFile(path.join(gitDir, "index.lock"), "");
+
+    await expect(prepareResume(worktree.path, "main", "ticket")).rejects.toThrow(
+      /could not abort the merge in progress/,
+    );
+
+    // No checkpoint commit over the conflicted tree, and the merge still stands.
+    expect(await git(worktree.path, "log", "-1", "--format=%s")).toBe("branch edit");
+    expect(await isMergeInProgress(worktree.path)).toBe(true);
+  });
 });
 
 describe("formatResumeSection", () => {

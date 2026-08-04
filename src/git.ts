@@ -189,8 +189,23 @@ export async function isMergeInProgress(worktree: string): Promise<boolean> {
   }
 }
 
+/**
+ * Undo a merge left in progress, restoring the pre-merge state. A failure here
+ * is not survivable by the caller — the tree is still half-merged, so whatever
+ * was about to use it (an agent session, a landing commit) would run over
+ * conflict markers — so it throws rather than reporting an abort that did not
+ * happen.
+ */
 export async function abortMerge(worktree: string): Promise<void> {
-  await gitTry(worktree, "merge", "--abort");
+  try {
+    await git(worktree, "merge", "--abort");
+  } catch (error) {
+    const failure = error as GitError;
+    throw new GitError(
+      `could not abort the merge in progress in ${worktree}: ${failure.message}; clear the worktree by hand (a stale index.lock or an unwritable file is the usual cause) before running this ticket again`,
+      failure.stderr,
+    );
+  }
 }
 
 /**

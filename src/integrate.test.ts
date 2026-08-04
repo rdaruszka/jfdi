@@ -352,6 +352,55 @@ describe("integrateTicket", () => {
   });
 
   /**
+   * The stale-merge abort is the precondition for everything after it. When git
+   * refuses — here a stale `index.lock`, as a crashed git process leaves — the
+   * integration has to stop at that reason, not run an agent and a landing
+   * commit over a half-merged tree.
+   */
+  it("blocks when the stale merge cannot be aborted, without running the agent", async () => {
+    const context = fixture.context(passingHandler("feat9.txt"));
+    const ticket = await resolveTicket("Unabortable merge", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    if (outcome.status !== "passed") throw new Error("pipeline should pass");
+    await commitFile(fixture.repo, "feat9.txt", "main version\n", "collide");
+
+    const abandoningContext = fixture.context(async (spec) => {
+      await writeVerdict(spec.prompt, { resolution: "clean", notes: "gave up" });
+      return { ok: true, text: "" };
+    });
+    const first = await integrateTicket(
+      abandoningContext,
+      ticket,
+      outcome.worktree,
+      outcome.report,
+    );
+    expect(first.status).toBe("blocked");
+    const targetHead = await revParse(fixture.repo, "main");
+    const gitDir = await git(outcome.worktree.path, "rev-parse", "--absolute-git-dir");
+    await fs.writeFile(path.join(gitDir, "index.lock"), "");
+
+    const refusingContext = fixture.context(() =>
+      Promise.reject(new Error("no session may run over a half-merged tree")),
+    );
+    const blocked = await integrateTicket(
+      refusingContext,
+      ticket,
+      outcome.worktree,
+      outcome.report,
+    );
+
+    expect(blocked.status).toBe("blocked");
+    if (blocked.status !== "blocked") return;
+    expect(blocked.reason).toContain("could not abort the merge in progress");
+    expect(refusingContext.harness.calls).toHaveLength(0);
+    // Nothing landed, and the worktree still holds the merge for a human.
+    expect(await revParse(fixture.repo, "main")).toBe(targetHead);
+    expect(await isMergeInProgress(outcome.worktree.path)).toBe(true);
+    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
+    expect(note).toContain("could not abort the merge in progress");
+  });
+
+  /**
    * A worktree deleted by hand has no merge to abort and nowhere to merge: the
    * absence has to read as a blocked integration with a reason, not a crash.
    */

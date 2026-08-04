@@ -218,6 +218,29 @@ describe("merge and land", () => {
     );
   });
 
+  /**
+   * The abort is a sanitation step callers build on, so a git that refuses has
+   * to be an error and not a shrug. A stale `index.lock` is how it happens in
+   * the field: a git process that crashed mid-write leaves one behind.
+   */
+  it("throws when git cannot abort the merge, leaving the state as it found it", async () => {
+    const worktree = await createWorktree(repo, worktreesDir, "stuck", "main");
+    await write(worktree.path, "README.md", "branch version\n");
+    await commit(worktree.path, "branch edit");
+    await write(repo, "README.md", "main version\n");
+    await commit(repo, "main edit");
+    expect((await mergeTargetIntoBranch(worktree.path, "main")).hasConflict).toBe(true);
+    const gitDir = await git(worktree.path, "rev-parse", "--absolute-git-dir");
+    await fs.writeFile(path.join(gitDir, "index.lock"), "");
+
+    await expect(abortMerge(worktree.path)).rejects.toThrow(
+      /could not abort the merge in progress in .*stuck/,
+    );
+
+    // Nothing was quietly half-undone: the merge is still there to deal with.
+    expect(await isMergeInProgress(worktree.path)).toBe(true);
+  });
+
   it("fastForward refuses non-descendants", async () => {
     const worktree = await createWorktree(repo, worktreesDir, "diverged", "main");
     await write(worktree.path, "a.txt", "a\n");

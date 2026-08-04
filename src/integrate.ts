@@ -180,6 +180,29 @@ function mergeCommitMessage(ticket: Ticket, branch: string, target: string): str
   return `Merge ${branch} into ${target}\n\n${ticket.cardText}\n`;
 }
 
+type StaleMergeOutcome = { status: "clear"; note?: string } | { status: "blocked"; reason: string };
+
+/**
+ * A previous integration can leave the worktree mid-merge (the agent gave up
+ * half-resolved and we blocked). Re-entering there makes git refuse with "you
+ * have not concluded your merge" — which is not a conflict, so it would block
+ * again with a baffling reason. Abort first: a conflicted merge has committed
+ * nothing and left the branch ref alone, so this restores the pre-merge state
+ * losslessly. A worktree that is gone has no merge to abort; the merge itself
+ * reports its absence as a blocked integration. An abort git refuses is fatal
+ * to this integration — everything after it would run over conflict markers.
+ */
+async function clearStaleMerge(worktree: Worktree): Promise<StaleMergeOutcome> {
+  if (!(await fileExists(worktree.path))) return { status: "clear" };
+  if (!(await isMergeInProgress(worktree.path))) return { status: "clear" };
+  try {
+    await abortMerge(worktree.path);
+  } catch (error) {
+    return { status: "blocked", reason: (error as Error).message };
+  }
+  return { status: "clear", note: "aborted a stale merge left in the worktree" };
+}
+
 /**
  * Integrate one finished ticket: merge the target branch into the ticket
  * branch in its own worktree, resolve conflicts via the Integration agent,
@@ -200,21 +223,9 @@ export async function integrateTicket(
     ticket,
     path.join(context.repoRoot, context.config.ticketsDir),
   );
-  // A previous integration can leave the worktree mid-merge (the agent gave up
-  // half-resolved and we blocked). Re-entering there makes git refuse with
-  // "you have not concluded your merge" — which is not a conflict, so it would
-  // block again with a baffling reason. Abort first: a conflicted merge has
-  // committed nothing and left the branch ref alone, so this restores the
-  // pre-merge state losslessly. A worktree that is gone has no merge to abort;
-  // the merge below reports its absence as a blocked integration.
-  const hadStaleMerge =
-    (await fileExists(worktree.path)) && (await isMergeInProgress(worktree.path));
-  if (hadStaleMerge) await abortMerge(worktree.path);
-  context.log.emit(
-    "merge_start",
-    ticket.id,
-    hadStaleMerge ? { note: "aborted a stale merge left in the worktree" } : undefined,
-  );
+  const stale = await clearStaleMerge(worktree);
+  if (stale.status === "blocked") return blocked(context, ticket, notePath, stale.reason);
+  context.log.emit("merge_start", ticket.id, stale.note ? { note: stale.note } : undefined);
 
   // Human may have merged by hand (on-approval mode) — never double-merge.
   if (await isAncestor(context.repoRoot, worktree.branch, target)) {
