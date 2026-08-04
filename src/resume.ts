@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import { abortRebase, commitAllIfDirty, commitCount, git, isRebaseInProgress } from "./git.js";
+import { abortMerge, commitAllIfDirty, commitCount, git, isMergeInProgress } from "./git.js";
 import { atomicWrite, readIfExists } from "./util/fsx.js";
 
 /**
@@ -24,30 +24,35 @@ export interface ResumeState {
   commitCount: number;
   /** `git log --oneline` of the newest commits, newest first. */
   recentCommits: string;
-  hasAbortedRebase: boolean;
+  hasAbortedMerge: boolean;
   hasCheckpointedChanges: boolean;
 }
 
 /**
  * Sanitize a worktree an interrupted run may have left mid-flight, and report
- * what was found. Any in-progress rebase is aborted and any dirty state is
- * checkpoint-committed *before* the first session, so the agent always starts
- * from a clean, committed tree. Returns null for a genuinely fresh ticket —
- * nothing to resume, and the implementation prompt stays as it was.
+ * what was found. Any in-progress merge (what an abandoned integration leaves)
+ * is aborted and any dirty state is checkpoint-committed *before* the first
+ * session, so the agent always starts from a clean, committed tree. Returns
+ * null for a genuinely fresh ticket — nothing to resume, and the
+ * implementation prompt stays as it was.
+ *
+ * Throws if the merge cannot be aborted: dispatching on a half-merged tree
+ * would hand the agent conflict markers and checkpoint-commit them, so the run
+ * fails loudly instead (the card lands in Blocked with the git failure).
  */
 export async function prepareResume(
   worktreePath: string,
   targetBranch: string,
   ticketId: string,
 ): Promise<ResumeState | null> {
-  const hasAbortedRebase = await isRebaseInProgress(worktreePath);
-  if (hasAbortedRebase) await abortRebase(worktreePath);
+  const hasAbortedMerge = await isMergeInProgress(worktreePath);
+  if (hasAbortedMerge) await abortMerge(worktreePath);
   const hasCheckpointedChanges = await commitAllIfDirty(
     worktreePath,
     `jfdi(${ticketId}): recovered from interrupted run`,
   );
   const count = await commitCount(worktreePath, targetBranch);
-  if (count === 0 && !hasAbortedRebase && !hasCheckpointedChanges) return null;
+  if (count === 0 && !hasAbortedMerge && !hasCheckpointedChanges) return null;
   const recentCommits = await git(
     worktreePath,
     "log",
@@ -56,7 +61,7 @@ export async function prepareResume(
     `--max-count=${MAX_SUMMARY_COMMITS}`,
     `${targetBranch}..HEAD`,
   );
-  return { commitCount: count, recentCommits, hasAbortedRebase, hasCheckpointedChanges };
+  return { commitCount: count, recentCommits, hasAbortedMerge, hasCheckpointedChanges };
 }
 
 /** The implementation prompt's RESUME_SECTION: empty for a fresh ticket. */
@@ -77,9 +82,9 @@ export function formatResumeSection(
     parts.push(
       'The interrupted session left uncommitted changes; they were committed as "recovered from interrupted run" before this session started. Treat that commit as unreviewed work that may be incomplete or broken.\n',
     );
-  if (resume.hasAbortedRebase)
+  if (resume.hasAbortedMerge)
     parts.push(
-      `An in-progress rebase onto \`${targetBranch}\` was aborted before this session started; the branch is back at its pre-rebase state.\n`,
+      `An in-progress merge of \`${targetBranch}\` into this branch was aborted before this session started; the branch is back at its pre-merge state.\n`,
     );
   parts.push(
     `Inspect the state with \`git log ${targetBranch}..HEAD\` and \`git diff ${targetBranch}...HEAD\` before writing any code.\n`,

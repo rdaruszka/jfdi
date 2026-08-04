@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { JfdiConfig } from "./config.js";
 import type { JfdiEvent, StageName } from "./events.js";
-import { createWorktree, git, isRebaseInProgress, rebaseOnto } from "./git.js";
+import { createWorktree, git, isMergeInProgress, mergeTargetIntoBranch } from "./git.js";
 import { type FakeHandler, FakeHarness } from "./harness/fake.js";
 import { type PipelineContext, runPipeline } from "./pipeline.js";
 import {
@@ -363,7 +363,7 @@ describe("runPipeline", () => {
     expect(prompt).toContain("the parser is wrong");
   });
 
-  it("sanitizes a worktree a killed session left dirty and mid-rebase", async () => {
+  it("sanitizes a worktree a killed session left dirty and mid-merge", async () => {
     const ticket = await resolveTicket("Interrupted mid-flight", fixture.ticketsDir);
     const worktree = await createWorktree(
       fixture.repo,
@@ -371,10 +371,10 @@ describe("runPipeline", () => {
       ticket.id,
       "main",
     );
-    // A killed run's leavings: a conflicted rebase and uncommitted edits.
+    // A killed run's leavings: a conflicted merge and uncommitted edits.
     await commitFile(worktree.path, "shared.txt", "branch\n", "branch edit");
     await commitFile(fixture.repo, "shared.txt", "main\n", "main edit");
-    await rebaseOnto(worktree.path, "main");
+    await mergeTargetIntoBranch(worktree.path, "main");
     await fs.writeFile(path.join(worktree.path, "impl.txt"), "salvaged\n");
 
     let statusAtStart = "unknown";
@@ -394,18 +394,18 @@ describe("runPipeline", () => {
     context.log.on((event) => events.push(event));
 
     expect((await runPipeline(context, ticket)).status).toBe("passed");
-    // The agent started from a clean, committed tree with the rebase undone.
+    // The agent started from a clean, committed tree with the merge undone.
     expect(statusAtStart).toBe("");
-    expect(await isRebaseInProgress(worktree.path)).toBe(false);
+    expect(await isMergeInProgress(worktree.path)).toBe(false);
     expect(await git(worktree.path, "log", "-1", "--format=%s")).toBe(
       `jfdi(${ticket.id}): recovered from interrupted run`,
     );
     expect(prompt).toContain("recovered from interrupted run");
-    expect(prompt).toContain("rebase onto `main` was aborted");
+    expect(prompt).toContain("merge of `main` into this branch was aborted");
     const resumedEvent = events.find((event) => event.type === "resumed");
     expect(resumedEvent?.data).toMatchObject({
       hasCheckpointedChanges: true,
-      hasAbortedRebase: true,
+      hasAbortedMerge: true,
     });
   });
 

@@ -54,10 +54,10 @@ if (match) {
     verdict = { verdict: "pass", testsAdded: "one" };
   } else {
     // Integration: resolve the conflict the way the real agent would, then
-    // hand the rebase back to the coordinator.
+    // hand the merge back to the coordinator.
     fs.writeFileSync(process.cwd() + "/feature.txt", "reconciled\\n");
     execFileSync("git", ["add", "-A"], { cwd: process.cwd() });
-    execFileSync("git", ["-c", "core.editor=true", "rebase", "--continue"], { cwd: process.cwd() });
+    execFileSync("git", ["commit", "--no-edit"], { cwd: process.cwd() });
     verdict = { resolution: "clean", notes: "kept both" };
   }
   fs.mkdirSync(verdictPath.replace(/\\/[^/]+$/, ""), { recursive: true });
@@ -362,7 +362,7 @@ describe("per-stage selection, end to end", () => {
   );
 
   it(
-    "resolves a conflicted rebase through the integration stage's own CLI",
+    "resolves a conflicted merge through the integration stage's own CLI",
     async () => {
       const sandbox = await makeSandbox();
       await scaffold(sandbox, MIXED_STAGES);

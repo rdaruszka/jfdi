@@ -90,7 +90,7 @@ Exit 1 if the ticket has no recorded runs.
 ## `jfdi merge <ticket-id>`
 
 Approves a Ready-to-Merge ticket in `on-approval` mode: runs the identical
-integration path the coordinator uses (rebase → gate → fast-forward), then moves
+integration path the coordinator uses (merge → gate → land), then moves
 the card to Done. Works alongside a running coordinator — the shared event
 stream keeps both consistent.
 

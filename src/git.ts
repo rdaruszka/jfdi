@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { withPathLock } from "./util/fsx.js";
+import { fileExists, withPathLock } from "./util/fsx.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -153,57 +153,121 @@ export async function deleteBranch(repo: string, branch: string): Promise<void> 
   await gitTry(repo, "branch", "-D", branch);
 }
 
-export interface RebaseResult {
+export interface MergeResult {
   ok: boolean;
   hasConflict: boolean;
   output: string;
 }
 
-/** Rebase the worktree's branch onto `target`. On conflict the rebase is left in progress. */
-export async function rebaseOnto(worktree: string, target: string): Promise<RebaseResult> {
-  const result = await gitTry(worktree, "rebase", target);
+/**
+ * Merge `target` into the worktree's branch, so the merged state can be built
+ * and tested where the run already lives. On conflict the merge is left in
+ * progress for the Integration agent to resolve.
+ */
+export async function mergeTargetIntoBranch(
+  worktree: string,
+  target: string,
+): Promise<MergeResult> {
+  const result = await gitTry(worktree, "merge", "--no-edit", target);
   if (result.ok) return { ok: true, hasConflict: false, output: result.output };
-  const hasConflict = /CONFLICT|could not apply|needs merge/i.test(result.output);
-  if (!hasConflict) await gitTry(worktree, "rebase", "--abort");
+  // git reports conflicts on stdout, which a failed run does not hand back, so
+  // the merge state is the signal rather than the text: MERGE_HEAD exists only
+  // for a merge git stopped mid-flight. Any other failure — a gone worktree, a
+  // dirty tree, an unknown ref — started nothing, so there is nothing to undo.
+  const hasConflict = (await fileExists(worktree)) && (await isMergeInProgress(worktree));
   return { ok: false, hasConflict, output: result.output };
 }
 
-export async function isRebaseInProgress(worktree: string): Promise<boolean> {
+export async function isMergeInProgress(worktree: string): Promise<boolean> {
   const gitDir = await git(worktree, "rev-parse", "--git-dir");
   const gitDirPath = path.isAbsolute(gitDir) ? gitDir : path.join(worktree, gitDir);
-  for (const marker of ["rebase-merge", "rebase-apply"]) {
-    try {
-      await fs.access(path.join(gitDirPath, marker));
-      return true;
-    } catch {
-      // not present
-    }
+  try {
+    await fs.access(path.join(gitDirPath, "MERGE_HEAD"));
+    return true;
+  } catch {
+    return false;
   }
-  return false;
-}
-
-export async function abortRebase(worktree: string): Promise<void> {
-  await gitTry(worktree, "rebase", "--abort");
 }
 
 /**
- * Fast-forward the target branch to the ticket branch. Works whether or not
- * the target is checked out in the main working tree:
+ * Undo a merge left in progress, restoring the pre-merge state. A failure here
+ * is not survivable by the caller — the tree is still half-merged, so whatever
+ * was about to use it (an agent session, a landing commit) would run over
+ * conflict markers — so it throws rather than reporting an abort that did not
+ * happen.
+ */
+export async function abortMerge(worktree: string): Promise<void> {
+  try {
+    await git(worktree, "merge", "--abort");
+  } catch (error) {
+    const failure = error as GitError;
+    throw new GitError(
+      `could not abort the merge in progress in ${worktree}: ${failure.message}; clear the worktree by hand (a stale index.lock or an unwritable file is the usual cause) before running this ticket again`,
+      failure.stderr,
+    );
+  }
+}
+
+/**
+ * An object name — the only thing `git commit-tree` may answer with. 40 hex
+ * digits in a sha1 repository, 64 in a sha256 one.
+ */
+const OBJECT_NAME_RE = /^([0-9a-f]{40}|[0-9a-f]{64})$/;
+
+/**
+ * Build the landing merge commit for the tree currently at HEAD in `worktree` —
+ * the tree the gate just ran against. `firstParent` is the target's prior head
+ * and `secondParent` the signed-off branch head, in that order, so
+ * `git log --first-parent <target>` keeps following the target line and the
+ * signed-off commit stays reachable. Returns the new commit's sha; no ref moves.
+ */
+export async function commitMerge(
+  worktree: string,
+  parents: { firstParent: string; secondParent: string },
+  message: string,
+): Promise<string> {
+  const tree = await git(worktree, "rev-parse", "HEAD^{tree}");
+  const sha = await git(
+    worktree,
+    "commit-tree",
+    tree,
+    "-p",
+    parents.firstParent,
+    "-p",
+    parents.secondParent,
+    "-m",
+    message,
+  );
+  // Subprocess output is a trust boundary, and this sha is about to become the
+  // target branch: anything but an object name means git did not commit.
+  if (!OBJECT_NAME_RE.test(sha))
+    throw new GitError(
+      `git commit-tree returned "${sha}" instead of a commit sha for tree ${tree} in ${worktree}`,
+    );
+  return sha;
+}
+
+/**
+ * Fast-forward the target branch to `commitish` — the landing merge commit,
+ * built with the target's current head as its first parent. The descendant
+ * check is what makes the update safe: a target that moved since that commit
+ * was built is not an ancestor of it, so nothing is overwritten. Works whether
+ * or not the target is checked out in the main working tree:
  *  - target checked out here and tree clean → `git merge --ff-only`
  *  - target not checked out anywhere → `git branch -f` (ref update only)
  */
-export async function fastForward(repo: string, target: string, branch: string): Promise<void> {
-  if (!(await isAncestor(repo, target, branch)))
-    throw new GitError(`cannot fast-forward ${target} to ${branch}: not a descendant`);
+export async function fastForward(repo: string, target: string, commitish: string): Promise<void> {
+  if (!(await isAncestor(repo, target, commitish)))
+    throw new GitError(`cannot fast-forward ${target} to ${commitish}: not a descendant`);
   const head = await currentBranch(repo);
   if (head === target) {
     if (await hasTrackedChanges(repo))
       throw new GitError(
         `target branch "${target}" is checked out with uncommitted changes; commit or stash before merging`,
       );
-    await git(repo, "merge", "--ff-only", branch);
+    await git(repo, "merge", "--ff-only", commitish);
   } else {
-    await git(repo, "branch", "-f", target, branch);
+    await git(repo, "branch", "-f", target, commitish);
   }
 }
 

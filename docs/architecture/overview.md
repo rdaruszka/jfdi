@@ -53,7 +53,7 @@ flowchart TB
     HARNESS --> CLI_B
     PIPE --> WT
     INT --> WT
-    INT -->|rebase + fast-forward| TARGET
+    INT -->|merge commit| TARGET
     COORD -->|emit| EV
     PIPE -->|emit| EV
     INT -->|emit| EV
@@ -80,11 +80,14 @@ flowchart TB
   Implementation → gate → Code Review → QA, with session continuation between
   rounds. Emits events for every transition; writes verdicts and logs to the
   run directory. Detailed walkthrough: [The Pipeline](../guide/pipeline.md).
-- **Integration** ([src/integrate.ts](../../src/integrate.ts)) — rebase onto the
-  target, agent-driven conflict resolution, gate rerun, the complicated-merge →
-  re-QA valve, then a fast-forward. Called by the coordinator (through the
-  queue), by `jfdi run` (auto mode), and by `jfdi merge` — same code path, three
-  callers. History is strictly linear: rebase + fast-forward, no merge commits.
+- **Integration** ([src/integrate.ts](../../src/integrate.ts)) — merge the
+  target into the ticket branch, agent-driven conflict resolution, gate rerun,
+  the complicated-merge → re-QA valve, then the landing merge commit. Called by
+  the coordinator (through the queue), by `jfdi run` (auto mode), and by
+  `jfdi merge` — same code path, three callers. Every ticket lands as one merge
+  commit — target's prior head as first parent, the signed-off branch head as
+  second — so the commit the reviews approved stays reachable and
+  `git log --first-parent <target>` still reads one entry per ticket.
 - **Harness** ([src/harness/](../../src/harness/)) — the provider abstraction;
   see [Harness](harness.md). Constructed **per stage**, not per instance:
   `config.stages` picks a harness (and optionally a model and effort) for each
@@ -136,8 +139,8 @@ sequenceDiagram
         H->>C: jfdi merge / drag card / hand-merge
     end
     C->>I: enqueue (serialized)
-    I->>I: rebase → resolve → gate → (re-QA?)
-    I->>G: fast-forward
+    I->>I: merge target in → resolve → gate → (re-QA?)
+    I->>G: land merge commit
     I-->>C: merged
     C->>C: card → Done ✓, worktree removed, branch deleted
 ```
@@ -199,7 +202,7 @@ src/
   commands/               one module per subcommand (+ shared context builder)
   pipeline.ts             the per-ticket stage loop
   coordinator.ts          board watcher + dispatcher + queues
-  integrate.ts            rebase/gate/merge + IntegrationQueue
+  integrate.ts            merge/gate/land + IntegrationQueue
   board.ts, cards.ts      board parsing and surgical writes
   tickets.ts              ticket resolution, note sections
   prompts.ts              default prompt templates + loader (disk wins)
@@ -209,7 +212,7 @@ src/
   report.ts               run reports + observation cards
   events.ts               event log, reducer, cross-process follow
   state-dir.ts            ~/.jfdi/projects/<key> resolution (JFDI_HOME)
-  git.ts                  git plumbing (worktrees, rebase, fast-forward)
+  git.ts                  git plumbing (worktrees, merge, landing commit)
   harness/                the provider abstraction (see harness.md)
   tui/App.tsx             the Ink TUI
   guidelines.ts           GENERATED from docs/coding-guidelines.md

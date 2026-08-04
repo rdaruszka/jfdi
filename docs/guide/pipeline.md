@@ -131,7 +131,7 @@ The gate runs at five points:
 
 1. After Implementation hands off, before Code Review ("done" isn't done until it passes)
 2. After QA commits its tests, if that moved HEAD (QA's own tests must pass too)
-3. During integration, after a clean rebase, pre-merge
+3. During integration, after a clean merge, pre-land
 4. During integration, after agent-driven conflict resolution
 5. During integration, after re-QA on a complicated merge
 
@@ -243,11 +243,14 @@ guessing" instruction.
 ## Resuming an interrupted run
 
 Runs can die mid-pipeline — an escalation, exhausted rounds, a killed session, a
-coordinator crash — leaving partial commits and possibly a dirty or mid-rebase
+coordinator crash — leaving partial commits and possibly a dirty or mid-merge
 worktree. Re-dispatching the card (moving it back to the begin column) reuses the
 branch and resumes deliberately:
 
-1. Any in-progress rebase is aborted.
+1. Any in-progress merge is aborted. If git cannot abort it (a stale
+   `index.lock`, an unwritable file), the run stops there and the card is
+   blocked — dispatching onto a half-merged tree would hand the agent conflict
+   markers and commit them.
 2. Any uncommitted changes are checkpoint-committed as
    `jfdi(<ticket-id>): recovered from interrupted run`, so the session starts from
    a clean, committed tree.

@@ -97,10 +97,12 @@ This is what keeps "surgical changes" honest: the rule can demand agents *not* f
 
 ## The merge tripwire
 
-The final integration step gets a **tripwire, not a veto**. By merge time the commit carries commit-bound sign-offs; a discretionary "this feels bad" rejection would be re-review with less context. But the merger knows one thing reviewers couldn't: what happened during the rebase onto a target branch that moved. So:
+The final integration step gets a **tripwire, not a veto**. By merge time the commit carries commit-bound sign-offs; a discretionary "this feels bad" rejection would be re-review with less context. But the merger knows one thing reviewers couldn't: what happened when a target branch that moved was merged in. So:
 
-- Rebase clean + gate green after rebase → merge. No discretion.
-- Rebase needed manual resolution, or the gate fails post-rebase → sign-offs are void (conflict resolution *is* a code change), back into the pipeline; repeated failure escalates to a human like any exhausted ticket.
+- Merge clean + gate green on the merged state → land it. No discretion.
+- The merge needed manual resolution, or the gate fails on the merged state → sign-offs are void (conflict resolution *is* a code change), back into the pipeline; repeated failure escalates to a human like any exhausted ticket.
+
+What lands is a merge commit, never a rebase: sign-offs bind to a commit sha, so rewriting the branch would delete the very commits the review trail points at, and would land intermediate states the gate never ran against.
 
 The merger judges the *integration*, never the *code*. Every refusal is a stated mechanical reason; the merger never quietly resolves a conflict and proceeds as if sign-offs still held.
 

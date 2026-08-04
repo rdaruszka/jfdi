@@ -93,7 +93,7 @@ gate, and a seven-card backlog. Its flaws are load-bearing ticket targets —
 a floating-point bug in `total`, copy-pasted storage across commands, an
 id-reuse trap — and its tickets are chosen to exercise specific pipeline
 behaviors: a well-specified happy path, two tickets that collide to force
-serialized integration and a rebase, a bug fix from a repro, a
+serialized integration and a conflicted merge, a bug fix from a repro, a
 behavior-preserving refactor that tempts scope creep, an underspecified design
 ticket that forces decide-log-proceed, a trap ticket that forces review
 feedback rounds, and a note-less card.
@@ -115,7 +115,7 @@ The playground prints the copy's path and ready cards, then the exact commands
 to run JFDI against it. Tests use the same factory,
 `createProjectFixture()` in
 [src/fixture-project.ts](../src/fixture-project.ts), which copies the template,
-initializes a real git history (three commits, so rebases have archaeology),
+initializes a real git history (three commits, so merges have archaeology),
 and promotes the requested cards.
 
 `fixtures/half-app.grading/` holds per-ticket acceptance checks, kept out of

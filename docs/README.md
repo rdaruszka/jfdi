@@ -62,7 +62,7 @@ One name per concept — these terms are used exactly, here and in the code:
 | **gate** | the mechanical check (build/test/lint); all commands must exit zero |
 | **round** | one feedback cycle: fix → gate → reviews |
 | **sign-off** | a review stage's approval, bound to a specific commit |
-| **integration** | the coordinator-owned rebase → gate → merge step; globally serialized |
+| **integration** | the coordinator-owned merge → gate → land step; globally serialized |
 | **coordinator** | the long-running process that watches the board and dispatches runs |
 | **harness** | the agent-session abstraction; Claude Code and Codex are implementations |
 | **worktree** | the isolated git checkout (branch `jfdi/<ticket-id>`) a run works in |

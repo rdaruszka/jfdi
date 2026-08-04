@@ -219,11 +219,12 @@ export class Coordinator {
   /**
    * Whether the commit a run's reviews signed off on is already in the target.
    * This is the evidence a hand-merge leaves once the branch is gone: nothing
-   * records the merge, but `report.json` still names the tip, and a plain
-   * `git merge` carries that very commit into the target. An integration that
-   * rebased first rewrites the sha instead — that case is the `merged` event's,
-   * which only our own integration writes. A sha git can no longer resolve
-   * (the branch was deleted unmerged) is not contained in anything.
+   * records the merge, but `report.json` still names the tip, and any merge —
+   * a human's or our own — carries that very commit into the target as a
+   * parent. Our own integrations also write the `merged` event, so this check
+   * only has to catch the ones that happened outside the tool. A sha git can no
+   * longer resolve (the branch was deleted unmerged) is not contained in
+   * anything.
    */
   private async isSignedOffCommitInTarget(ticketId: string): Promise<boolean> {
     const report = await loadReport(this.context.stateDir, ticketId);

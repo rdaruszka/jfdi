@@ -28,9 +28,10 @@ Codex** sessions in the ticket's own git worktree (branch `jfdi/<ticket-id>`):
 2. **Code Review** — judges the diff on structure and maintainability only
 3. **Quality Assurance** — exercises the built artifact per your sandbox
    contract and commits what it verified as regression tests
-4. **Integration** — coordinator-owned and strictly serialized: rebases onto
-   the target branch, resolves conflicts, reruns the gate, fast-forwards —
-   linear history, no merge commits
+4. **Integration** — coordinator-owned and strictly serialized: merges the
+   target branch in, resolves conflicts, reruns the gate, then lands one merge
+   commit per ticket — the signed-off commit stays reachable, and
+   `git log --first-parent` reads one entry per ticket
 
 Review failures loop back to the Implementation session with the feedback
 (capped rounds; later rounds continue existing sessions instead of paying to
