@@ -78,6 +78,14 @@ describe("integrateTicket", () => {
     expect(note).toContain("## Report");
     expect(note).toContain("built feat.txt");
     expect(note).toContain("Merged into `main`");
+    // …and the trail says where the work went, naming the commit it landed as.
+    const landed = await revParse(fixture.repo, "main");
+    const comments = parseTicketNote(note).comments;
+    expect(comments.at(-1)).toMatchObject({
+      kind: "transition",
+      stage: "integration",
+      body: `JFDI Integration merged — landed on \`main\` as \`${landed.slice(0, 7)}\``,
+    });
   });
 
   /**
@@ -485,6 +493,14 @@ describe("integrateTicket", () => {
     if (result.status !== "blocked") return;
     expect(result.reason).toContain(`merging main into ${outcome.worktree.branch} failed`);
     expect(await revParse(fixture.repo, "main")).toBe(targetHead);
+    // The block is on the trail too, with the reason and where the card went.
+    const note = parseTicketNote(
+      await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8"),
+    );
+    expect(note.comments.at(-1)?.body).toContain(
+      "JFDI Integration blocked — moving to Blocked for human review",
+    );
+    expect(note.comments.at(-1)?.body).toContain("merging main into");
   });
 
   /**

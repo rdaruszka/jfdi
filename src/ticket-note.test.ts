@@ -394,6 +394,36 @@ describe("appendComment", () => {
     ]);
   });
 
+  it("survives a human editing the note mid-append, and lands on a symlink's target", async () => {
+    // A transition comment reaches a note a human has open in Obsidian, so it
+    // runs the same read → re-read → retry → rename discipline as the board.
+    const vault = path.join(dir, "vault");
+    await fs.mkdir(vault);
+    const real = path.join(vault, "n.md");
+    await fs.writeFile(real, "# T\n\nBody.\n");
+    const link = path.join(dir, "n.md");
+    await fs.symlink(real, link);
+
+    const transition: TicketComment = {
+      kind: "transition",
+      timestamp: "2026-08-03T14:00:00.000Z",
+      stage: "qa",
+      round: 1,
+      body: "JFDI QA PASSED — moving to integration",
+    };
+    await Promise.all([
+      appendComment(link, decision),
+      appendComment(link, transition),
+      fs.writeFile(real, "# T\n\nBody the human just retyped.\n"),
+    ]);
+    // Whoever wrote last, both entries are on the real file behind the link.
+    await appendComment(link, transition);
+    const content = await fs.readFile(real, "utf8");
+    expect((await fs.lstat(link)).isSymbolicLink()).toBe(true);
+    expect(content).toContain("JFDI QA PASSED — moving to integration");
+    expect(content.match(/^## Comments$/gm)).toHaveLength(1);
+  });
+
   it("leaves frontmatter and unrecognized sections byte-for-byte intact", async () => {
     const notePath = path.join(dir, "n.md");
     const before = [

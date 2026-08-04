@@ -70,8 +70,35 @@ describe("parseConfig stages", () => {
 
   it("names the stage entries a partial stages section is missing", () => {
     expect(() => parseConfig({ stages: { implementation: { harness: "claude" } } })).toThrow(
-      /missing an entry for code-review, qa, integration/,
+      /missing an entry for code-review, qa, integration, commit-message/,
     );
+  });
+
+  it("rejects a config that predates the scribe, naming the entry and the block to add", () => {
+    const { "commit-message": _scribe, ...withoutScribe } = STAGES;
+    expect(() => parseConfig({ stages: withoutScribe })).toThrow(ConfigError);
+    expect(() => parseConfig({ stages: withoutScribe })).toThrow(
+      /missing an entry for commit-message/,
+    );
+    // Actionable: the message says what the entry is for and shows the fix.
+    expect(() => parseConfig({ stages: withoutScribe })).toThrow(
+      /"commit-message" selects the scribe that writes commit messages/,
+    );
+    expect(() => parseConfig({ stages: withoutScribe })).toThrow(
+      /"commit-message": \{ "harness": "claude", "model": "claude-sonnet-5" \}/,
+    );
+  });
+
+  it("selects the scribe like any other entry, effort included", () => {
+    const config = parseConfig({
+      stages: { ...STAGES, "commit-message": { harness: "codex", effort: "minimal" } },
+    });
+    expect(config.stages["commit-message"]).toEqual({ harness: "codex", effort: "minimal" });
+    expect(() =>
+      parseConfig({
+        stages: { ...STAGES, "commit-message": { harness: "claude", effort: "none" } },
+      }),
+    ).toThrow(/stages.commit-message.effort is "none"/);
   });
 
   it("rejects an unknown stage key", () => {
