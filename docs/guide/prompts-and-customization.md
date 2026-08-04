@@ -18,7 +18,7 @@ compiles in defaults, but if a file exists it is used verbatim, and a missing
 file is written out before use — what ran is always on disk, never a silent
 in-code fallback. Edit freely; delete a file to get the current default back.
 
-Nine files:
+Ten files:
 
 | File | Used by |
 |---|---|
@@ -29,6 +29,7 @@ Nine files:
 | `qa.md` | A fresh QA session |
 | `qa-continue.md` | Continuing QA in a later round |
 | `integration.md` | The conflict-resolution session during integration |
+| `commit-message.md` | The [scribe](pipeline.md#commits-and-the-scribe) — every commit message the pipeline writes |
 | `convo.md` | The `jfdi convo` scoping prompt |
 | `init.md` | The `jfdi init` agent-assisted setup prompt |
 
@@ -58,6 +59,7 @@ Stage-specific additions:
 | `qa` | `NOTE_PATH`, `GATE_RESULT`, `SANDBOX` (the sandbox contract), `COMMIT_LOG`, `DIFF_STAT` — deliberately no diff |
 | `qa-continue` | `LAST_SEEN_COMMIT`, `HEAD_COMMIT`, `PROVENANCE`, `NEW_COMMITS`, `TOUCHED_FILES` |
 | `integration` | (common set only) |
+| `commit-message` | `TICKET_ID`, `SPEC`, `STAGE`, `ROUND`, `MAX_ROUNDS`, `STAGE_SUMMARY` (what the session reported it did), `STAGED_DIFF` (what is about to be committed), `RECENT_LOG` (the house style), `STATUS_LINE` (the line the pipeline appends) — and no `VERDICT_PATH`: the scribe answers with the message itself |
 | `init` | `CODING_GUIDELINES` (the generic guidelines JFDI ships, compiled from [docs/coding-guidelines.md](../coding-guidelines.md)) |
 | `convo` | (none) |
 
@@ -66,6 +68,11 @@ the **verdict instructions** (the pipeline reads outcomes only from the verdict
 file the prompt names — remove that and the stage always "fails" with an invalid
 verdict) and the verdict **schema** the stage's parser expects (see
 [The Pipeline](pipeline.md#verdicts)).
+
+`commit-message.md` is the exception to both: it names no verdict file, and its
+whole answer *is* the message. Retune its voice freely — the message shape it
+must not fight is the status line and the `JFDI-Round` trailer, which the
+pipeline appends under whatever the scribe wrote.
 
 The shared posture block in the three fresh-stage prompts encodes the system's
 values — decide-log-proceed, escalation as a last resort with a recommendation,

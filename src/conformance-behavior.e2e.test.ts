@@ -53,6 +53,11 @@ const mode = process.env.STUB_MODE || "pass";
 if (process.env.STUB_ARGV_LOG) {
   fs.appendFileSync(process.env.STUB_ARGV_LOG, JSON.stringify({ cli: cliName, argv }) + "\\n");
 }
+// The scribe answers in its result text, not in a verdict file.
+let resultText = "done";
+if (prompt.includes("Write the commit message")) {
+  resultText = "stub-scribed subject\\n\\nWhat the session did, in the stub's words.";
+}
 if (match) {
   const verdictPath = match[1];
   const stage = verdictPath.split("/").pop().replace(".verdict.json", "");
@@ -83,7 +88,7 @@ const argv = process.argv.slice(2);
 const prompt = argv[argv.indexOf("-p") + 1] || "";
 process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "stub" }] } }) + "\\n");
 ${STUB_BODY}
-process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done" }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: resultText }) + "\\n");
 `;
 
 /**
@@ -97,7 +102,7 @@ const argv = process.argv.slice(2);
 const prompt = argv[argv.length - 1] || "";
 process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "stub-thread" }) + "\\n");
 ${STUB_BODY}
-process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "done" } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: resultText } }) + "\\n");
 `;
 
 interface Sandbox {
@@ -180,6 +185,11 @@ async function runCli(
     const failure = error as { code?: number; stdout?: string; stderr?: string };
     return { code: failure.code ?? 1, stdout: failure.stdout ?? "", stderr: failure.stderr ?? "" };
   }
+}
+
+/** The ticket note as it stands on disk, from outside the process. */
+function readTicketNote(sandbox: Sandbox, ticketId: string): Promise<string> {
+  return fs.readFile(path.join(sandbox.project, ".jfdi", "tickets", `${ticketId}.md`), "utf8");
 }
 
 function ticketIdOf(result: CliResult): string {
@@ -306,6 +316,7 @@ describe("CLI surface", () => {
       expect((await fs.readdir(path.join(jfdiDir, "prompts"))).sort()).toEqual([
         "code-review-continue.md",
         "code-review.md",
+        "commit-message.md",
         "convo.md",
         "implementation-continue.md",
         "implementation.md",
@@ -343,6 +354,7 @@ describe("CLI surface", () => {
         "code-review": { harness: "codex", model: "gpt-5.6-sol", effort: "high" },
         qa: { harness: "claude", model: "claude-opus-5", effort: "high" },
         integration: { harness: "claude", model: "claude-opus-5", effort: "medium" },
+        "commit-message": { harness: "claude", model: "claude-sonnet-5" },
       });
 
       // Re-running init must not rewrite or duplicate anything.
@@ -373,7 +385,10 @@ describe("CLI surface", () => {
           };
           return {
             cli,
-            stage: /(\w[\w-]*)\.verdict\.json/.exec(argv.join(" "))?.[1],
+            // The scribe writes no verdict, so it is named by its own prompt.
+            stage: argv.join(" ").includes("Write the commit message")
+              ? "commit-message"
+              : /(\w[\w-]*)\.verdict\.json/.exec(argv.join(" "))?.[1],
             model: valueAfter("--model"),
             // Claude spells effort as a flag; Codex as a `-c` config override.
             effort:
@@ -386,6 +401,8 @@ describe("CLI surface", () => {
       // --effort, Codex takes it as a -c config override.
       expect(invocations).toEqual([
         { cli: "claude", stage: "implementation", model: "claude-opus-5", effort: "high" },
+        // The scribe runs on its own entry — a cheap model, no effort flag.
+        { cli: "claude", stage: "commit-message", model: "claude-sonnet-5", effort: undefined },
         { cli: "codex", stage: "code-review", model: "gpt-5.6-sol", effort: "high" },
         { cli: "claude", stage: "qa", model: "claude-opus-5", effort: "high" },
       ]);
@@ -444,8 +461,31 @@ describe("pipeline behavior", () => {
       const merge = await runCli(sandbox, ["merge", ticketId]);
       expect(merge.code).toBe(0);
       expect(merge.stdout).toContain("Merged into main.");
-      expect(await git(sandbox.project, "log", "--oneline", "main")).toContain("implement round 1");
+      // The branch carries the pipeline's own commit, written by the scribe —
+      // and not the one the agent made for itself despite the prompt.
+      const landed = await git(sandbox.project, "log", "--oneline", "main");
+      expect(landed).toContain("stub-scribed subject");
+      expect(landed).not.toContain("implement round 1");
       expect(await git(sandbox.project, "branch", "--list", `jfdi/${ticketId}`)).toBe("");
+
+      // The other surface tells the same story on its own: every transition of
+      // the run, ending at the merge, in the note's Comments trail.
+      const trail = (await readTicketNote(sandbox, ticketId)).split("### ").slice(1);
+      const headings = trail.map((entry) => entry.split("\n")[0] ?? "");
+      expect(headings.filter((heading) => /— dispatch round 1$/.test(heading))).toHaveLength(1);
+      expect(headings.filter((heading) => /— implementation round 1$/.test(heading))).toHaveLength(
+        1,
+      );
+      expect(headings.filter((heading) => /— code-review round 1$/.test(heading))).toHaveLength(1);
+      expect(headings.filter((heading) => /— qa round 1$/.test(heading))).toHaveLength(1);
+      const note = await readTicketNote(sandbox, ticketId);
+      expect(note).toContain("> JFDI run started — round 1");
+      // The commit's message, verbatim, on the note as well.
+      expect(note).toContain(`> ${ticketId}: stub-scribed subject`);
+      expect(note).toContain("> JFDI Implementation complete — moving to the mechanical gate");
+      expect(note).toContain("> JFDI-Round: 1/3");
+      expect(note).toContain("> JFDI Code Review PASSED — moving to QA");
+      expect(note).toMatch(/> JFDI Integration merged — landed on `main` as `[0-9a-f]{7}`/);
 
       // A second approval is a clean failure, not a double merge.
       const again = await runCli(sandbox, ["merge", ticketId]);
@@ -479,6 +519,18 @@ describe("pipeline behavior", () => {
 
       // Nothing reached the target branch.
       expect(await git(sandbox.project, "log", "--oneline", "main")).not.toContain("implement");
+
+      // The note carries each failed round's handback — the reviewer's exact
+      // words — and the exhaustion that sent the card to Blocked.
+      const note = await readTicketNote(sandbox, ticketIdOf(run));
+      expect(
+        note.match(/> JFDI Code Review FAILED — returning to Implementation for round 2/g),
+      ).toHaveLength(1);
+      expect(note).toContain("> JFDI Code Review FAILED — moving to Blocked for human review");
+      expect(note).toContain("> needs work");
+      expect(note).toContain(
+        "> JFDI run exhausted its 3 rounds — moving to Blocked for human review",
+      );
     },
     PIPELINE_TIMEOUT_MS,
   );
@@ -664,7 +716,11 @@ describe("trust boundaries", () => {
       const merge = await runCli(sandbox, ["merge", ticketId]);
       expect(merge.code).toBe(0);
       expect(merge.stdout).toContain("Merged into main.");
-      expect(await git(sandbox.project, "log", "--oneline", "main")).toContain("implement round 1");
+      // The branch carries the pipeline's own commit, written by the scribe —
+      // and not the one the agent made for itself despite the prompt.
+      const landed = await git(sandbox.project, "log", "--oneline", "main");
+      expect(landed).toContain("stub-scribed subject");
+      expect(landed).not.toContain("implement round 1");
       expect(await git(sandbox.project, "branch", "--list", `jfdi/${ticketId}`)).toBe("");
     },
     PIPELINE_TIMEOUT_MS,

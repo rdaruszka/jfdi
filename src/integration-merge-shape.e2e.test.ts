@@ -60,23 +60,27 @@ const prompt = (dashP === -1 ? argv[argv.length - 1] : argv[dashP + 1]) || "";
 // Codex reads a thread id (its absence is an outage) and infers success
 // from a final agent message; Claude's parser ignores both lines.
 process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "stub-thread" }) + "\\n");
-process.on("exit", () => process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "done" } }) + "\\n"));
+// The scribe answers in its result text; every other session in a verdict file.
+const scribedRound = /round (\\d+) of/.exec(prompt);
+const resultText = prompt.includes("Write the commit message") && scribedRound
+  ? "scribed round " + scribedRound[1]
+  : "done";
+process.on("exit", () => process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: resultText } }) + "\\n"));
 process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "stub" }] } }) + "\\n");
 const match = prompt.match(/(\\/\\S+\\.verdict\\.json)/);
 if (match) {
   const verdictPath = match[1];
   const stage = verdictPath.split("/").pop().replace(".verdict.json", "");
+  const round = Number((/round-(\\d+)/.exec(verdictPath) || [])[1] || "1");
   const run = (args) => execFileSync("git", args, { cwd: process.cwd() });
   const capture = (args) => execFileSync("git", args, { cwd: process.cwd(), encoding: "utf8" }).trim();
   let verdict;
   if (stage === "implementation") {
+    // One session, one change: the pipeline commits it. A branch of several
+    // commits comes from several rounds, which the review below drives.
     const file = process.env.STUB_FILE;
     const rounds = Number(process.env.STUB_ROUNDS || "1");
-    for (let round = 1; round <= rounds; round++) {
-      fs.writeFileSync(process.cwd() + "/" + file, rounds === 1 ? "built\\n" : "built v" + round + "\\n");
-      run(["add", "-A"]);
-      run(["commit", "-m", round === 1 ? "implement " + file : "fix round " + (round - 1)]);
-    }
+    fs.writeFileSync(process.cwd() + "/" + file, rounds === 1 ? "built\\n" : "built v" + round + "\\n");
     verdict = { status: "done", summary: "implemented " + file };
   } else if (stage === "integration") {
     const gitDir = capture(["rev-parse", "--absolute-git-dir"]);
@@ -97,6 +101,9 @@ if (match) {
     } else {
       verdict = { resolution: "clean", notes: "took both sides" };
     }
+  } else if (stage === "code-review" && round < Number(process.env.STUB_ROUNDS || "1")) {
+    // Fail every round but the last, so the branch ends with one commit per round.
+    verdict = { verdict: "fail", feedback: "round " + round + " is not there yet" };
   } else {
     if (process.env.STUB_LEFTOVERS && verdictPath.includes("requalify")) {
       fs.writeFileSync(process.cwd() + "/requalify-note.txt", "re-verified\\n");
@@ -106,7 +113,7 @@ if (match) {
   fs.mkdirSync(verdictPath.replace(/\\/[^/]+$/, ""), { recursive: true });
   fs.writeFileSync(verdictPath, JSON.stringify(verdict));
 }
-process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done" }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: resultText }) + "\\n");
 `;
 
 interface Sandbox {
@@ -483,9 +490,9 @@ describe("the shape integration leaves on the target branch", () => {
 
       // Every round the branch recorded is still in the graph, by its own sha.
       expect(branchCommits.map((commit) => commit.subject)).toEqual([
-        "fix round 2",
-        "fix round 1",
-        "implement delta.txt",
+        `${ticketId}: scribed round 3`,
+        `${ticketId}: scribed round 2`,
+        `${ticketId}: scribed round 1`,
       ]);
       for (const commit of branchCommits) {
         expect(

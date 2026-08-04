@@ -147,9 +147,8 @@ would make unattended operation impossible.
 ### The fake harness
 
 Tests use `FakeHarness`: a constructor-injected handler plays the agent
-in-process, performing real side effects (writing files, committing, dropping
-verdict files) and recording every call for assertions on prompts and
-continuation ids. It is not reachable from config — tests construct it
+in-process, performing real side effects (writing files, dropping verdict
+files) and recording every call for assertions on prompts and continuation ids. It is not reachable from config — tests construct it
 directly. End-to-end tests that exercise real spawning use stub `claude`/`codex`
 scripts on `PATH` instead.
 
@@ -197,18 +196,24 @@ it is provider-neutral.
 
 Selection is **per stage**. `config.stages.<stage>` names a harness and,
 optionally, a provider-native model and effort
-([schema](../guide/configuration.md#stages)); `createStageHarnesses` in
-[src/harness/index.ts](../../src/harness/index.ts) builds one instance per stage
-at context construction, and `PipelineContext.harnesses` holds all four. There
-is no global harness and no instance-wide harness — the four stages routinely
+([schema](../guide/configuration.md#stages)); `createSessionHarnesses` in
+[src/harness/index.ts](../../src/harness/index.ts) builds one instance per entry
+at context construction, and `PipelineContext.harnesses` holds all five. There
+is no global harness and no instance-wide harness — the entries routinely
 disagree, and the scaffolded default deliberately reviews on a different
 provider than it implements on.
 
-Constructors take the selection (`new ClaudeHarness({ stage, model, effort })`)
+Five, not four: the fifth is `commit-message`, the
+[scribe](../guide/pipeline.md#commits-and-the-scribe). It is not a stage — no
+verdict, no round, no sign-off — but it spawns a session, so it needs a
+selection, and `stages` is where selections live. `SessionKind` in
+[src/harness/types.ts](../../src/harness/types.ts) is the union that says so.
+
+Constructors take the selection (`new ClaudeHarness({ sessionKind, model, effort })`)
 and each implementation maps it to its own CLI's spelling; `SpawnOptions` is
 unchanged, so pipeline logic never sees a model name. An absent model or effort
-passes no flag at all. `stage` rides along purely as provenance: a spawn that
-fails names the `stages` entry that selected the missing binary.
+passes no flag at all. `sessionKind` rides along purely as provenance: a spawn
+that fails names the `stages` entry that selected the missing binary.
 
 Fixing the harness per stage is also what keeps continuations honest — a session
 id is only meaningful to the harness that minted it, and a stage always
@@ -223,7 +228,7 @@ the flag mapping it feeds; `EFFORT_LEVELS_BY_HARNESS` gathers them for
 
 1. Extend the `HarnessName` union in
    [src/harness/types.ts](../../src/harness/types.ts) (and the validation
-   message in `parseStageConfig`).
+   message in `parseSessionConfig`).
 2. Implement `Harness` in `src/harness/<name>.ts`: map the provider's headless
    JSON output to `HarnessEvent`s, map `HarnessSelection` to the CLI's model and
    effort flags (and export the effort levels it accepts), report a

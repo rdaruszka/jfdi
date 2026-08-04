@@ -32,7 +32,7 @@ JFDI is self-hosting from milestone 1: JFDI's own tickets become its first board
 
 ## Architecture (one paragraph)
 
-The **coordinator** watches `board.md` (Obsidian Kanban format), dispatches each ready card into its own **git worktree** on branch `jfdi/<ticket-id>`, and runs a per-ticket pipeline of fresh Claude Code or Codex sessions: **Implementation → mechanical gate → Code Review → QA**, with feedback rounds (cap: `pipeline.max_rounds`, default 3). **Integration** is coordinator-owned and globally serialized — one merge at a time: merge the target branch into the ticket branch, rerun the gate, then land that tested tree on the target as a merge commit (target's prior head first parent, signed-off branch head second). Every transition appends to the project's `events.jsonl` under `~/.jfdi/projects/<project-key>/`; `state.json` is a derived snapshot; the TUI is a pure renderer over that stream.
+The **coordinator** watches `board.md` (Obsidian Kanban format), dispatches each ready card into its own **git worktree** on branch `jfdi/<ticket-id>`, and runs a per-ticket pipeline of fresh Claude Code or Codex sessions: **Implementation → mechanical gate → Code Review → QA**, with feedback rounds (cap: `pipeline.max_rounds`, default 3). Agents never commit: the pipeline commits each session's handoff itself, with a **scribe** session writing the message, and appends that same text to the ticket note as a comment. **Integration** is coordinator-owned and globally serialized — one merge at a time: merge the target branch into the ticket branch, rerun the gate, then land that tested tree on the target as a merge commit (target's prior head first parent, signed-off branch head second). Every transition appends to the project's `events.jsonl` under `~/.jfdi/projects/<project-key>/`; `state.json` is a derived snapshot; the TUI is a pure renderer over that stream.
 
 ## Layout
 
@@ -54,7 +54,7 @@ scripts/playground.mjs     — `pnpm playground`: mint a disposable half-app cop
   board.md             Kanban board (Obsidian Kanban plugin format)
   tickets/             one markdown note per non-trivial ticket
   sandbox.md           QA sandbox contract
-  prompts/             stage prompt templates
+  prompts/             stage prompt templates (plus the scribe's commit-message.md)
   worktrees/<ticket-id>/ — per-run isolated checkout (gitignored)
 
 ~/.jfdi/projects/<project-key>/  — run state, outside the project:
@@ -74,9 +74,10 @@ These are architectural requirements, not preferences (rationale in [docs/archit
 3. **Serialized integration.** Exactly one integration at a time, pulled from the merge-ready queue in completion order. Nothing but Integration ever touches the target branch.
 4. **Atomic board writes.** `board.md` is co-edited by Obsidian. Read → check mtime → write via temp-file rename → re-read/retry on mtime change. Edits are surgical (move one card line); never rewrite the file wholesale. Writes follow symlinks: the rename targets the link's real path — renaming onto the link itself would replace it with a private copy and silently split the board from the file the human edits.
 5. **Sequential reviews, commit-bound sign-offs.** Code Review gates QA (a Code Review fail skips the sandbox run). Both sign-offs bind to a specific commit — any code change re-enters at the gate and repeats both reviews.
-6. **Wikilink scope.** Card `[[wikilinks]]`, and a ticket's `blocks`/`blocked-by` frontmatter links, resolve only against `.jfdi/tickets/`; one that names no note there is reported, never searched for elsewhere. Beyond its own state directory under `~/.jfdi/projects/`, the tool never reads or writes outside the project folder — except through symlinks the user placed inside `.jfdi/` (board/tickets linked into a vault): following a user-created link is user consent, and writes land on the link's target.
-7. **Decide, log, proceed.** Agent prompts keep escalation a last resort; escalations must carry a recommended answer. Decisions land in the ticket note as decision comments; the board is the question queue (Blocked column + `## Questions`).
-8. **Target branch is configurable** (`integration.target_branch`) — never assume `main`.
+6. **Pipeline-owned commits and note writes.** No agent commits and no agent edits a ticket note. The pipeline records HEAD before each session, soft-resets anything the session committed, and lands exactly one commit per session that changed the worktree — failure and interruption included, marked WIP. The same rendered message is appended to `## Comments`; decisions arrive through the verdict, never through the agent's own edit.
+7. **Wikilink scope.** Card `[[wikilinks]]`, and a ticket's `blocks`/`blocked-by` frontmatter links, resolve only against `.jfdi/tickets/`; one that names no note there is reported, never searched for elsewhere. Beyond its own state directory under `~/.jfdi/projects/`, the tool never reads or writes outside the project folder — except through symlinks the user placed inside `.jfdi/` (board/tickets linked into a vault): following a user-created link is user consent, and writes land on the link's target.
+8. **Decide, log, proceed.** Agent prompts keep escalation a last resort; escalations must carry a recommended answer. Decisions land in the ticket note as decision comments; the board is the question queue (Blocked column + `## Questions`).
+9. **Target branch is configurable** (`integration.target_branch`) — never assume `main`.
 
 ## Glossary — one name per concept
 
@@ -90,9 +91,10 @@ Use these terms exactly; introduce no synonyms. The list grows only by editing t
 - **run** — one ticket's trip through the pipeline; logs under the state directory's `runs/<ticket-id>/`.
 - **state directory** — `~/.jfdi/projects/<project-key>/`, where one project's run state lives: `runs/`, `events.jsonl`, `state.json`.
 - **stage** — one fresh agent session within a run: Implementation, Code Review, QA.
+- **scribe** — the cheap, read-only, single-shot session that writes one commit message from the staged diff, the ticket, and the completing stage's summary. Pipeline plumbing that uses a session, selected by `stages["commit-message"]`: no verdict, no round, no sign-off — not a stage.
 - **gate** — the mechanical check (`pnpm build && pnpm test && pnpm lint`); all must exit zero.
 - **round** — one feedback cycle: fix → gate → reviews (cap: `pipeline.max_rounds`).
-- **sign-off** — a review stage's approval, bound to a specific commit.
+- **sign-off** — a review stage's approval, bound to a specific commit — the pipeline's handoff commit for the session under review.
 - **integration** — the coordinator-owned merge → gate → land step; globally serialized. Lands one merge commit per ticket; the signed-off commit stays reachable as its second parent.
 - **coordinator** — the long-running process that watches the board and dispatches runs.
 - **harness** — the agent-session abstraction (`spawn(promptSpec, cwd) → event stream`, plus interactive launch); Claude Code and Codex are implementations.
@@ -141,7 +143,7 @@ The generic rules with rationale and check questions live in [docs/coding-guidel
 - Tests verify intent: a test that couldn't fail if the business logic broke is wrong. No implementation-mirroring (asserting methods were called), no tautologies.
 - Tests are deterministic and order-independent: wait on conditions, never sleep for durations; control time and randomness. A flaky test is a defect against the gate itself.
 - No commented-out code (git remembers); a TODO must reference a ticket or an inbox observation — otherwise do it or delete it.
-- Commit at each coherent working state; never hand off with uncommitted changes. Fix-round commits are new commits — no amend/squash while a review is in flight. Gate-green is required at handoff commits, not every intermediate one.
+- Leave your work in the worktree; do not commit. Under JFDI the pipeline commits each session's handoff and the scribe writes the message; a fix round is a new commit, never an amend or a squash of one a reviewer has seen. Gate-green is required at handoff, and what you leave uncommitted is what lands — delete scratch artifacts.
 - Fail loud: completion claims must match actual gate output. Anything skipped, stubbed, or degraded is stated prominently in the report, not buried.
 
 **Docs**

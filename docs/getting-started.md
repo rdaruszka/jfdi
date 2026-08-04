@@ -68,7 +68,7 @@ jfdi run add a --version flag
 You'll see the pipeline stream by: an **Implementation** session does the work
 and writes unit tests, the **gate** runs, a fresh **Code Review** session judges
 the diff, a fresh **QA** session exercises the built artifact per your sandbox
-contract and commits regression tests, and — with a pass in `on-approval`
+contract and writes regression tests, and — with a pass in `on-approval`
 mode — you end at:
 
 ```

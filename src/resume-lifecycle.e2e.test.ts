@@ -62,7 +62,13 @@ const prompt = (dashP === -1 ? argv[argv.length - 1] : argv[dashP + 1]) || "";
 // Codex reads a thread id (its absence is an outage) and infers success
 // from a final agent message; Claude's parser ignores both lines.
 process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "stub-thread" }) + "\\n");
-process.on("exit", () => process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "done" } }) + "\\n"));
+// The scribe answers in its result text: the summary the session reported,
+// which is what a real scribe turns into a subject line.
+const scribedSummary = /## What the session said it did\\n\\n(.*)/.exec(prompt);
+const resultText = prompt.includes("Write the commit message") && scribedSummary
+  ? scribedSummary[1]
+  : "done";
+process.on("exit", () => process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: resultText } }) + "\\n"));
 const match = prompt.match(/(\\/\\S+\\.verdict\\.json)/);
 const promptDir = process.env.STUB_PROMPT_DIR;
 const RESET_SECONDS_AHEAD = 3600;
@@ -103,9 +109,7 @@ if (match) {
     }
     // Unique content per attempt, so every round has something real to commit.
     fs.appendFileSync(path.join(process.cwd(), "feature.txt"), process.env.STUB_TAG + "-" + index + "\\n");
-    execFileSync("git", ["add", "-A"], { cwd: process.cwd() });
-    execFileSync("git", ["commit", "-m", "implement " + process.env.STUB_TAG], { cwd: process.cwd() });
-    verdict = { status: "done", summary: "implemented" };
+    verdict = { status: "done", summary: "implemented " + process.env.STUB_TAG };
   } else if (stage === "integration") {
     verdict = { resolution: "clean" };
   } else if (stage === "code-review" && process.env.STUB_MODE === "review-fail") {
@@ -119,7 +123,7 @@ if (match) {
   fs.mkdirSync(path.dirname(verdictPath), { recursive: true });
   fs.writeFileSync(verdictPath, JSON.stringify(verdict));
 }
-process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done" }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: resultText }) + "\\n");
 `;
 
 interface Sandbox {
@@ -396,8 +400,8 @@ describe("resuming an interrupted run", () => {
       expect(resumedPrompt).toContain("3 commits of partial work");
       expect(resumedPrompt).toContain("do not start over");
       // The summary is of the real branch, not a stock sentence.
-      expect(resumedPrompt).toContain("implement first");
-      expect(resumedPrompt).not.toContain("implement second");
+      expect(resumedPrompt).toContain("implemented first");
+      expect(resumedPrompt).not.toContain("implemented second");
       // …and the previous run's unanswered feedback, attributed to its run.
       expect(resumedPrompt).toContain("the parser is wrong");
       expect(resumedPrompt).toContain("Run 1, round 1 — code review");

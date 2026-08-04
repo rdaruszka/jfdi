@@ -60,7 +60,13 @@ const prompt = (dashP === -1 ? argv[argv.length - 1] : argv[dashP + 1]) || "";
 // Codex reads a thread id (its absence is an outage) and infers success
 // from a final agent message; Claude's parser ignores both lines.
 process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "stub-thread" }) + "\\n");
-process.on("exit", () => process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "done" } }) + "\\n"));
+// The scribe answers in its result text: the summary the session reported,
+// which is what a real scribe turns into a subject line.
+const scribedSummary = /## What the session said it did\\n\\n(.*)/.exec(prompt);
+const resultText = prompt.includes("Write the commit message") && scribedSummary
+  ? scribedSummary[1]
+  : "done";
+process.on("exit", () => process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: resultText } }) + "\\n"));
 const match = prompt.match(/(\\/\\S+\\.verdict\\.json)/);
 const controlPath = process.env.STUB_CONTROL;
 const control = controlPath && fs.existsSync(controlPath)
@@ -96,7 +102,7 @@ if (match) {
   fs.mkdirSync(verdictPath.replace(/\\/[^/]+$/, ""), { recursive: true });
   fs.writeFileSync(verdictPath, JSON.stringify(verdict));
 }
-process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done" }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: resultText }) + "\\n");
 `;
 
 interface Sandbox {
@@ -377,7 +383,7 @@ describe("re-entering integration from the begin column", () => {
         "utf8",
       );
       expect(mentionsStaleMerge(note)).toBe(false);
-      expect(await git(sandbox.project, "log", "--oneline", "main")).toContain("implement v1");
+      expect(await git(sandbox.project, "log", "--oneline", "main")).toContain("implemented v1");
       expect(await git(sandbox.project, "show", "main:feature.txt")).toBe("reconciled");
       // The work was integrated, not rebuilt: implementation ran exactly once.
       expect(await stagesRun(sandbox, "implementation")).toBe(1);

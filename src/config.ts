@@ -1,7 +1,6 @@
 import * as path from "node:path";
-import type { StageName } from "./events.js";
 import { EFFORT_LEVELS_BY_HARNESS } from "./harness/index.js";
-import type { HarnessName } from "./harness/types.js";
+import type { HarnessName, SessionKind } from "./harness/types.js";
 import { readIfExists } from "./util/fsx.js";
 
 export interface ColumnMap {
@@ -20,15 +19,15 @@ export interface GateCommand {
 }
 
 export type IntegrationMode = "auto" | "on-approval";
-export type { HarnessName };
+export type { HarnessName, SessionKind };
 
 /**
- * Which agent one stage runs. `model` and `effort` are provider-native strings
- * passed to the CLI verbatim; absent means the provider's own default, never a
- * value inherited from another stage — so naming only a harness can never pair
- * one provider with another's model.
+ * Which agent one `stages` entry runs. `model` and `effort` are provider-native
+ * strings passed to the CLI verbatim; absent means the provider's own default,
+ * never a value inherited from another entry — so naming only a harness can
+ * never pair one provider with another's model.
  */
-export interface StageConfig {
+export interface SessionConfig {
   harness: HarnessName;
   model?: string;
   effort?: string;
@@ -41,8 +40,8 @@ export interface JfdiConfig {
   pipeline: { max_rounds: number };
   integration: { target_branch: string; mode: IntegrationMode };
   max_concurrent: number;
-  /** Required, one entry per stage — there is no global harness. */
-  stages: Record<StageName, StageConfig>;
+  /** Required, one entry per stage plus the scribe — there is no global harness. */
+  stages: Record<SessionKind, SessionConfig>;
 }
 
 export const JFDI_DIR = ".jfdi";
@@ -75,16 +74,21 @@ export function defaultConfig(): JfdiConfig {
       // resolution alone — rare, but its output lands on the target branch
       // where the gate cannot catch silently dropped logic.
       integration: { harness: "claude", model: "claude-opus-5", effort: "medium" },
+      // The scribe writes commit messages from a diff and a summary the
+      // pipeline hands it — a cheap-model task, and one that runs after every
+      // code-producing session, so it is priced accordingly.
+      "commit-message": { harness: "claude", model: "claude-sonnet-5" },
     },
   };
 }
 
-/** Every `StageName`, as a runtime list — the compiler enforces the pairing. */
-const STAGE_NAMES: Record<StageName, true> = {
+/** Every `SessionKind`, as a runtime list — the compiler enforces the pairing. */
+const SESSION_KINDS: Record<SessionKind, true> = {
   implementation: true,
   "code-review": true,
   qa: true,
   integration: true,
+  "commit-message": true,
 };
 
 /** Quoted into every `stages` rejection, so the message shows the fix. */
@@ -92,7 +96,8 @@ const STAGES_EXAMPLE = `"stages": {
   "implementation": { "harness": "claude", "model": "claude-opus-5", "effort": "high" },
   "code-review":    { "harness": "codex",  "model": "gpt-5.6-sol",   "effort": "high" },
   "qa":             { "harness": "claude", "model": "claude-opus-5", "effort": "high" },
-  "integration":    { "harness": "claude", "model": "claude-opus-5", "effort": "medium" }
+  "integration":    { "harness": "claude", "model": "claude-opus-5", "effort": "medium" },
+  "commit-message": { "harness": "claude", "model": "claude-sonnet-5" }
 }`;
 
 export class ConfigError extends Error {
@@ -126,9 +131,9 @@ function positiveInteger(value: unknown, fallback: number, where: string): numbe
   return value;
 }
 
-/** One `stages.<stage>` entry: harness required, model and effort optional. */
-function parseStageConfig(raw: unknown, stage: StageName): StageConfig {
-  const where = `stages.${stage}`;
+/** One `stages.<key>` entry: harness required, model and effort optional. */
+function parseSessionConfig(raw: unknown, sessionKind: SessionKind): SessionConfig {
+  const where = `stages.${sessionKind}`;
   if (!isRecord(raw)) throw new ConfigError(`${where} must be an object, e.g. ${STAGES_EXAMPLE}`);
   const harness = requiredString(raw.harness, `${where}.harness`);
   if (harness !== "claude" && harness !== "codex")
@@ -153,28 +158,29 @@ function parseStageConfig(raw: unknown, stage: StageName): StageConfig {
  * support: every rejection shows the block to paste in, because the only fix
  * is editing config.json by hand.
  */
-function parseStages(raw: unknown): Record<StageName, StageConfig> {
+function parseStages(raw: unknown): Record<SessionKind, SessionConfig> {
   if (raw === undefined)
     throw new ConfigError(
       `config is missing the required "stages" section; add it, e.g.\n${STAGES_EXAMPLE}`,
     );
   if (!isRecord(raw)) throw new ConfigError(`stages must be an object, e.g. ${STAGES_EXAMPLE}`);
   for (const key of Object.keys(raw)) {
-    if (!Object.hasOwn(STAGE_NAMES, key))
+    if (!Object.hasOwn(SESSION_KINDS, key))
       throw new ConfigError(
-        `stages has an unknown entry "${key}"; the stages are ${Object.keys(STAGE_NAMES).join(", ")}`,
+        `stages has an unknown entry "${key}"; the entries are ${Object.keys(SESSION_KINDS).join(", ")}`,
       );
   }
-  const missing = Object.keys(STAGE_NAMES).filter((stage) => raw[stage] === undefined);
+  const missing = Object.keys(SESSION_KINDS).filter((stage) => raw[stage] === undefined);
   if (missing.length > 0)
     throw new ConfigError(
-      `stages is missing an entry for ${missing.join(", ")}; every stage needs one, e.g.\n${STAGES_EXAMPLE}`,
+      `stages is missing an entry for ${missing.join(", ")}; every stage needs one, and "commit-message" selects the scribe that writes commit messages, e.g.\n${STAGES_EXAMPLE}`,
     );
   return {
-    implementation: parseStageConfig(raw.implementation, "implementation"),
-    "code-review": parseStageConfig(raw["code-review"], "code-review"),
-    qa: parseStageConfig(raw.qa, "qa"),
-    integration: parseStageConfig(raw.integration, "integration"),
+    implementation: parseSessionConfig(raw.implementation, "implementation"),
+    "code-review": parseSessionConfig(raw["code-review"], "code-review"),
+    qa: parseSessionConfig(raw.qa, "qa"),
+    integration: parseSessionConfig(raw.integration, "integration"),
+    "commit-message": parseSessionConfig(raw["commit-message"], "commit-message"),
   };
 }
 

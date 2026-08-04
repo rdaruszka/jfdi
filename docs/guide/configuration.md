@@ -35,7 +35,8 @@ init fills in for your repo):
     "implementation": { "harness": "claude", "model": "claude-opus-5", "effort": "high" },
     "code-review":    { "harness": "codex",  "model": "gpt-5.6-sol",   "effort": "high" },
     "qa":             { "harness": "claude", "model": "claude-opus-5", "effort": "high" },
-    "integration":    { "harness": "claude", "model": "claude-opus-5", "effort": "medium" }
+    "integration":    { "harness": "claude", "model": "claude-opus-5", "effort": "medium" },
+    "commit-message": { "harness": "claude", "model": "claude-sonnet-5" }
   }
 }
 ```
@@ -117,7 +118,11 @@ regardless of this setting.
 ### `stages`
 
 **Required.** One entry per stage — `implementation`, `code-review`, `qa`,
-`integration` — choosing the agent that stage runs.
+`integration` — plus `commit-message` for the **scribe**, choosing the agent
+each one runs. The scribe is not a stage: it is the read-only, single-shot
+session that writes every commit message
+([how](pipeline.md#commits-and-the-scribe)). It is keyed here because it spawns
+a session, and this is where session selections live.
 
 | Field | Type | Required | Values |
 |---|---|---|---|
@@ -152,6 +157,10 @@ event, so `jfdi logs` answers "which model produced this" after the fact.
   merge conflicts, so the setting prices conflict resolution alone: rare
   enough that cost is negligible, and its output lands directly on the target
   branch where the gate cannot catch silently dropped logic.
+- **The scribe runs a cheap model.** Turning a diff and a summary the pipeline
+  already assembled into prose is a small task, and it runs after every
+  code-producing session — the one selection where volume, not stakes, sets the
+  price. It names no `effort` at all.
 
 Whichever harness `implementation` names also runs the interactive commands —
 `jfdi init` and `jfdi convo` — with that stage's model and effort.
@@ -162,8 +171,8 @@ legacy `harnessArgs` key is rejected with an explicit error.
 
 > **Upgrading:** `stages` replaced a single top-level `harness` key, and there
 > is no migration. A config still carrying `harness`, missing `stages`, or
-> missing any of the four entries is rejected at load with the block to paste
-> in. Update `.jfdi/config.json` by hand.
+> missing any of the five entries — `commit-message` included — is rejected at
+> load with the block to paste in. Update `.jfdi/config.json` by hand.
 
 ## Other files under `.jfdi/`
 
@@ -172,7 +181,7 @@ pages:
 
 | File | Purpose | Docs |
 |---|---|---|
-| `prompts/*.md` | The nine stage/command prompt templates. On disk, editable, authoritative. | [Prompts & Customization](prompts-and-customization.md) |
+| `prompts/*.md` | The ten stage/command prompt templates. On disk, editable, authoritative. | [Prompts & Customization](prompts-and-customization.md) |
 | `sandbox.md` | The QA sandbox contract — how to build, launch, drive, and tear down your product. | [Prompts & Customization](prompts-and-customization.md#the-sandbox-contract) |
 | `claude-settings.json` | Settings injected into JFDI-spawned Claude Code sessions (wires the format hook). | [Prompts & Customization](prompts-and-customization.md#the-format-hook) |
 | `hooks/format.sh` | Per-file format hook invoked after each edit in Claude sessions. | [Prompts & Customization](prompts-and-customization.md#the-format-hook) |

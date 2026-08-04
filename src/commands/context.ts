@@ -2,7 +2,7 @@ import * as path from "node:path";
 import { JFDI_DIR, loadConfig } from "../config.js";
 import { EventLog, type JfdiEvent } from "../events.js";
 import { repoRoot } from "../git.js";
-import { createStageHarnesses } from "../harness/index.js";
+import { createSessionHarnesses } from "../harness/index.js";
 import { PauseController } from "../pause.js";
 import type { PipelineContext } from "../pipeline.js";
 import { projectStateDir } from "../state-dir.js";
@@ -31,7 +31,7 @@ export async function buildContext(cwd: string = process.cwd()): Promise<CliCont
     jfdiDir,
     stateDir,
     config,
-    harnesses: createStageHarnesses(config),
+    harnesses: createSessionHarnesses(config),
     log,
     pause: new PauseController(log),
   };

@@ -5,12 +5,14 @@ import type { JfdiConfig } from "./config.js";
 import type { JfdiEvent, StageName } from "./events.js";
 import { createWorktree, git, isMergeInProgress, mergeTargetIntoBranch } from "./git.js";
 import { type FakeHandler, FakeHarness } from "./harness/fake.js";
+import type { SessionKind } from "./harness/index.js";
 import { type PipelineContext, runPipeline } from "./pipeline.js";
 import {
   commitFile,
+  DEFAULT_SCRIBE_HANDLER,
   type Fixture,
   makeFixture,
-  stageOf,
+  sessionKindOf,
   TEST_PAUSE_DELAYS,
   writeVerdict,
 } from "./test-helpers.js";
@@ -33,7 +35,7 @@ describe("runPipeline", () => {
   it("happy path: implementation → gate → code review → QA → passed", async () => {
     const stages: string[] = [];
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       stages.push(stage);
       switch (stage) {
         case "implementation":
@@ -83,7 +85,7 @@ describe("runPipeline", () => {
 
   it("writes run artifacts to the state directory and worktrees to .jfdi/", async () => {
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         await commitFile(options.cwd, "impl.txt", "the feature\n", "implement");
         await writeVerdict(spec.prompt, { status: "done", summary: "done" });
@@ -111,7 +113,7 @@ describe("runPipeline", () => {
     const stages: string[] = [];
     let implementationRounds = 0;
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       stages.push(stage);
       switch (stage) {
         case "implementation":
@@ -167,7 +169,7 @@ describe("runPipeline", () => {
     let implementationRounds = 0;
     const stages: string[] = [];
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       stages.push(stage);
       if (stage === "implementation") {
         implementationRounds++;
@@ -215,7 +217,7 @@ describe("runPipeline", () => {
 
   it("exhausted rounds block with accumulated history in the note", async () => {
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         await commitFile(options.cwd, "impl.txt", `${Math.random()}\n`, "try");
         await writeVerdict(spec.prompt, { status: "done" });
@@ -241,7 +243,7 @@ describe("runPipeline", () => {
     );
     let sawOverride = false;
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         sawOverride = spec.prompt.includes("Escalation override");
         await commitFile(options.cwd, "impl.txt", "done\n", "implement");
@@ -260,7 +262,7 @@ describe("runPipeline", () => {
   it("a fresh ticket's implementation prompt says nothing about resuming", async () => {
     let prompt = "";
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         prompt = spec.prompt;
         await commitFile(options.cwd, "impl.txt", "x\n", "implement");
@@ -281,11 +283,11 @@ describe("runPipeline", () => {
     // Distinct content per round, so each round has something to actually commit.
     let attempt = 0;
     const failing = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         attempt += 1;
-        await commitFile(options.cwd, "impl.txt", `attempt ${attempt}\n`, "partial attempt");
-        await writeVerdict(spec.prompt, { status: "done" });
+        await fs.writeFile(path.join(options.cwd, "impl.txt"), `attempt ${attempt}\n`);
+        await writeVerdict(spec.prompt, { status: "done", summary: "partial attempt" });
       } else if (stage === "code-review") {
         await writeVerdict(spec.prompt, { verdict: "fail", feedback: "the parser is wrong" });
       }
@@ -297,7 +299,7 @@ describe("runPipeline", () => {
     // Run 2: the same card dispatched again.
     let prompt = "";
     const resumed = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         prompt = prompt || spec.prompt;
         await commitFile(options.cwd, "impl.txt", "final\n", "finish it");
@@ -321,7 +323,7 @@ describe("runPipeline", () => {
     // Run 1: code review never approves → retries exhausted, its feedback on disk.
     let attempt = 0;
     const failing = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         attempt += 1;
         await commitFile(options.cwd, "impl.txt", `attempt ${attempt}\n`, "partial attempt");
@@ -349,7 +351,7 @@ describe("runPipeline", () => {
     // run 2 — otherwise the escalation silently erases why run 1 failed.
     let prompt = "";
     const answering = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         prompt = prompt || spec.prompt;
         await commitFile(options.cwd, "impl.txt", "final\n", "finish it");
@@ -380,7 +382,7 @@ describe("runPipeline", () => {
     let statusAtStart = "unknown";
     let prompt = "";
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         statusAtStart = await git(options.cwd, "status", "--porcelain");
         prompt = spec.prompt;
@@ -413,10 +415,10 @@ describe("runPipeline", () => {
     let reviewPrompt = "";
     let qaPrompt = "";
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
-        await commitFile(options.cwd, "impl.txt", "the feature\n", "implement the feature");
-        await writeVerdict(spec.prompt, { status: "done" });
+        await fs.writeFile(path.join(options.cwd, "impl.txt"), "the feature\n");
+        await writeVerdict(spec.prompt, { status: "done", summary: "implement the feature" });
       } else {
         if (stage === "code-review") reviewPrompt = spec.prompt;
         if (stage === "qa") qaPrompt = spec.prompt;
@@ -473,7 +475,7 @@ describe("runPipeline", () => {
     );
     let prompt = "";
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         prompt = spec.prompt;
         await commitFile(options.cwd, "impl.txt", "done\n", "implement");
@@ -513,7 +515,7 @@ describe("runPipeline", () => {
     let round = 0;
     let secondRunPrompt = "";
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         round++;
         if (round === 2) secondRunPrompt = spec.prompt;
@@ -539,9 +541,9 @@ describe("runPipeline", () => {
     const note = parseTicketNote(
       await fs.readFile(path.join(fixture.ticketsDir, "quoter.md"), "utf8"),
     );
-    expect(note.comments).toHaveLength(1);
-    expect(note.comments[0]?.kind).toBe("decision");
-    expect(note.comments[0]?.body).toBe(decision);
+    const decisions = note.comments.filter((comment) => comment.kind === "decision");
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]?.body).toBe(decision);
     // The whole decision reaches the next session — not just the half above
     // the quoted heading.
     expect(secondRunPrompt).toContain("## Decisions logged so far");
@@ -554,7 +556,7 @@ describe("runPipeline", () => {
     let implementationCalls = 0;
     let reviewCalls = 0;
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       spawns.push({ stage, continueSessionId: options.continueSessionId });
       switch (stage) {
         case "implementation":
@@ -608,7 +610,7 @@ describe("runPipeline", () => {
     let secondReviewPrompt = "";
     let secondQaPrompt = "";
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       switch (stage) {
         case "implementation":
           await commitFile(options.cwd, "impl.txt", `${Math.random()}\n`, "implement");
@@ -663,7 +665,7 @@ describe("runPipeline", () => {
       return { ok: true, text: "", sessionId: "impl-1" };
     };
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") return implementationTurn(spec, options);
       if (stage === "code-review") {
         reviewCalls++;
@@ -694,7 +696,7 @@ describe("runPipeline", () => {
     let qaCalls = 0;
     let implementationCalls = 0;
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         implementationCalls++;
         if (implementationCalls === 1) {
@@ -727,7 +729,7 @@ describe("runPipeline", () => {
   it("a session that never writes a verdict burns a round with feedback", async () => {
     let implementationCalls = 0;
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         implementationCalls++;
         if (implementationCalls === 1) return { ok: false, text: "crashed mid-flight" };
@@ -759,7 +761,7 @@ describe("runPipeline under a broken provider", () => {
     const prompts: string[] = [];
     let implementationCalls = 0;
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage !== "implementation") {
         await writeVerdict(spec.prompt, { verdict: "pass" });
         return { ok: true, text: "" };
@@ -804,7 +806,7 @@ describe("runPipeline under a broken provider", () => {
   it("continues the dead session when the provider named one", async () => {
     let implementationCalls = 0;
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage !== "implementation") {
         await writeVerdict(spec.prompt, { verdict: "pass" });
         return { ok: true, text: "" };
@@ -833,7 +835,7 @@ describe("runPipeline under a broken provider", () => {
     const stageRetryCount = TEST_PAUSE_DELAYS.outageStageRetryMs.length;
     let implementationCalls = 0;
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage !== "implementation") {
         await writeVerdict(spec.prompt, { verdict: "pass" });
         return { ok: true, text: "" };
@@ -879,15 +881,17 @@ const MIXED_STAGES: JfdiConfig["stages"] = {
   "code-review": { harness: "codex", model: "gpt-5.6-sol", effort: "low" },
   qa: { harness: "claude" },
   integration: { harness: "codex", effort: "medium" },
+  "commit-message": { harness: "codex", model: "gpt-5.6-mini" },
 };
 
-/** One fake per stage, so which harness a session reached is observable. */
-function perStageHarnesses(handler: FakeHandler): Record<StageName, FakeHarness> {
+/** One fake per `stages` entry, so which harness a session reached is observable. */
+function perSessionHarnesses(handler: FakeHandler): Record<SessionKind, FakeHarness> {
   return {
     implementation: new FakeHarness(handler),
     "code-review": new FakeHarness(handler),
     qa: new FakeHarness(handler),
     integration: new FakeHarness(handler),
+    "commit-message": new FakeHarness(DEFAULT_SCRIBE_HANDLER),
   };
 }
 
@@ -901,7 +905,7 @@ describe("runPipeline with per-stage harness selection", () => {
       let implementationCalls = 0;
       let reviewCalls = 0;
       const handler: FakeHandler = async (spec, options) => {
-        const stage = stageOf(spec.prompt);
+        const stage = sessionKindOf(spec.prompt);
         switch (stage) {
           case "implementation":
             implementationCalls += 1;
@@ -932,7 +936,7 @@ describe("runPipeline with per-stage harness selection", () => {
         return { ok: true, text: "", sessionId: `${stage}-session` };
       };
 
-      const harnesses = perStageHarnesses(handler);
+      const harnesses = perSessionHarnesses(handler);
       const context: PipelineContext = { ...mixed.context(handler), harnesses };
       const starts: JfdiEvent[] = [];
       context.log.on((event) => {
@@ -943,15 +947,19 @@ describe("runPipeline with per-stage harness selection", () => {
       const outcome = await runPipeline(context, ticket);
       expect(outcome.status).toBe("passed");
 
-      // No harness ever saw a stage that was not its own.
-      for (const [stage, harness] of Object.entries(harnesses)) {
-        for (const call of harness.calls) expect(stageOf(call.promptSpec.prompt)).toBe(stage);
+      // No harness ever saw a session that was not its own.
+      for (const [sessionKind, harness] of Object.entries(harnesses)) {
+        for (const call of harness.calls)
+          expect(sessionKindOf(call.promptSpec.prompt)).toBe(sessionKind);
       }
       expect(harnesses.implementation.calls).toHaveLength(2);
       expect(harnesses["code-review"].calls).toHaveLength(2);
       expect(harnesses.qa.calls).toHaveLength(1);
       // Integration does not run in a pipeline; its harness stays untouched.
       expect(harnesses.integration.calls).toHaveLength(0);
+      // The scribe reaches its own entry's harness, once per committing session:
+      // the two implementation rounds. QA committed nothing, so it has no message.
+      expect(harnesses["commit-message"].calls).toHaveLength(2);
 
       // Round 2 re-enters each stage's own session — which is only meaningful
       // because the harness that minted the id is the one being asked.
@@ -989,5 +997,254 @@ describe("runPipeline with per-stage harness selection", () => {
     } finally {
       await mixed.cleanup();
     }
+  });
+});
+
+/**
+ * "Agents never commit; the pipeline commits once per session." The rule is
+ * only worth as much as its enforcement, so these pin the mechanism — the
+ * pre-session HEAD as the reset target — rather than the prompt that asks.
+ */
+describe("pipeline-owned commits", () => {
+  it("folds a session's own commits back into the pipeline's one, from the pre-session HEAD", async () => {
+    const context = fixture.context(async (spec, options) => {
+      const stage = sessionKindOf(spec.prompt);
+      if (stage === "implementation") {
+        // An agent that commits anyway — twice — and leaves work uncommitted.
+        await commitFile(options.cwd, "impl.txt", "first\n", "agent commit one");
+        await commitFile(options.cwd, "helper.txt", "second\n", "agent commit two");
+        await fs.writeFile(path.join(options.cwd, "notes.txt"), "uncommitted\n");
+        await writeVerdict(spec.prompt, { status: "done", summary: "built the feature" });
+      } else {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    });
+
+    const ticket = await resolveTicket("Committing agent", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    expect(outcome.status).toBe("passed");
+    if (outcome.status !== "passed") return;
+    const worktree = outcome.worktree.path;
+
+    // One commit on the branch, standing on the commit the session started from.
+    expect(await git(worktree, "rev-list", "--count", "main..HEAD")).toBe("1");
+    expect(await git(worktree, "rev-parse", "HEAD^")).toBe(
+      await git(worktree, "rev-parse", "main"),
+    );
+    const subjects = await git(worktree, "log", "--format=%s", "main..HEAD");
+    expect(subjects).not.toContain("agent commit");
+    expect(subjects).toBe(`${ticket.id}: built the feature`);
+    // Nothing was lost in the fold: both committed files and the uncommitted one.
+    expect(await git(worktree, "show", "--name-only", "--format=", "HEAD")).toBe(
+      ["helper.txt", "impl.txt", "notes.txt"].join("\n"),
+    );
+    expect(await git(worktree, "status", "--porcelain")).toBe("");
+  });
+
+  it("commits a dead session's partial work under a WIP marker, and a re-dispatch continues it", async () => {
+    let implementationCalls = 0;
+    const dying = fixture.context(async (spec, options) => {
+      const stage = sessionKindOf(spec.prompt);
+      if (stage !== "implementation") {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+        return { ok: true, text: "" };
+      }
+      implementationCalls += 1;
+      // Work on disk, then death: no verdict, no commit of its own.
+      await fs.writeFile(path.join(options.cwd, "impl.txt"), `attempt ${implementationCalls}\n`);
+      return { ok: false, text: "the session was killed mid-edit" };
+    });
+    const ticket = await resolveTicket("Killed mid-edit", fixture.ticketsDir);
+    expect((await runPipeline(dying, ticket)).status).toBe("blocked");
+
+    const worktree = path.join(fixture.jfdiDir, "worktrees", ticket.id);
+    const subjects = (await git(worktree, "log", "--format=%s", "main..HEAD")).split("\n");
+    expect(subjects).toHaveLength(3);
+    for (const subject of subjects) expect(subject).toContain(`${ticket.id}: WIP — `);
+    const message = await git(worktree, "log", "-1", "--format=%B");
+    expect(message).toContain(
+      "JFDI Implementation interrupted: The previous implementation session failed: the session was killed mid-edit",
+    );
+    expect(message).toContain("JFDI-Round: 3/3");
+
+    // The next dispatch finds that work on the branch, not thrown away.
+    let resumedPrompt = "";
+    const resuming = fixture.context(async (spec, options) => {
+      const stage = sessionKindOf(spec.prompt);
+      if (stage === "implementation") {
+        resumedPrompt = spec.prompt;
+        await fs.writeFile(path.join(options.cwd, "impl.txt"), "finished\n");
+        await writeVerdict(spec.prompt, { status: "done", summary: "finished it" });
+      } else {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    });
+    expect((await runPipeline(resuming, ticket)).status).toBe("passed");
+    expect(resumedPrompt).toContain("Resuming an interrupted attempt");
+    expect(resumedPrompt).toContain("3 commits of partial work");
+    expect(resumedPrompt).toContain("WIP");
+  });
+
+  it("hands the scribe the staged diff, the ticket and the stage's own summary", async () => {
+    await fs.writeFile(
+      path.join(fixture.ticketsDir, "scribed.md"),
+      "# Scribed ticket\n\nTEACH_THE_PARSER about sha256.\n",
+    );
+    const scribePrompts: string[] = [];
+    const context = fixture.context(
+      async (spec, options) => {
+        const stage = sessionKindOf(spec.prompt);
+        if (stage === "implementation") {
+          await fs.writeFile(path.join(options.cwd, "impl.txt"), "OBJECT_NAME_RE widened\n");
+          await writeVerdict(spec.prompt, {
+            status: "done",
+            summary: "WIDENED_THE_PATTERN to 64 hex digits",
+          });
+        } else {
+          await writeVerdict(spec.prompt, { verdict: "pass" });
+        }
+        return { ok: true, text: "" };
+      },
+      {
+        scribeHandler: (spec) => {
+          scribePrompts.push(spec.prompt);
+          return Promise.resolve({ ok: true, text: "Widen the object-name pattern" });
+        },
+      },
+    );
+
+    const ticket = await resolveTicket("[[scribed]]", fixture.ticketsDir);
+    expect((await runPipeline(context, ticket)).status).toBe("passed");
+    expect(scribePrompts).toHaveLength(1);
+    const prompt = scribePrompts[0] ?? "";
+    // The diff it is describing…
+    expect(prompt).toContain("OBJECT_NAME_RE widened");
+    expect(prompt).toContain("+++ b/impl.txt");
+    // …the ticket it serves…
+    expect(prompt).toContain("TEACH_THE_PARSER about sha256.");
+    // …the session's own account, which the diff cannot carry…
+    expect(prompt).toContain("WIDENED_THE_PATTERN to 64 hex digits");
+    // …and the metadata the pipeline computed, which it must not write itself.
+    expect(prompt).toContain("JFDI Implementation complete — moving to the mechanical gate");
+    expect(prompt).toContain("JFDI-Round: 1/3");
+  });
+
+  it("writes the identical text to the commit and to the note, and binds the sign-offs to it", async () => {
+    let reviewedCommit = "";
+    const context = fixture.context(async (spec, options) => {
+      const stage = sessionKindOf(spec.prompt);
+      if (stage === "implementation") {
+        await fs.writeFile(path.join(options.cwd, "impl.txt"), "the feature\n");
+        await writeVerdict(spec.prompt, { status: "done", summary: "built the feature" });
+      } else {
+        if (stage === "code-review") reviewedCommit = await git(options.cwd, "rev-parse", "HEAD");
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    });
+
+    const ticket = await resolveTicket("One rendering", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    expect(outcome.status).toBe("passed");
+    if (outcome.status !== "passed") return;
+
+    const message = await git(outcome.worktree.path, "log", "-1", "--format=%B");
+    expect(message.trimEnd().split("\n")).toEqual([
+      `${ticket.id}: built the feature`,
+      "",
+      "Written by the scribe.",
+      "",
+      "JFDI Implementation complete — moving to the mechanical gate",
+      "",
+      "JFDI-Round: 1/3",
+    ]);
+
+    // The note's entry is that message, byte for byte, under its own heading.
+    const note = parseTicketNote(
+      await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8"),
+    );
+    const entry = note.comments.find((comment) => comment.stage === "implementation");
+    expect(entry?.kind).toBe("transition");
+    expect(entry?.body).toBe(message.trimEnd());
+
+    // Both reviews judged that commit, and it is the one the run reports.
+    expect(reviewedCommit).toBe(await git(outcome.worktree.path, "rev-parse", "HEAD"));
+    expect(outcome.report.commit).toBe(reviewedCommit);
+  });
+
+  it("narrates every transition into the note, failed round and exhaustion included", async () => {
+    // The provider hits a usage limit inside round 1, so the "no comment for a
+    // pause" claim below is about a pause that actually happened: the exact
+    // transition list further down is what would have caught an extra entry.
+    let implementationAttempts = 0;
+    const context = fixture.context(async (spec, options) => {
+      const stage = sessionKindOf(spec.prompt);
+      if (stage !== "implementation") {
+        await writeVerdict(spec.prompt, {
+          verdict: "fail",
+          feedback: "RENAME_THE_HELPER; it shadows the module",
+        });
+        return { ok: true, text: "" };
+      }
+      implementationAttempts += 1;
+      if (implementationAttempts === 1)
+        return {
+          ok: false,
+          text: "",
+          failure: {
+            kind: "usage-limit" as const,
+            resetsAtMs: Date.now() + RESET_SOON_MS,
+            detail: "You've hit your session limit",
+          },
+        };
+      // Distinct content per attempt, so every round has something to commit.
+      await fs.writeFile(path.join(options.cwd, "impl.txt"), `attempt ${implementationAttempts}\n`);
+      await writeVerdict(spec.prompt, { status: "done", summary: "tried again" });
+      return { ok: true, text: "" };
+    });
+    const pauses: JfdiEvent[] = [];
+    context.log.on((event) => {
+      if (event.type === "harness_paused" || event.type === "harness_resumed") pauses.push(event);
+    });
+
+    const ticket = await resolveTicket("Never good enough", fixture.ticketsDir);
+    expect((await runPipeline(context, ticket)).status).toBe("blocked");
+    // The pause is real: without it the assertion at the end proves nothing.
+    expect(pauses.map((event) => event.type)).toEqual(["harness_paused", "harness_resumed"]);
+
+    const note = parseTicketNote(
+      await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8"),
+    );
+    const transitions = note.comments.filter((comment) => comment.kind === "transition");
+    expect(transitions.map((comment) => `${comment.stage} ${comment.round}`)).toEqual([
+      "dispatch 1",
+      "implementation 1",
+      "code-review 1",
+      "implementation 2",
+      "code-review 2",
+      "implementation 3",
+      "code-review 3",
+      "pipeline 3",
+    ]);
+    expect(transitions[0]?.body).toBe(`JFDI run started — round 1, branch \`jfdi/${ticket.id}\``);
+    // A failed review's comment IS the handback: the exact feedback, and where
+    // the run actually went with it.
+    expect(transitions[2]?.body).toBe(
+      "JFDI Code Review FAILED — returning to Implementation for round 2\n\nRENAME_THE_HELPER; it shadows the module",
+    );
+    expect(transitions[6]?.body).toContain(
+      "JFDI Code Review FAILED — moving to Blocked for human review",
+    );
+    expect(transitions[7]?.body).toContain(
+      "JFDI run exhausted its 3 rounds — moving to Blocked for human review",
+    );
+    // The pause left no mark on the trail — neither an entry of its own (the
+    // list above is exact) nor a mention inside one: infrastructure is not
+    // ticket history, and the held round is narrated as the one round it was.
+    expect(
+      note.comments.some((comment) => /pause|usage limit|session limit/i.test(comment.body)),
+    ).toBe(false);
   });
 });

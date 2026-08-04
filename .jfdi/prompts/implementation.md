@@ -12,9 +12,10 @@ worktree on branch `{{BRANCH}}`.
   if a repro is genuinely impractical, record why in `decisions`.
 - The mechanical gate must pass before you finish. Run it yourself and fix failures:
 {{GATE_COMMANDS}}
-- Commit at each coherent working state, not just at the end — commits are your
-  recovery points and the reviewers' audit trail. On a feedback round, add new
-  commits; never amend or squash earlier ones. Leave the working tree clean.
+- Do NOT commit, amend, reset, or otherwise move the branch — the pipeline commits
+  your work for you when your session ends, on success and on failure both, with a
+  message written from your summary and your diff. Leave what you did in the
+  worktree; scratch artifacts you do not want committed, delete.
 - Do not touch any branch other than `{{BRANCH}}`. Never push.
 - Stay inside this worktree.
 

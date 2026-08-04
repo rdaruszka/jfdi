@@ -78,8 +78,12 @@ flowchart TB
   sibling `add` is still writing, so concurrent dispatches would otherwise kill
   one another's run), resume sanitization, then up to `max_rounds` rounds of
   Implementation → gate → Code Review → QA, with session continuation between
-  rounds. Emits events for every transition; writes verdicts and logs to the
-  run directory. Detailed walkthrough: [The Pipeline](../guide/pipeline.md).
+  rounds. It also owns the branch: agents never commit, and each session ends
+  with one pipeline commit whose message the **scribe**
+  ([src/scribe.ts](../../src/scribe.ts)) writes and whose text is appended to
+  the ticket note as a transition comment ([src/transitions.ts](../../src/transitions.ts)).
+  Emits events for every transition; writes verdicts and logs to the run
+  directory. Detailed walkthrough: [The Pipeline](../guide/pipeline.md).
 - **Integration** ([src/integrate.ts](../../src/integrate.ts)) — merge the
   target into the ticket branch, agent-driven conflict resolution, gate rerun,
   the complicated-merge → re-QA valve, then the landing merge commit. Called by
@@ -91,8 +95,8 @@ flowchart TB
 - **Harness** ([src/harness/](../../src/harness/)) — the provider abstraction;
   see [Harness](harness.md). Constructed **per stage**, not per instance:
   `config.stages` picks a harness (and optionally a model and effort) for each
-  of implementation, code review, QA and integration, so a run routinely spans
-  two providers. It also classifies its own provider's failures, so a usage
+  of implementation, code review, QA, integration and the scribe, so a run
+  routinely spans two providers. It also classifies its own provider's failures, so a usage
   limit or an outage is never mistaken for bad work.
 - **Pause controller** ([src/pause.ts](../../src/pause.ts)) — the tool-wide hold
   that classification feeds. It lives on the `PipelineContext`, so `jfdi run`
@@ -128,6 +132,8 @@ sequenceDiagram
     P->>P: resume sanitization (if prior work)
     loop up to max_rounds
         P->>A: Implementation (fresh, then continued)
+        P->>A: scribe (commit message)
+        P->>P: commit the handoff + comment on the note
         P->>P: gate
         P->>A: Code Review (gates QA)
         P->>A: QA (sandbox + regression tests)
@@ -167,16 +173,23 @@ this repo.
    Writes follow symlinks so a vault-linked board is updated in place, never
    replaced with a private copy.
 5. **Sequential reviews, commit-bound sign-offs.** Code Review gates QA. Both
-   sign-offs bind to a specific commit — any code change re-enters at the gate
-   and repeats both reviews.
-6. **Wikilink scope.** Card wikilinks resolve only against `.jfdi/tickets/`.
+   sign-offs bind to a specific commit — the pipeline's own handoff commit, since
+   agents never commit — and any code change re-enters at the gate and repeats
+   both reviews.
+6. **Pipeline-owned commits and note writes.** No agent commits, and no agent
+   edits a ticket note. The pipeline records HEAD before each session, resets
+   anything the session committed back into the index, and lands one commit per
+   session that changed the worktree — failures and interruptions included,
+   marked WIP so a resume knows what it inherited. The scribe writes the
+   message; the same text becomes the note's transition comment.
+7. **Wikilink scope.** Card wikilinks resolve only against `.jfdi/tickets/`.
    Beyond its own state directory, the tool never reads or writes outside the
    project folder — except through symlinks the user placed inside `.jfdi/`,
    which are treated as consent.
-7. **Decide, log, proceed.** Escalation is a last resort and must carry a
+8. **Decide, log, proceed.** Escalation is a last resort and must carry a
    recommended answer. Decisions land in the ticket note as decision comments;
    the board is the question queue.
-8. **The target branch is configurable** — never assume `main`.
+9. **The target branch is configurable** — never assume `main`.
 
 ## Trust boundaries
 
@@ -206,6 +219,8 @@ src/
   board.ts, cards.ts      board parsing and surgical writes
   tickets.ts              ticket resolution, note sections
   prompts.ts              default prompt templates + loader (disk wins)
+  scribe.ts               the commit-message session and the message shape
+  transitions.ts          status lines + the ticket note's transition comments
   verdicts.ts             verdict file parsing
   gate.ts                 gate runner
   resume.ts               interrupted-run recovery + feedback history

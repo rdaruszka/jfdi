@@ -303,7 +303,8 @@ describe("jfdi run moves the matching card", () => {
       expect(occupied(await boardColumns(sandbox.boardPath))).toEqual([
         `Done: ${CARD_LINE.replace("- [ ]", "- [x]")}`,
       ]);
-      expect(await git(sandbox.project, "log", "--oneline", "main")).toContain("implement");
+      // The pipeline's own commit, subject-prefixed with the ticket id.
+      expect(await git(sandbox.project, "log", "--oneline", "main")).toContain("alpha-feature:");
     },
     PIPELINE_TIMEOUT_MS,
   );

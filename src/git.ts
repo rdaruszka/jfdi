@@ -286,6 +286,11 @@ export async function commitCount(worktree: string, target: string): Promise<num
   return count;
 }
 
+/** True if the index holds anything to commit — what the pipeline's own commit turns on. */
+export async function hasStagedChanges(repo: string): Promise<boolean> {
+  return (await git(repo, "diff", "--cached", "--name-only")) !== "";
+}
+
 /** Commit anything left uncommitted in the worktree (agent safety net). */
 export async function commitAllIfDirty(worktree: string, message: string): Promise<boolean> {
   if (await isWorkingTreeClean(worktree)) return false;

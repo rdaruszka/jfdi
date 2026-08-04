@@ -1,7 +1,8 @@
+import * as fsSync from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   appendComment,
   appendToSection,
@@ -11,6 +12,37 @@ import {
   type TicketComment,
   ticketSpec,
 } from "./ticket-note.js";
+
+/**
+ * The barrier that makes "a human saved the note mid-append" a fact rather than
+ * a race: `readModifyWrite` calls `modify` after the read this attempt worked
+ * from and before the re-read that detects a change, so an armed edit fires
+ * exactly in that window. Armed per test, and consumed on the first attempt so
+ * the retry sees a settled file.
+ */
+const fsxSeam = vi.hoisted(() => ({ editBeforeWrite: null as (() => void) | null }));
+
+vi.mock("./util/fsx.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./util/fsx.js")>();
+  return {
+    ...actual,
+    readModifyWrite: (
+      filePath: string,
+      modify: (content: string) => string | null,
+      options?: { retries?: number; retryDelayMs?: number },
+    ) =>
+      actual.readModifyWrite(
+        filePath,
+        (content) => {
+          const edit = fsxSeam.editBeforeWrite;
+          fsxSeam.editBeforeWrite = null;
+          edit?.();
+          return modify(content);
+        },
+        options,
+      ),
+  };
+});
 
 let dir: string;
 
@@ -392,6 +424,47 @@ describe("appendComment", () => {
       decision,
       transition,
     ]);
+  });
+
+  it("survives a human editing the note mid-append, and lands on a symlink's target", async () => {
+    // Obsidian saves the note between the append's read and its re-read. The
+    // interleaving is forced, not raced: the seam below fires the human's
+    // synchronous write from inside the modify callback `appendToSection`
+    // passes to `readModifyWrite` — exactly where a save would land.
+    const vault = path.join(dir, "vault");
+    await fs.mkdir(vault);
+    const real = path.join(vault, "n.md");
+    await fs.writeFile(real, "# T\n\nBody the pipeline read first.\n");
+    const link = path.join(dir, "n.md");
+    await fs.symlink(real, link);
+
+    const transition: TicketComment = {
+      kind: "transition",
+      timestamp: "2026-08-03T14:00:00.000Z",
+      stage: "qa",
+      round: 1,
+      body: "JFDI QA PASSED — moving to integration",
+    };
+    // Through the link, so a write that replaced it would fail the lstat below.
+    fsxSeam.editBeforeWrite = () =>
+      fsSync.writeFileSync(real, "# T\n\nHUMAN_RETYPED body.\n", "utf8");
+    await appendComment(link, decision);
+    expect(fsxSeam.editBeforeWrite).toBeNull();
+    await appendComment(link, transition);
+
+    const content = await fs.readFile(real, "utf8");
+    // The human's edit is the body that survived — the append rebuilt on top of
+    // it rather than writing back the copy it had read.
+    expect(content).toContain("HUMAN_RETYPED body.");
+    expect(content).not.toContain("Body the pipeline read first.");
+    // Both entries, exactly once each, under exactly one Comments section.
+    expect(content.match(/^## Comments$/gm)).toHaveLength(1);
+    expect(content.match(/Kept the existing flag name\./g)).toHaveLength(1);
+    expect(content.match(/JFDI QA PASSED — moving to integration/g)).toHaveLength(1);
+    expect(parseTicketNote(content).comments).toEqual([decision, transition]);
+    // …and the link is still a link to the file the human has open.
+    expect((await fs.lstat(link)).isSymbolicLink()).toBe(true);
+    expect(await fs.readFile(link, "utf8")).toBe(content);
   });
 
   it("leaves frontmatter and unrecognized sections byte-for-byte intact", async () => {

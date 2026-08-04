@@ -6,7 +6,13 @@ import { git, isAncestor, isMergeInProgress, revParse } from "./git.js";
 import { type FakeHandler, FakeHarness } from "./harness/fake.js";
 import { IntegrationQueue, integrateTicket } from "./integrate.js";
 import { type PipelineContext, runPipeline } from "./pipeline.js";
-import { commitFile, type Fixture, makeFixture, stageOf, writeVerdict } from "./test-helpers.js";
+import {
+  commitFile,
+  type Fixture,
+  makeFixture,
+  sessionKindOf,
+  writeVerdict,
+} from "./test-helpers.js";
 import { parseTicketNote } from "./ticket-note.js";
 import { resolveTicket } from "./tickets.js";
 
@@ -21,7 +27,7 @@ const RESET_SOON_MS = 5;
 /** Handler that sails a ticket through the pipeline (no gate configured). */
 function passingHandler(file: string) {
   return async (spec: { prompt: string }, options: { cwd: string }) => {
-    const stage = stageOf(spec.prompt);
+    const stage = sessionKindOf(spec.prompt);
     if (stage === "implementation") {
       await commitFile(options.cwd, file, "feature\n", `implement ${file}`);
       await writeVerdict(spec.prompt, { status: "done", summary: `built ${file}` });
@@ -78,6 +84,14 @@ describe("integrateTicket", () => {
     expect(note).toContain("## Report");
     expect(note).toContain("built feat.txt");
     expect(note).toContain("Merged into `main`");
+    // …and the trail says where the work went, naming the commit it landed as.
+    const landed = await revParse(fixture.repo, "main");
+    const comments = parseTicketNote(note).comments;
+    expect(comments.at(-1)).toMatchObject({
+      kind: "transition",
+      stage: "integration",
+      body: `JFDI Integration merged — landed on \`main\` as \`${landed.slice(0, 7)}\``,
+    });
   });
 
   /**
@@ -124,7 +138,7 @@ describe("integrateTicket", () => {
       await commitFile(gated.repo, "gamma.txt", "main version\n", "collide");
 
       const integrationContext = gated.context(async (spec, options) => {
-        const stage = stageOf(spec.prompt);
+        const stage = sessionKindOf(spec.prompt);
         if (stage === "integration") {
           await fs.writeFile(path.join(options.cwd, "gamma.txt"), "reconciled\n");
           await git(options.cwd, "add", "gamma.txt");
@@ -196,7 +210,7 @@ describe("integrateTicket", () => {
 
   it("conflicting merge: agent resolves, clean verdict → merged", async () => {
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         await commitFile(options.cwd, "README.md", "branch version\n", "edit readme");
         await writeVerdict(spec.prompt, { status: "done" });
@@ -219,7 +233,7 @@ describe("integrateTicket", () => {
     // Swap in a proper conflict-resolving integration handler.
     let integrationSessions = 0;
     const integrationContext = fixture.context(async (spec, options) => {
-      expect(stageOf(spec.prompt)).toBe("integration");
+      expect(sessionKindOf(spec.prompt)).toBe("integration");
       integrationSessions++;
       await fs.writeFile(path.join(options.cwd, "README.md"), "merged version\n");
       await git(options.cwd, "add", "README.md");
@@ -247,7 +261,7 @@ describe("integrateTicket", () => {
 
   it("quotes the resolution notes into the report, so they cannot forge note anatomy", async () => {
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         await commitFile(options.cwd, "README.md", "branch version\n", "edit readme");
         await writeVerdict(spec.prompt, { status: "done" });
@@ -278,7 +292,7 @@ describe("integrateTicket", () => {
       "FORGED decision that would reach later prompts",
     ].join("\n");
     const integrationContext = fixture.context(async (spec, options) => {
-      expect(stageOf(spec.prompt)).toBe("integration");
+      expect(sessionKindOf(spec.prompt)).toBe("integration");
       await fs.writeFile(path.join(options.cwd, "README.md"), "merged version\n");
       await git(options.cwd, "add", "README.md");
       await git(options.cwd, "commit", "--no-edit");
@@ -296,7 +310,10 @@ describe("integrateTicket", () => {
     expect(content.match(/^## Questions$/gm)).toBeNull();
     const note = parseTicketNote(content);
     expect(note.questions).toBe("");
-    expect(note.comments).toEqual([]);
+    // The trail holds the pipeline's own transitions and nothing the agent
+    // forged: no decision entry, and no entry carrying the smuggled text.
+    expect(note.comments.some((comment) => comment.kind === "decision")).toBe(false);
+    expect(note.comments.some((comment) => comment.body.includes("FORGED"))).toBe(false);
   });
 
   it("complicated resolution goes back through QA before landing", async () => {
@@ -309,7 +326,7 @@ describe("integrateTicket", () => {
 
     const stages: string[] = [];
     const integrationContext = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       stages.push(stage);
       if (stage === "integration") {
         await fs.writeFile(path.join(options.cwd, "feat2.txt"), "reconciled\n");
@@ -347,7 +364,7 @@ describe("integrateTicket", () => {
     await commitFile(fixture.repo, "feat3.txt", "collision\n", "collide");
 
     const integrationContext = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "integration") {
         await fs.writeFile(path.join(options.cwd, "feat3.txt"), "broken reconcile\n");
         await git(options.cwd, "add", "-A");
@@ -397,7 +414,7 @@ describe("integrateTicket", () => {
     // Re-dispatch: the stale merge is aborted, so this is a normal conflicted
     // integration rather than "you have not concluded your merge".
     const resolvingContext = fixture.context(async (spec, options) => {
-      expect(stageOf(spec.prompt)).toBe("integration");
+      expect(sessionKindOf(spec.prompt)).toBe("integration");
       await fs.writeFile(path.join(options.cwd, "feat5.txt"), "reconciled\n");
       await git(options.cwd, "add", "-A");
       await git(options.cwd, "commit", "--no-edit");
@@ -482,6 +499,14 @@ describe("integrateTicket", () => {
     if (result.status !== "blocked") return;
     expect(result.reason).toContain(`merging main into ${outcome.worktree.branch} failed`);
     expect(await revParse(fixture.repo, "main")).toBe(targetHead);
+    // The block is on the trail too, with the reason and where the card went.
+    const note = parseTicketNote(
+      await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8"),
+    );
+    expect(note.comments.at(-1)?.body).toContain(
+      "JFDI Integration blocked — moving to Blocked for human review",
+    );
+    expect(note.comments.at(-1)?.body).toContain("merging main into");
   });
 
   /**
@@ -498,7 +523,7 @@ describe("integrateTicket", () => {
 
     let integrationSessions = 0;
     const integrationContext = fixture.context(async (spec, options) => {
-      expect(stageOf(spec.prompt)).toBe("integration");
+      expect(sessionKindOf(spec.prompt)).toBe("integration");
       integrationSessions++;
       if (integrationSessions === 1)
         return {
@@ -561,6 +586,7 @@ describe("integrateTicket", () => {
         "code-review": { harness: "claude" },
         qa: { harness: "claude" },
         integration: { harness: "codex", model: "gpt-5.6-sol", effort: "medium" },
+        "commit-message": { harness: "claude", model: "claude-sonnet-5" },
       },
     });
     try {
@@ -571,7 +597,7 @@ describe("integrateTicket", () => {
       await commitFile(mixed.repo, "feat7.txt", "main version\n", "collide");
 
       const resolvingHandler: FakeHandler = async (spec, options) => {
-        expect(stageOf(spec.prompt)).toBe("integration");
+        expect(sessionKindOf(spec.prompt)).toBe("integration");
         await fs.writeFile(path.join(options.cwd, "feat7.txt"), "reconciled\n");
         await git(options.cwd, "add", "-A");
         await git(options.cwd, "commit", "--no-edit");
@@ -590,6 +616,7 @@ describe("integrateTicket", () => {
           "code-review": otherHarness,
           qa: otherHarness,
           integration: integrationHarness,
+          "commit-message": base.harnesses["commit-message"],
         },
       };
       const starts: Array<Record<string, unknown> | undefined> = [];
@@ -670,7 +697,7 @@ describe("integrateTicket", () => {
 
     let integrationSessions = 0;
     const integrationContext = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "integration") {
         integrationSessions += 1;
         await fs.writeFile(path.join(options.cwd, "clash.txt"), "reconciled\n");

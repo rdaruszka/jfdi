@@ -20,18 +20,25 @@ import {
   runHeldSession,
   runQaStage,
   runsDir,
-  stageSelectionFields,
+  sessionSelectionFields,
   worktreesDir,
 } from "./pipeline.js";
 import { formatGateCommands, loadPrompt, renderPrompt } from "./prompts.js";
 import { appendToSection, quoteAgentText } from "./ticket-note.js";
 import { ensureTicketNote, type Ticket } from "./tickets.js";
+import { BLOCKED_ROUTING, recordTransition, shortSha, statusLine } from "./transitions.js";
 import { todayIsoDate } from "./util/dates.js";
 import { ensureDir, fileExists } from "./util/fsx.js";
 import { type IntegrationVerdict, readIntegrationVerdict } from "./verdicts.js";
 
 /** Git output quoted into a blocked reason when the merge fails outright. */
 const MAX_MERGE_ERROR_CHARS = 500;
+
+/**
+ * Integration is coordinator-owned and runs outside the round loop, so its
+ * comments carry no round of their own — the same zero its QA re-run uses.
+ */
+const INTEGRATION_ROUND = 0;
 
 export type IntegrateOutcome =
   | { status: "merged" }
@@ -89,7 +96,7 @@ async function runIntegrationAgent(
   const stage: StageName = "integration";
   context.log.emit("stage_start", ticket.id, {
     stage,
-    ...stageSelectionFields(context.config, stage),
+    ...sessionSelectionFields(context.config, stage),
   });
   const result = await runHeldSession(
     context,
@@ -295,18 +302,29 @@ export async function integrateTicket(
   // 5. Land it: the tree the gate just ran against, under a merge commit that
   //    keeps the target's line first and the signed-off commit reachable.
   let leftoverNote = "";
+  let landingCommit = "";
   try {
     leftoverNote = await captureLeftovers(context, ticket, worktree);
-    const landing = await commitMerge(
+    landingCommit = await commitMerge(
       worktree.path,
       { firstParent: targetHead, secondParent: signedOffCommit },
       mergeCommitMessage(ticket, worktree.branch, target),
     );
-    await fastForward(context.repoRoot, target, landing);
+    await fastForward(context.repoRoot, target, landingCommit);
   } catch (error) {
     return blocked(context, ticket, notePath, `merge failed: ${(error as Error).message}`);
   }
   context.log.emit("merged", ticket.id);
+  await recordTransition(
+    notePath,
+    "integration",
+    INTEGRATION_ROUND,
+    statusLine(
+      "integration",
+      "merged",
+      `landed on \`${target}\` as \`${shortSha(landingCommit)}\``,
+    ),
+  );
   // The resolution notes come from the Integration agent's verdict — quoted,
   // like every other piece of agent text a note carries.
   await appendReport(
@@ -330,6 +348,12 @@ async function blocked(
   notePath: string,
   reason: string,
 ): Promise<IntegrateOutcome> {
+  await recordTransition(
+    notePath,
+    "integration",
+    INTEGRATION_ROUND,
+    `${statusLine("integration", "blocked", BLOCKED_ROUTING)}\n\n${reason}`,
+  );
   await appendToSection(
     notePath,
     "Questions",

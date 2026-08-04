@@ -59,9 +59,11 @@ One name per concept — these terms are used exactly, here and in the code:
 | **run** | one ticket's trip through the pipeline |
 | **state directory** | `~/.jfdi/projects/<project-key>/` — one project's run state |
 | **stage** | one agent session within a run: Implementation, Code Review, QA |
+| **scribe** | the cheap, read-only session that writes each commit message; plumbing, not a stage |
+| **comment** | one entry in a ticket's `## Comments` trail: a pipeline *transition* or an agent *decision* |
 | **gate** | the mechanical check (build/test/lint); all commands must exit zero |
 | **round** | one feedback cycle: fix → gate → reviews |
-| **sign-off** | a review stage's approval, bound to a specific commit |
+| **sign-off** | a review stage's approval, bound to the pipeline's handoff commit |
 | **integration** | the coordinator-owned merge → gate → land step; globally serialized |
 | **coordinator** | the long-running process that watches the board and dispatches runs |
 | **harness** | the agent-session abstraction; Claude Code and Codex are implementations |

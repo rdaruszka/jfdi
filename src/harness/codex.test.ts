@@ -9,7 +9,7 @@ import type { HarnessEvent, HarnessSelection } from "./types.js";
 const NOW = new Date(2026, 7, 3, 9, 30).getTime();
 
 /** Harness-only selection: the tests that care about flags name their own. */
-const TEST_SELECTION: HarnessSelection = { stage: "implementation" };
+const TEST_SELECTION: HarnessSelection = { sessionKind: "implementation" };
 
 describe("mapCodexLine", () => {
   it("maps completed agent messages", () => {
@@ -283,7 +283,7 @@ describe("CodexHarness selection flags", () => {
   it("spells model as a flag and effort as a config override", async () => {
     const recorder = await argvRecorder();
     await new CodexHarness(
-      { stage: "code-review", model: "gpt-5.6-sol", effort: "high" },
+      { sessionKind: "code-review", model: "gpt-5.6-sol", effort: "high" },
       recorder.executable,
     ).spawn({ prompt: "review it" }, { cwd: dir }).done;
     expect(await recorder.argv()).toEqual([
@@ -301,7 +301,7 @@ describe("CodexHarness selection flags", () => {
   it("keeps the flags ahead of the positional thread id when continuing", async () => {
     const recorder = await argvRecorder();
     await new CodexHarness(
-      { stage: "code-review", model: "gpt-5.6-sol", effort: "low" },
+      { sessionKind: "code-review", model: "gpt-5.6-sol", effort: "low" },
       recorder.executable,
     ).spawn({ prompt: "go on" }, { cwd: dir, continueSessionId: "thread-7" }).done;
     const argv = await recorder.argv();
@@ -312,7 +312,7 @@ describe("CodexHarness selection flags", () => {
 
   it("passes no flag for a value the stage did not configure", async () => {
     const recorder = await argvRecorder();
-    await new CodexHarness({ stage: "qa", effort: "medium" }, recorder.executable).spawn(
+    await new CodexHarness({ sessionKind: "qa", effort: "medium" }, recorder.executable).spawn(
       { prompt: "p" },
       { cwd: dir },
     ).done;
@@ -324,7 +324,7 @@ describe("CodexHarness selection flags", () => {
   it("passes the selection to an interactive launch too", async () => {
     const recorder = await argvRecorder();
     await new CodexHarness(
-      { stage: "implementation", model: "gpt-5.6-sol", effort: "high" },
+      { sessionKind: "implementation", model: "gpt-5.6-sol", effort: "high" },
       recorder.executable,
     ).spawnInteractive({ prompt: "brief" }, { cwd: dir });
     expect(await recorder.argv()).toEqual([
@@ -337,9 +337,9 @@ describe("CodexHarness selection flags", () => {
     ]);
   });
 
-  it("names the binary and the stage entry when the CLI is not installed", async () => {
+  it("names the binary and the stages entry when the CLI is not installed", async () => {
     const result = await new CodexHarness(
-      { stage: "code-review" },
+      { sessionKind: "code-review" },
       path.join(dir, "not-installed"),
     ).spawn({ prompt: "p" }, { cwd: dir }).done;
     expect(result.ok).toBe(false);

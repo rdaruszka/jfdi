@@ -17,17 +17,17 @@ from the integration target branch. Inside that worktree, up to `pipeline.max_ro
 
 ```mermaid
 flowchart TD
-    IMPL[Implementation session] -->|status: done| CHK[Checkpoint-commit any<br/>uncommitted work]
-    IMPL -->|status: escalate| BLOCKED([Card → Blocked])
-    CHK --> GATE{Mechanical gate}
+    IMPL[Implementation session] --> CHK[Pipeline commits<br/>the session's handoff]
+    CHK -->|status: done| GATE{Mechanical gate}
+    CHK -->|status: escalate| BLOCKED([Card → Blocked])
     GATE -->|fail| RETRY([Next round:<br/>feedback → Implementation])
     GATE -->|pass| CR[Code Review session]
     CR -->|fail| RETRY
     CR -->|pass| QA[QA session]
-    QA -->|fail| RETRY
-    QA -->|escalate| BLOCKED
-    QA -->|pass| QACOMMIT[Commit QA's tests]
-    QACOMMIT --> GATE2{Gate again,<br/>if QA moved HEAD}
+    QA --> QACOMMIT[Pipeline commits QA's tests,<br/>if it wrote any]
+    QACOMMIT -->|fail| RETRY
+    QACOMMIT -->|escalate| BLOCKED
+    QACOMMIT -->|pass| GATE2{Gate again,<br/>if QA committed}
     GATE2 -->|fail| RETRY
     GATE2 -->|pass| PASSED([Pipeline passed →<br/>Integration])
 ```
@@ -42,6 +42,9 @@ Three properties are worth internalizing:
   the cheap review screens the expensive one.
 - **The gate is the cheapest reviewer and always runs first.** Reviews spend agent
   tokens only on what machines can't check.
+- **The pipeline owns the commits.** No stage commits its own work; the pipeline
+  commits once per session, and the sign-offs bind to *that* commit. See
+  [Commits and the scribe](#commits-and-the-scribe).
 
 ## Stages
 
@@ -56,7 +59,7 @@ edit — see [Prompts & Customization](prompts-and-customization.md).
 |---|---|---|
 | **Implementation** | Does the work, writes unit tests alongside the code, runs the gate itself before finishing. | Yes |
 | **Code Review** | Judges the diff on structure, clarity, conventions, and maintainability — *not* functionality. | No — an attempted escalation is treated as an invalid verdict and costs a round |
-| **QA** | Exercises the built artifact per the [sandbox contract](prompts-and-customization.md#the-sandbox-contract), validates behavior against the *ticket* (not the diff), and commits what it verified as automated regression tests. | Yes |
+| **QA** | Exercises the built artifact per the [sandbox contract](prompts-and-customization.md#the-sandbox-contract), validates behavior against the *ticket* (not the diff), and writes what it verified as automated regression tests. | Yes |
 
 Integration is the fourth agent, but it is owned by the coordinator, not the ticket
 pipeline — see [Integration & Merging](integration.md).
@@ -99,7 +102,7 @@ pipeline reads outcomes *only* from this file:
 // QA
 { "verdict": "pass" | "fail" | "escalate",
   "feedback": "when failing: what's wrong, with reproduction steps",
-  "testsAdded": "summary of committed tests",
+  "testsAdded": "summary of the tests it wrote",
   "decisions": ["…"], "observations": ["…"],
   "question": "…", "recommendation": "…" }
 ```
@@ -119,6 +122,84 @@ pass/fail:
   proposal cards in the board's **Inbox** column, deduplicated by text and tagged
   `*(from <ticket-id>)*`. Agents propose; humans promote.
 
+## Commits and the scribe
+
+**Agents never commit. The pipeline commits once per session.** Message quality
+used to vary by provider, and a session that died before its own commit lost its
+work silently. Both are gone: the pipeline records HEAD before each session and,
+when the session ends, folds whatever it left into exactly one commit.
+
+- **Enforcement is mechanical, not prompt-hope.** A session that commits anyway
+  is `git reset --soft` back to the pre-session HEAD, so its commits become
+  staged changes and the pipeline's single commit takes their place. Reviewers
+  are reset harder still: a Code Review session never moves the branch.
+- **Failed and interrupted sessions commit too** — every session end, success or
+  not. The message carries a `WIP —` subject marker and the reason. This is what
+  makes [resuming](#resuming-an-interrupted-run) reliable: sanitization discards
+  uncommitted changes, so partial work has to live in a commit.
+- **A session that changed nothing produces no commit.** A normal review, or a
+  passing QA that wrote no tests, leaves the branch alone; its outcome reaches
+  the ticket note as a comment instead.
+
+The message is written by the **scribe**: a cheap, read-only, single-shot
+session, selected by the [`stages["commit-message"]`](configuration.md#stages)
+entry. The pipeline hands it the staged diff, the ticket, the stage's own
+summary — the "why" the diff can't carry — and the round. It is not a stage: no
+verdict, no round of its own, no sign-off.
+
+The shape:
+
+```
+<ticket-id>: <imperative summary, ≤72 chars>
+
+<body, written for a reader with zero context who was not in the session>
+
+JFDI <Stage> <outcome> — <where the run actually went>
+
+JFDI-Round: <n>/<max>
+```
+
+The scribe writes the subject and body only. The status line and the trailer are
+appended by the pipeline, so they never depend on an agent getting a format
+right: `git log --format='%(trailers:key=JFDI-Round)'` always answers. The
+blank line above the trailer is load-bearing: git only reads a message's last
+paragraph as a trailer block when every line in it is trailer-shaped, so the
+trailer stands alone rather than sharing a paragraph with the status line.
+
+What comes back is subprocess output on its way into permanent history, so the
+pipeline enforces the rest of the shape rather than trusting it. A first line
+longer than 72 characters is not a subject: it is kept as body text under a
+plain subject the pipeline writes itself. A body long enough to be an echo of
+the diff is cut with a visible marker. Control characters git or a terminal
+would choke on are stripped from the assembled message — not just from the
+scribe's answer, since the stage's summary and an interrupted session's quoted
+reason are agent and subprocess text too — and anything that has to stay on one
+line, the status line included, is flattened to one. A scribe that dies or
+answers with nothing degrades to the stage's own summary — the commit is never
+delayed for prose — and says so on the event stream.
+
+### The comment trail
+
+Every transition is also appended to the ticket note's `## Comments` section, so
+`git log` and the note each tell the story on their own. For a commit, the entry
+is the rendered message **verbatim** — one rendering, two surfaces. The trail
+covers:
+
+| Transition | Entry |
+|---|---|
+| dispatch | "JFDI run started — round 1, branch jfdi/&lt;id&gt;" |
+| an implementation or fix session | the commit's message |
+| a review verdict | "JFDI Code Review PASSED — moving to QA", or FAILED followed by the exact feedback the implementer received; the same for QA |
+| rounds exhausted | "JFDI run exhausted its N rounds — moving to Blocked for human review", with the round history |
+| integration | "JFDI Integration merged — landed on main as &lt;sha&gt;", or blocked with the reason |
+| a decision | one entry per `decisions` item, in the [decision format](board-and-tickets.md#ticket-notes) |
+
+Two deliberate absences: **no comment for a pause** — infrastructure holds are
+not ticket history — and agents never write the note themselves. Every append is
+pipeline-owned and atomic (read → mtime check → temp-file rename, following
+symlinks to the real file), so a human editing the note in Obsidian mid-run
+loses nothing.
+
 ## The mechanical gate
 
 The gate is the ordered list of shell commands in `config.json`'s `gate` array
@@ -129,8 +210,9 @@ round.
 
 The gate runs at five points:
 
-1. After Implementation hands off, before Code Review ("done" isn't done until it passes)
-2. After QA commits its tests, if that moved HEAD (QA's own tests must pass too)
+1. After Implementation hands off and the pipeline commits it, before Code Review
+   ("done" isn't done until it passes)
+2. After the pipeline commits QA's tests, if it wrote any (QA's own tests must pass too)
 3. During integration, after a clean merge, pre-land
 4. During integration, after agent-driven conflict resolution
 5. During integration, after re-QA on a complicated merge
@@ -253,7 +335,9 @@ branch and resumes deliberately:
    markers and commit them.
 2. Any uncommitted changes are checkpoint-committed as
    `jfdi(<ticket-id>): recovered from interrupted run`, so the session starts from
-   a clean, committed tree.
+   a clean, committed tree. In practice there is rarely anything left to
+   recover: the pipeline already committed each session's work as that session
+   ended, so what the branch holds is a `WIP —` commit with the reason on it.
 3. The Implementation prompt carries a resume section: how many commits the branch
    already holds, a short log, what was recovered — with explicit instructions to
    continue the work, not start over.

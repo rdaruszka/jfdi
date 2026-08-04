@@ -237,7 +237,10 @@ async function invocations(sandbox: Sandbox): Promise<Invocation[]> {
       };
       return {
         cli,
-        stage: /(\w[\w-]*)\.verdict\.json/.exec(argv.join(" "))?.[1],
+        // The scribe writes no verdict, so it is named by its own prompt.
+        stage: argv.join(" ").includes("Write the commit message")
+          ? "commit-message"
+          : /(\w[\w-]*)\.verdict\.json/.exec(argv.join(" "))?.[1],
         model: valueAfter("--model"),
         effort: cli === "claude" ? valueAfter("--effort") : codexEffort(),
         isContinuation: argv.includes("--resume") || argv[1] === "resume",
@@ -265,6 +268,7 @@ const MIXED_STAGES = {
   "code-review": { harness: "codex", model: "review-model", effort: "minimal" },
   qa: { harness: "claude" },
   integration: { harness: "codex", effort: "xhigh" },
+  "commit-message": { harness: "codex", model: "scribe-model" },
 };
 
 beforeAll(async () => {
@@ -298,6 +302,15 @@ describe("per-stage selection, end to end", () => {
           stage: "implementation",
           model: "impl-model",
           effort: "max",
+          isContinuation: false,
+        },
+        // The scribe, on its own entry's CLI and model: the pipeline commits
+        // what the session left, and asks this session for the message.
+        {
+          cli: "codex",
+          stage: "commit-message",
+          model: "scribe-model",
+          effort: undefined,
           isContinuation: false,
         },
         {
@@ -419,7 +432,7 @@ describe("per-stage selection, end to end", () => {
         path.join(sandbox.project, ".jfdi", "tickets", `${ticketIdOf(run)}.md`),
         "utf8",
       );
-      expect(note).toContain('failed to spawn "codex" for the code-review stage');
+      expect(note).toContain('failed to spawn "codex" for the code-review session');
       expect(note).toContain("install the codex CLI and put it on PATH");
       expect(note).toContain("stages.code-review.harness");
     },

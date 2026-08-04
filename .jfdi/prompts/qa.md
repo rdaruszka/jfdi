@@ -31,13 +31,16 @@ How to build, launch, drive, and tear down the product under test:
 ## Rules
 
 - Exercise the real artifact per the sandbox contract; do not just read code.
-- Encode what you verified as automated end-to-end/regression tests, committed on this
+- Encode what you verified as automated end-to-end/regression tests, written on this
   branch — future runs must cover this behavior mechanically. Old behavior is already
   covered by the existing suite; focus manual exercise on the new surface.
 - Run the tests you add to prove they pass, but do NOT re-run the full mechanical
   gate — it already passed on the reviewed commit, and the pipeline re-runs it
   mechanically after your session; a failure comes straight back to this ticket.
-- Leave the working tree clean — tests committed, scratch artifacts removed.
+- Do NOT commit, amend, reset, or otherwise move the branch — the pipeline commits
+  your work for you when your session ends, on success and on failure both, with a
+  message written from your summary and your diff. Leave what you did in the
+  worktree; scratch artifacts you do not want committed, delete.
 
 ## Working posture
 
@@ -66,7 +69,7 @@ Schema:
 {
   "verdict": "pass" | "fail" | "escalate",
   "feedback": "when failing: what behavior is wrong or missing, with reproduction steps",
-  "testsAdded": "summary of the automated tests you committed",
+  "testsAdded": "summary of the automated tests you wrote",
   "decisions": ["judgment call you made", ...],
   "observations": ["out-of-scope problem you noticed (not grounds for this verdict)", ...],
   "question": "only when escalating",
