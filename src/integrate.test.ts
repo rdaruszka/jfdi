@@ -552,6 +552,128 @@ describe("integrateTicket", () => {
       await mixed.cleanup();
     }
   });
+
+  /**
+   * One ticket is the easy case. The shape has to hold as tickets accumulate:
+   * each landing commit's first parent is the previous landing commit, so the
+   * target's first-parent line stays one entry per ticket however many land,
+   * and no earlier sign-off falls out of reachable history behind a later one.
+   */
+  it("keeps one first-parent entry per ticket and every sign-off reachable across tickets", async () => {
+    const base = await revParse(fixture.repo, "main");
+    const landed: Array<{ signedOff: string; landing: string }> = [];
+    for (const file of ["first.txt", "second.txt", "third.txt"]) {
+      const context = fixture.context(passingHandler(file));
+      const ticket = await resolveTicket(`Ship ${file}`, fixture.ticketsDir);
+      const outcome = await runPipeline(context, ticket);
+      if (outcome.status !== "passed") throw new Error(`pipeline should pass for ${file}`);
+      const signedOff = await revParse(fixture.repo, outcome.worktree.branch);
+      const result = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
+      expect(result).toEqual({ status: "merged" });
+      landed.push({ signedOff, landing: await revParse(fixture.repo, "main") });
+    }
+
+    // Three tickets, three entries on the first-parent line — no more.
+    expect(await git(fixture.repo, "rev-list", "--count", "--first-parent", `${base}..main`)).toBe(
+      "3",
+    );
+    // ...and the whole graph is bigger than that line, so nothing was flattened.
+    expect(Number(await git(fixture.repo, "rev-list", "--count", `${base}..main`))).toBeGreaterThan(
+      3,
+    );
+    for (const [index, entry] of landed.entries()) {
+      const previous = index === 0 ? base : landed[index - 1]?.landing;
+      expect(await git(fixture.repo, "rev-parse", `${entry.landing}^1`)).toBe(previous);
+      expect(await git(fixture.repo, "rev-parse", `${entry.landing}^2`)).toBe(entry.signedOff);
+      // Every sign-off, not just the newest, survives later integrations.
+      expect(await isAncestor(fixture.repo, entry.signedOff, "main")).toBe(true);
+    }
+  });
+
+  /**
+   * The conflicted path is where the sign-off is most at risk: the tree that
+   * lands is not the tree anyone reviewed. The commit the reviews named must
+   * still be reachable, and the resolution must not cost the target its
+   * one-entry-per-ticket first-parent line.
+   */
+  it("keeps the sign-off reachable and the first-parent line intact through a conflict", async () => {
+    const context = fixture.context(passingHandler("clash.txt"));
+    const ticket = await resolveTicket("Conflicted sign-off", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    if (outcome.status !== "passed") throw new Error("pipeline should pass");
+    const signedOff = await revParse(fixture.repo, outcome.worktree.branch);
+    await commitFile(fixture.repo, "clash.txt", "target version\n", "collide");
+    const targetHead = await revParse(fixture.repo, "main");
+
+    let integrationSessions = 0;
+    const integrationContext = fixture.context(async (spec, options) => {
+      const stage = stageOf(spec.prompt);
+      if (stage === "integration") {
+        integrationSessions += 1;
+        await fs.writeFile(path.join(options.cwd, "clash.txt"), "reconciled\n");
+        await git(options.cwd, "add", "-A");
+        await git(options.cwd, "commit", "--no-edit");
+        await writeVerdict(spec.prompt, { resolution: "complicated", notes: "merged by hand" });
+      } else {
+        await commitFile(options.cwd, "requalify.txt", "re-checked\n", "regression test");
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    });
+
+    const result = await integrateTicket(
+      integrationContext,
+      ticket,
+      outcome.worktree,
+      outcome.report,
+    );
+
+    expect(result.status).toBe("merged");
+    // Exactly one agent resolution for one merge — not one per branch commit.
+    expect(integrationSessions).toBe(1);
+    expect(await isAncestor(fixture.repo, signedOff, "main")).toBe(true);
+    expect(await git(fixture.repo, "rev-parse", "main^1")).toBe(targetHead);
+    expect(await git(fixture.repo, "rev-parse", "main^2")).toBe(signedOff);
+    expect(
+      await git(fixture.repo, "rev-list", "--count", "--first-parent", `${targetHead}..main`),
+    ).toBe("1");
+    // The branch ref is gone, but deleting it orphaned nothing.
+    expect(await git(fixture.repo, "branch", "--list", outcome.worktree.branch)).toBe("");
+    expect(await git(fixture.repo, "cat-file", "-t", signedOff)).toBe("commit");
+  });
+
+  /**
+   * Hard invariant 8: the target branch is configurable. Nothing about the
+   * landing commit may assume `main` — and the branch that merely happens to
+   * be checked out must not move.
+   */
+  it("lands on a configured non-main target and leaves other branches alone", async () => {
+    const trunk = await makeFixture({
+      integration: { target_branch: "trunk", mode: "auto" },
+    });
+    try {
+      await git(trunk.repo, "branch", "trunk");
+      const mainHead = await revParse(trunk.repo, "main");
+      const context = trunk.context(passingHandler("trunked.txt"));
+      const ticket = await resolveTicket("Trunk ticket", trunk.ticketsDir);
+      const outcome = await runPipeline(context, ticket);
+      if (outcome.status !== "passed") throw new Error("pipeline should pass");
+      const signedOff = await revParse(trunk.repo, outcome.worktree.branch);
+
+      const result = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
+
+      expect(result).toEqual({ status: "merged" });
+      expect(await git(trunk.repo, "rev-parse", "trunk^1")).toBe(mainHead);
+      expect(await git(trunk.repo, "rev-parse", "trunk^2")).toBe(signedOff);
+      expect(await git(trunk.repo, "log", "-1", "--format=%s", "trunk")).toBe(
+        `Merge ${outcome.worktree.branch} into trunk`,
+      );
+      // `main` is checked out here and had nothing to do with this ticket.
+      expect(await revParse(trunk.repo, "main")).toBe(mainHead);
+    } finally {
+      await trunk.cleanup();
+    }
+  });
 });
 
 describe("IntegrationQueue", () => {
