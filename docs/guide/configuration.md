@@ -32,10 +32,10 @@ init fills in for your repo):
   "integration": { "target_branch": "main", "mode": "on-approval" },
   "max_concurrent": 2,
   "stages": {
-    "implementation": { "harness": "claude", "model": "claude-opus-5", "effort": "high" },
+    "implementation": { "harness": "claude", "model": "claude-opus-4-8", "effort": "high" },
     "code-review":    { "harness": "codex",  "model": "gpt-5.6-sol",   "effort": "high" },
-    "qa":             { "harness": "claude", "model": "claude-opus-5", "effort": "high" },
-    "integration":    { "harness": "claude", "model": "claude-opus-5", "effort": "medium" },
+    "qa":             { "harness": "claude", "model": "claude-opus-4-8", "effort": "high" },
+    "integration":    { "harness": "claude", "model": "claude-opus-4-8", "effort": "medium" },
     "commit-message": { "harness": "claude", "model": "claude-sonnet-5" }
   }
 }
@@ -127,7 +127,7 @@ a session, and this is where session selections live.
 | Field | Type | Required | Values |
 |---|---|---|---|
 | `harness` | string | yes | `"claude"` or `"codex"` |
-| `model` | string | no | Provider-native. Anything the CLI accepts: an alias (`opus`) or a full id (`claude-opus-5`, `gpt-5.6-sol`). |
+| `model` | string | no | Provider-native. Anything the CLI accepts: an alias (`opus`) or a full id (`claude-opus-4-8`, `gpt-5.6-sol`). |
 | `effort` | string | no | Provider-native. Claude Code: `low`, `medium`, `high`, `xhigh`, `max`. Codex: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. |
 
 There is **no global harness and no provider-neutral model vocabulary**: model

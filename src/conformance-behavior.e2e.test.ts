@@ -350,10 +350,10 @@ describe("CLI surface", () => {
       expect(config.pipeline.max_rounds).toBe(3);
       // The scaffolded mix: a cross-provider review, everything else on Claude.
       expect(config.stages).toEqual({
-        implementation: { harness: "claude", model: "claude-opus-5", effort: "high" },
+        implementation: { harness: "claude", model: "claude-opus-4-8", effort: "high" },
         "code-review": { harness: "codex", model: "gpt-5.6-sol", effort: "high" },
-        qa: { harness: "claude", model: "claude-opus-5", effort: "high" },
-        integration: { harness: "claude", model: "claude-opus-5", effort: "medium" },
+        qa: { harness: "claude", model: "claude-opus-4-8", effort: "high" },
+        integration: { harness: "claude", model: "claude-opus-4-8", effort: "medium" },
         "commit-message": { harness: "claude", model: "claude-sonnet-5" },
       });
 
@@ -400,11 +400,11 @@ describe("CLI surface", () => {
       // The scaffolded mix, spelled each provider's own way: Claude takes
       // --effort, Codex takes it as a -c config override.
       expect(invocations).toEqual([
-        { cli: "claude", stage: "implementation", model: "claude-opus-5", effort: "high" },
+        { cli: "claude", stage: "implementation", model: "claude-opus-4-8", effort: "high" },
         // The scribe runs on its own entry — a cheap model, no effort flag.
         { cli: "claude", stage: "commit-message", model: "claude-sonnet-5", effort: undefined },
         { cli: "codex", stage: "code-review", model: "gpt-5.6-sol", effort: "high" },
-        { cli: "claude", stage: "qa", model: "claude-opus-5", effort: "high" },
+        { cli: "claude", stage: "qa", model: "claude-opus-4-8", effort: "high" },
       ]);
     },
     PIPELINE_TIMEOUT_MS,

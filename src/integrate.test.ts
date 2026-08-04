@@ -582,7 +582,7 @@ describe("integrateTicket", () => {
   it("resolves a conflicted merge through the integration stage's own harness", async () => {
     const mixed = await makeFixture({
       stages: {
-        implementation: { harness: "claude", model: "claude-opus-5", effort: "high" },
+        implementation: { harness: "claude", model: "claude-opus-4-8", effort: "high" },
         "code-review": { harness: "claude" },
         qa: { harness: "claude" },
         integration: { harness: "codex", model: "gpt-5.6-sol", effort: "medium" },

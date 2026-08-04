@@ -136,7 +136,7 @@ describe("parseConfig stages", () => {
     expect(Object.hasOwn(stages.qa, "model")).toBe(false);
     expect(Object.hasOwn(stages.qa, "effort")).toBe(false);
     // The neighbours keep theirs; nothing leaked either way.
-    expect(stages.implementation.model).toBe("claude-opus-5");
+    expect(stages.implementation.model).toBe("claude-opus-4-8");
   });
 
   it("passes model strings through verbatim, alias or full id", () => {

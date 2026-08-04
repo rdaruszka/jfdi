@@ -65,15 +65,15 @@ export function defaultConfig(): JfdiConfig {
     integration: { target_branch: "main", mode: "on-approval" },
     max_concurrent: 2,
     stages: {
-      implementation: { harness: "claude", model: "claude-opus-5", effort: "high" },
+      implementation: { harness: "claude", model: "claude-opus-4-8", effort: "high" },
       // Deliberately a different provider from implementation: a reviewer that
       // is not the author's own model does not share the author's blind spots.
       "code-review": { harness: "codex", model: "gpt-5.6-sol", effort: "high" },
-      qa: { harness: "claude", model: "claude-opus-5", effort: "high" },
+      qa: { harness: "claude", model: "claude-opus-4-8", effort: "high" },
       // Integration only spawns on merge conflicts, so this prices conflict
       // resolution alone — rare, but its output lands on the target branch
       // where the gate cannot catch silently dropped logic.
-      integration: { harness: "claude", model: "claude-opus-5", effort: "medium" },
+      integration: { harness: "claude", model: "claude-opus-4-8", effort: "medium" },
       // The scribe writes commit messages from a diff and a summary the
       // pipeline hands it — a cheap-model task, and one that runs after every
       // code-producing session, so it is priced accordingly.
@@ -93,10 +93,10 @@ const SESSION_KINDS: Record<SessionKind, true> = {
 
 /** Quoted into every `stages` rejection, so the message shows the fix. */
 const STAGES_EXAMPLE = `"stages": {
-  "implementation": { "harness": "claude", "model": "claude-opus-5", "effort": "high" },
+  "implementation": { "harness": "claude", "model": "claude-opus-4-8", "effort": "high" },
   "code-review":    { "harness": "codex",  "model": "gpt-5.6-sol",   "effort": "high" },
-  "qa":             { "harness": "claude", "model": "claude-opus-5", "effort": "high" },
-  "integration":    { "harness": "claude", "model": "claude-opus-5", "effort": "medium" },
+  "qa":             { "harness": "claude", "model": "claude-opus-4-8", "effort": "high" },
+  "integration":    { "harness": "claude", "model": "claude-opus-4-8", "effort": "medium" },
   "commit-message": { "harness": "claude", "model": "claude-sonnet-5" }
 }`;
 

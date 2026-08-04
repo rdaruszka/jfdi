@@ -310,12 +310,12 @@ describe("ClaudeHarness selection flags", () => {
   it("spells model and effort the way Claude Code does", async () => {
     const recorder = await argvRecorder();
     await new ClaudeHarness(
-      { sessionKind: "qa", model: "claude-opus-5", effort: "xhigh" },
+      { sessionKind: "qa", model: "claude-opus-4-8", effort: "xhigh" },
       recorder.executable,
     ).spawn({ prompt: "p" }, { cwd: dir }).done;
     const argv = await recorder.argv();
     expect(argv).toContain("--model");
-    expect(argv[argv.indexOf("--model") + 1]).toBe("claude-opus-5");
+    expect(argv[argv.indexOf("--model") + 1]).toBe("claude-opus-4-8");
     expect(argv).toContain("--effort");
     expect(argv[argv.indexOf("--effort") + 1]).toBe("xhigh");
   });
@@ -334,12 +334,12 @@ describe("ClaudeHarness selection flags", () => {
   it("passes the selection to an interactive launch too", async () => {
     const recorder = await argvRecorder();
     await new ClaudeHarness(
-      { sessionKind: "implementation", model: "claude-opus-5", effort: "high" },
+      { sessionKind: "implementation", model: "claude-opus-4-8", effort: "high" },
       recorder.executable,
     ).spawnInteractive({ prompt: "brief" }, { cwd: dir, isSystemPrompt: true });
     expect(await recorder.argv()).toEqual([
       "--model",
-      "claude-opus-5",
+      "claude-opus-4-8",
       "--effort",
       "high",
       "--append-system-prompt",

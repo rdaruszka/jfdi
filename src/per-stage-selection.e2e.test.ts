@@ -453,7 +453,7 @@ describe("per-stage selection, end to end", () => {
         ],
         [
           "a stage entry with no harness",
-          { ...MIXED_STAGES, qa: { model: "claude-opus-5" } },
+          { ...MIXED_STAGES, qa: { model: "claude-opus-4-8" } },
           "stages.qa.harness must be a non-empty string",
         ],
         [
