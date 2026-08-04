@@ -38,10 +38,16 @@ const TARGET_BRANCH = "trunk";
  * names, and — for the implementation stage — commits the file named in
  * `STUB_FILE` so each ticket touches a different path.
  *
- * With `STUB_LEFTOVERS` set it plays the sloppy agent instead: the integration
- * session resolves the conflict and commits it but drops a stray file it never
- * commits, calls the resolution `complicated`, and the re-QA session it
- * triggers writes its regression test without committing that either.
+ * With `STUB_ROUNDS` set it commits that many times, so a branch can carry the
+ * fix-round history the no-squash rule protects. With `STUB_LEFTOVERS` set it
+ * plays the sloppy agent instead: the integration session resolves the conflict
+ * and commits it but drops a stray file it never commits, calls the resolution
+ * `complicated`, and the re-QA session it triggers writes its regression test
+ * without committing that either.
+ *
+ * Every integration session first appends what it was handed — merge state or
+ * rebase state, conflicted paths, the branch head it stands on — to
+ * `STUB_SESSION_LOG`, so a test can count the resolutions a merge cost.
  */
 const STUB_AGENT = `#!/usr/bin/env node
 const fs = require("node:fs");
@@ -61,22 +67,35 @@ if (match) {
   const verdictPath = match[1];
   const stage = verdictPath.split("/").pop().replace(".verdict.json", "");
   const run = (args) => execFileSync("git", args, { cwd: process.cwd() });
+  const capture = (args) => execFileSync("git", args, { cwd: process.cwd(), encoding: "utf8" }).trim();
   let verdict;
   if (stage === "implementation") {
     const file = process.env.STUB_FILE;
-    fs.writeFileSync(process.cwd() + "/" + file, "built\\n");
-    run(["add", "-A"]);
-    run(["commit", "-m", "implement " + file]);
+    const rounds = Number(process.env.STUB_ROUNDS || "1");
+    for (let round = 1; round <= rounds; round++) {
+      fs.writeFileSync(process.cwd() + "/" + file, rounds === 1 ? "built\\n" : "built v" + round + "\\n");
+      run(["add", "-A"]);
+      run(["commit", "-m", round === 1 ? "implement " + file : "fix round " + (round - 1)]);
+    }
     verdict = { status: "done", summary: "implemented " + file };
   } else if (stage === "integration") {
-    if (process.env.STUB_LEFTOVERS) {
+    const gitDir = capture(["rev-parse", "--absolute-git-dir"]);
+    fs.appendFileSync(process.env.STUB_SESSION_LOG, JSON.stringify({
+      isMidMerge: fs.existsSync(gitDir + "/MERGE_HEAD"),
+      isMidRebase: fs.existsSync(gitDir + "/rebase-merge") || fs.existsSync(gitDir + "/rebase-apply"),
+      conflicted: capture(["diff", "--name-only", "--diff-filter=U"]).split("\\n").filter(Boolean),
+      head: capture(["rev-parse", "HEAD"]),
+    }) + "\\n");
+    if (fs.existsSync(gitDir + "/MERGE_HEAD")) {
       fs.writeFileSync(process.cwd() + "/" + process.env.STUB_FILE, "reconciled\\n");
       run(["add", process.env.STUB_FILE]);
       run(["commit", "--no-edit"]);
+    }
+    if (process.env.STUB_LEFTOVERS) {
       fs.writeFileSync(process.cwd() + "/agent-leftover.txt", "stray\\n");
       verdict = { resolution: "complicated", notes: "reworked logic" };
     } else {
-      verdict = { resolution: "clean", notes: "nothing to reconcile" };
+      verdict = { resolution: "clean", notes: "took both sides" };
     }
   } else {
     if (process.env.STUB_LEFTOVERS && verdictPath.includes("requalify")) {
@@ -131,6 +150,13 @@ async function makeSandbox(): Promise<Sandbox> {
 interface StubOptions {
   file: string;
   shouldLeaveLeftovers?: boolean;
+  /** Commits the implementation session makes — a branch with fix rounds. */
+  rounds?: number;
+}
+
+/** Where the stubbed integration sessions record what each was handed. */
+function sessionLogPath(sandbox: Sandbox): string {
+  return path.join(sandbox.root, "integration-sessions.jsonl");
 }
 
 function sandboxEnv(sandbox: Sandbox, stub: StubOptions): NodeJS.ProcessEnv {
@@ -140,9 +166,27 @@ function sandboxEnv(sandbox: Sandbox, stub: StubOptions): NodeJS.ProcessEnv {
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
     STUB_FILE: stub.file,
+    STUB_SESSION_LOG: sessionLogPath(sandbox),
+    ...(stub.rounds ? { STUB_ROUNDS: String(stub.rounds) } : {}),
     ...(stub.shouldLeaveLeftovers ? { STUB_LEFTOVERS: "1" } : {}),
     NO_COLOR: "1",
   };
+}
+
+/** What each Integration agent session was handed, in the order they ran. */
+interface IntegrationSession {
+  isMidMerge: boolean;
+  isMidRebase: boolean;
+  conflicted: string[];
+  head: string;
+}
+
+async function integrationSessions(sandbox: Sandbox): Promise<IntegrationSession[]> {
+  const log = await fs.readFile(sessionLogPath(sandbox), "utf8").catch(() => "");
+  return log
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as IntegrationSession);
 }
 
 interface CliResult {
@@ -207,8 +251,9 @@ async function runToMergeReady(
   sandbox: Sandbox,
   cardText: string,
   file: string,
+  rounds?: number,
 ): Promise<{ ticketId: string; signedOff: string }> {
-  const run = await runCli(sandbox, ["run", cardText], { file });
+  const run = await runCli(sandbox, ["run", cardText], { file, rounds });
   expect(run.code, run.output).toBe(0);
   expect(run.output).toContain("ready to merge");
   const ticketId = ticketIdOf(run.output);
@@ -368,6 +413,121 @@ describe("the shape integration leaves on the target branch", () => {
       expect(await ticketNote(sandbox, ticketId)).toContain(
         "Uncommitted changes a session left behind were committed",
       );
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  /**
+   * "Conflicts resolve once": the ticket's case against rebase is that a branch
+   * of N commits touching one file pays for the same conflict N times, and each
+   * replay hands a synthetic, never-gate-tested state to an Integration agent.
+   * A three-commit branch colliding with the target must therefore cost exactly
+   * one agent session, standing on the signed-off commit itself, inside a merge
+   * — and every one of those three commits must survive into the target's graph,
+   * because the no-squash rule exists to keep round history readable.
+   */
+  it(
+    "pays for one conflict resolution however many commits the branch holds",
+    async () => {
+      const sandbox = await makeSandbox();
+      await scaffold(sandbox);
+      const { ticketId, signedOff } = await runToMergeReady(
+        sandbox,
+        "Add a feature over three rounds",
+        "delta.txt",
+        3,
+      );
+      const branchCommits = (
+        await git(sandbox.project, "log", "--format=%H %s", "-3", `jfdi/${ticketId}`)
+      )
+        .split("\n")
+        .map((line) => {
+          const separator = line.indexOf(" ");
+          return { sha: line.slice(0, separator), subject: line.slice(separator + 1) };
+        });
+
+      // The target changes the same file: one conflict, three times over under
+      // a rebase, once under a merge.
+      await fs.writeFile(path.join(sandbox.project, "delta.txt"), "target version\n");
+      await git(sandbox.project, "add", "delta.txt");
+      await git(sandbox.project, "commit", "-m", "collide on the target");
+      const targetHead = await git(sandbox.project, "rev-parse", TARGET_BRANCH);
+
+      const merge = await runCli(sandbox, ["merge", ticketId], { file: "delta.txt" });
+      expect(merge.code, merge.output).toBe(0);
+
+      const sessions = await integrationSessions(sandbox);
+      expect(sessions).toHaveLength(1);
+      // What the one session was handed: a merge (not a replay), one conflicted
+      // path, standing on the reviewed commit rather than a rewritten copy.
+      expect(sessions[0]).toMatchObject({
+        isMidMerge: true,
+        isMidRebase: false,
+        conflicted: ["delta.txt"],
+        head: signedOff,
+      });
+
+      // The resolution landed under the settled shape, not beside it.
+      expect(await git(sandbox.project, "rev-parse", `${TARGET_BRANCH}^1`)).toBe(targetHead);
+      expect(await git(sandbox.project, "rev-parse", `${TARGET_BRANCH}^2`)).toBe(signedOff);
+      expect(
+        await git(
+          sandbox.project,
+          "rev-list",
+          "--count",
+          "--first-parent",
+          `${targetHead}..${TARGET_BRANCH}`,
+        ),
+      ).toBe("1");
+      expect(await git(sandbox.project, "show", `${TARGET_BRANCH}:delta.txt`)).toBe("reconciled");
+
+      // Every round the branch recorded is still in the graph, by its own sha.
+      expect(branchCommits.map((commit) => commit.subject)).toEqual([
+        "fix round 2",
+        "fix round 1",
+        "implement delta.txt",
+      ]);
+      for (const commit of branchCommits) {
+        expect(
+          await git(sandbox.project, "merge-base", "--is-ancestor", commit.sha, TARGET_BRANCH),
+        ).toBe("");
+      }
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  /**
+   * A human merging the branch themselves is a supported approval route, and
+   * the short-circuit that recognizes it has to survive the design change: a
+   * second merge commit for work already on the target would put a ticket on
+   * the first-parent line twice.
+   */
+  it(
+    "closes a branch the human already merged without landing a second commit",
+    async () => {
+      const sandbox = await makeSandbox();
+      await scaffold(sandbox);
+      const { ticketId } = await runToMergeReady(sandbox, "Add a feature", "epsilon.txt");
+
+      await git(sandbox.project, "merge", "--no-ff", "-m", "merged by hand", `jfdi/${ticketId}`);
+      const handMerged = await git(sandbox.project, "rev-parse", TARGET_BRANCH);
+
+      const merge = await runCli(sandbox, ["merge", ticketId], { file: "epsilon.txt" });
+
+      expect(merge.code, merge.output).toBe(0);
+      expect(merge.output).toContain("already contained in the target");
+      // Nothing was merged a second time, and no agent was spent deciding that.
+      expect(await git(sandbox.project, "rev-parse", TARGET_BRANCH)).toBe(handMerged);
+      expect(await integrationSessions(sandbox)).toEqual([]);
+      expect(await ticketNote(sandbox, ticketId)).toContain(
+        `Branch already merged into \`${TARGET_BRANCH}\``,
+      );
+      expect(
+        await fs
+          .access(path.join(sandbox.project, ".jfdi", "worktrees", ticketId))
+          .then(() => true)
+          .catch(() => false),
+      ).toBe(false);
     },
     SCENARIO_TIMEOUT_MS,
   );
