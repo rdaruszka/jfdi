@@ -3,6 +3,7 @@ import type { StageName } from "./events.js";
 import { formatGateFailure, runGate } from "./gate.js";
 import {
   abortMerge,
+  commitAllIfDirty,
   commitMerge,
   deleteBranch,
   fastForward,
@@ -173,6 +174,31 @@ async function resolveConflictedMerge(
 }
 
 /**
+ * Commit whatever a session left uncommitted, so that what lands is what the
+ * gate ran against. The gate runs against the *working tree* while the landing
+ * commit is built from HEAD's *tree*: the re-QA valve's own regression test, or
+ * a file the conflict resolution left behind, would otherwise be dropped from
+ * the merge — and then lost for good, because a successful integration removes
+ * the worktree. Mirrors the pipeline's own post-QA checkpoint. Returns the
+ * clause for the ticket note, empty when there was nothing to commit.
+ */
+async function captureLeftovers(
+  context: PipelineContext,
+  ticket: Ticket,
+  worktree: Worktree,
+): Promise<string> {
+  const hasCommitted = await commitAllIfDirty(
+    worktree.path,
+    `jfdi(${ticket.id}): integration leftovers`,
+  );
+  if (!hasCommitted) return "";
+  context.log.emit("session_activity", ticket.id, {
+    text: "integration: committed changes a session left uncommitted",
+  });
+  return " Uncommitted changes a session left behind were committed into the merge.";
+}
+
+/**
  * The landing commit's message. It names the ticket, and is where trailers
  * (sign-off shas, run id) belong once the pipeline grows them.
  */
@@ -268,7 +294,9 @@ export async function integrateTicket(
 
   // 5. Land it: the tree the gate just ran against, under a merge commit that
   //    keeps the target's line first and the signed-off commit reachable.
+  let leftoverNote = "";
   try {
+    leftoverNote = await captureLeftovers(context, ticket, worktree);
     const landing = await commitMerge(
       worktree.path,
       { firstParent: targetHead, secondParent: signedOffCommit },
@@ -285,7 +313,7 @@ export async function integrateTicket(
     notePath,
     ticket,
     report,
-    `Merged into \`${target}\`.${resolutionNote ? `\n\nConflict resolution:\n${quoteAgentText(resolutionNote)}` : ""}`,
+    `Merged into \`${target}\`.${leftoverNote}${resolutionNote ? `\n\nConflict resolution:\n${quoteAgentText(resolutionNote)}` : ""}`,
   );
   await cleanup(context, worktree);
   await deleteBranch(context.repoRoot, worktree.branch);

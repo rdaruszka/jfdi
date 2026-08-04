@@ -104,6 +104,69 @@ describe("integrateTicket", () => {
   });
 
   /**
+   * The gate runs against the *working tree*; the landing commit is built from
+   * a git *tree*. Whatever a session leaves uncommitted — the re-QA valve's own
+   * regression test, a stray file from the conflict resolution — sits in the
+   * gap between the two, and dropping it would mean shipping a tree nothing
+   * tested and losing the work with the worktree that cleanup removes.
+   */
+  it("lands what the gate saw when a session leaves the worktree dirty", async () => {
+    const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-gate-listing-"));
+    const listingFile = path.join(scratch, "gate-ls.txt");
+    const gated = await makeFixture({
+      gate: [{ name: "record-worktree", cmd: `ls -1 > ${listingFile}` }],
+    });
+    try {
+      const context = gated.context(passingHandler("gamma.txt"));
+      const ticket = await resolveTicket("Dirty at land time", gated.ticketsDir);
+      const outcome = await runPipeline(context, ticket);
+      if (outcome.status !== "passed") throw new Error("pipeline should pass");
+      await commitFile(gated.repo, "gamma.txt", "main version\n", "collide");
+
+      const integrationContext = gated.context(async (spec, options) => {
+        const stage = stageOf(spec.prompt);
+        if (stage === "integration") {
+          await fs.writeFile(path.join(options.cwd, "gamma.txt"), "reconciled\n");
+          await git(options.cwd, "add", "gamma.txt");
+          await git(options.cwd, "commit", "--no-edit");
+          // …and a file the agent never got around to committing.
+          await fs.writeFile(path.join(options.cwd, "agent-leftover.txt"), "stray\n");
+          await writeVerdict(spec.prompt, { resolution: "complicated", notes: "reworked logic" });
+        } else if (stage === "qa") {
+          // The valve's whole point is this regression test. It is uncommitted.
+          await fs.writeFile(path.join(options.cwd, "requalify-note.txt"), "re-verified\n");
+          await writeVerdict(spec.prompt, { verdict: "pass", testsAdded: "re-verified" });
+        }
+        return { ok: true, text: "" };
+      });
+
+      const result = await integrateTicket(
+        integrationContext,
+        ticket,
+        outcome.worktree,
+        outcome.report,
+      );
+
+      expect(result).toEqual({ status: "merged" });
+      const gateSaw = (await fs.readFile(listingFile, "utf8")).split("\n").filter(Boolean);
+      const landed = (await git(gated.repo, "ls-tree", "--name-only", "main"))
+        .split("\n")
+        .filter(Boolean);
+      expect(gateSaw).toContain("requalify-note.txt");
+      expect(gateSaw).toContain("agent-leftover.txt");
+      // Everything the gate ran against is in what landed.
+      for (const entry of gateSaw) expect(landed).toContain(entry);
+      // And the report says the leftovers were swept in, rather than pretending
+      // the sessions had left a clean tree.
+      const note = await fs.readFile(path.join(gated.ticketsDir, `${ticket.id}.md`), "utf8");
+      expect(note).toContain("Uncommitted changes a session left behind were committed");
+    } finally {
+      await gated.cleanup();
+      await fs.rm(scratch, { recursive: true, force: true });
+    }
+  });
+
+  /**
    * The sign-offs bind to a tested tree, so what lands must be the tree the
    * pre-land gate ran against — not a re-derived one.
    */

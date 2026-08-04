@@ -50,7 +50,11 @@ In detail:
    branch — the reviews signed off on code that now sits next to changes they
    never saw, so the behavior gets re-validated before landing. QA must pass,
    and the gate runs once more after it.
-6. **Land the merge commit.** The tree the gate just passed is committed with
+6. **Land the merge commit.** Anything a session left uncommitted in the
+   worktree is committed first — the gate runs against the working tree, so a
+   re-QA regression test or a stray resolution file would otherwise be dropped
+   from what lands and then lost with the worktree; the ticket note's report
+   says when this happened. The tree the gate just passed is then committed with
    the target's prior head as **first** parent and the signed-off branch head as
    **second**, and the target moves to it (a fast-forward, or a plain ref update
    when the target isn't checked out). Always a merge commit, even when a
