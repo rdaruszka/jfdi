@@ -175,8 +175,9 @@ function boundBody(body: string): string {
   return `${body.slice(0, MAX_BODY_CHARS).trimEnd()}${BODY_TRUNCATION_MARKER}`;
 }
 
-/** Code point below which a character is a C0 control, and the DEL code point. */
+/** Code point below which every character is a C0 control. */
 const FIRST_PRINTABLE_CODE_POINT = 0x20;
+/** DEL, the one control character that sits above the printable range. */
 const DELETE_CODE_POINT = 0x7f;
 
 /**
