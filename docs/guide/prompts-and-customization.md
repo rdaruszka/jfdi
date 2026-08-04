@@ -41,7 +41,7 @@ common set:
 | Variable | Content |
 |---|---|
 | `TICKET_ID` | The ticket id |
-| `SPEC` | The ticket spec — the note body (frontmatter stripped) or the card line |
+| `SPEC` | The ticket spec — the note's [defined slice](board-and-tickets.md#what-the-agents-actually-read) (title + description + open `## Questions` + the decision comments), or the card line for a card with no note |
 | `BRANCH` | `jfdi/<ticket-id>` |
 | `TARGET_BRANCH` | `integration.target_branch` |
 | `GATE_COMMANDS` | The configured gate commands, formatted as a list |

@@ -224,10 +224,12 @@ When Implementation or QA escalates:
 1. The question and recommendation are appended to the ticket note under
    `## Questions`, dated and stage-tagged, with a footer telling you how to resume.
 2. The run ends; the card moves to **Blocked**. The worktree and branch are kept.
-3. You answer by **editing the ticket note** (the whole note body is the spec the
-   next session sees, so write the answer where it makes sense) and moving the
-   card back to the begin column. The next dispatch resumes from the existing
-   branch with the answer in context.
+3. You answer by **editing the ticket note** and moving the card back to the
+   begin column. Write the answer in the **description** or under
+   `## Questions` — those are the parts of the note the next session reads (see
+   [the slice](board-and-tickets.md#what-the-agents-actually-read)); an answer
+   typed into `## Comments` or a section of your own never reaches it. The next
+   dispatch resumes from the existing branch with the answer in context.
 
 The safety net for wrong autonomous calls is layered: Code Review and QA judge the
 work against the ticket, and the decision log surfaces in the final report before
