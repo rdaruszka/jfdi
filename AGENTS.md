@@ -159,7 +159,7 @@ All four milestones are implemented and tested:
 3. **Convo mode** — `jfdi convo` ([commands/convo.ts](src/commands/convo.ts))
 4. **Init** — `jfdi init` ([commands/init.ts](src/commands/init.ts), [scaffold.ts](src/scaffold.ts))
 
-Self-hosting is live: this repo's own [.jfdi/](.jfdi/config.json) has the pnpm gate configured (`on-approval` mode), and [.jfdi/board.md](.jfdi/board.md) holds the backlog. Improvements to JFDI should flow through JFDI: add a card to the Ready column and `jfdi start` (or `jfdi run "<ticket>"`).
+Self-hosting is live: this repo's own [.jfdi/](.jfdi/config.json) has the pnpm gate configured (`auto` merge mode), and [.jfdi/board.md](.jfdi/board.md) holds the backlog. Improvements to JFDI should flow through JFDI: add a card to the Ready column and `jfdi start` (or `jfdi run "<ticket>"`).
 
 ## Testing notes
 

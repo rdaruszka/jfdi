@@ -17,7 +17,7 @@
     { "name": "lint", "cmd": "pnpm lint" }
   ],
   "pipeline": { "max_rounds": 3 },
-  "integration": { "target_branch": "main", "mode": "on-approval" },
+  "integration": { "target_branch": "main", "mode": "auto" },
   "max_concurrent": 2,
   "harness": "claude"
 }
