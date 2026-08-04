@@ -162,7 +162,7 @@ export interface MergeResult {
 /**
  * Merge `target` into the worktree's branch, so the merged state can be built
  * and tested where the run already lives. On conflict the merge is left in
- * progress for the Integration agent; any other failure is cleaned up.
+ * progress for the Integration agent to resolve.
  */
 export async function mergeTargetIntoBranch(
   worktree: string,
@@ -193,8 +193,11 @@ export async function abortMerge(worktree: string): Promise<void> {
   await gitTry(worktree, "merge", "--abort");
 }
 
-/** A 40-hex object name — the only thing `git commit-tree` may answer with. */
-const OBJECT_NAME_RE = /^[0-9a-f]{40}$/;
+/**
+ * An object name — the only thing `git commit-tree` may answer with. 40 hex
+ * digits in a sha1 repository, 64 in a sha256 one.
+ */
+const OBJECT_NAME_RE = /^([0-9a-f]{40}|[0-9a-f]{64})$/;
 
 /**
  * Build the landing merge commit for the tree currently at HEAD in `worktree` —
