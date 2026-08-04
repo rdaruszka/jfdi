@@ -66,6 +66,7 @@ One JSON object per line:
 | `gate_start` / `gate_result` | — / `ok`, `step?` | Mechanical gate run; `step` names the failing command |
 | `session_activity` | `text` | Live narration (tool use, gate step names) |
 | `escalation` | `stage`, `question`, `recommendation` | An agent escalated |
+| `unresolved_link` | `kind`, `target` | A ticket note's `blocks`/`blocked-by` link names no note in the tickets directory |
 | `blocked` | `reason` | The run (or integration) blocked |
 | `merge_ready` | — | Passed pipeline awaiting approval (`on-approval`) |
 | `merge_queued` | — | Entered the serialized integration queue |

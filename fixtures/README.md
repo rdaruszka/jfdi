@@ -36,7 +36,7 @@ quality" or "feedback convergence" shows up on a specific ticket, not as noise:
 | 2 | filter-by-month | Overlaps #1's files → serialized integration, rebase-then-regate |
 | 3 | fix-total-rounding | Bug fix from a repro; QA verifies against the ticket |
 | 4 | extract-storage | Behavior-preserving refactor; tempts scope creep |
-| 5 | budget-command | Deliberately underspecified → decide-log-proceed, Decisions |
+| 5 | budget-command | Deliberately underspecified → decide-log-proceed, decision comments |
 | 6 | remove-entry | Trap criteria (id stability/reuse) → review & QA feedback rounds |
 | 7 | (card-only, no note) | `--version`; the no-ticket-note path |
 

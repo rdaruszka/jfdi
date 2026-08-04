@@ -109,9 +109,11 @@ produce a valid verdict" and the round retries with that as feedback (a markdown
 code fence around the JSON is tolerated). Two of the fields matter beyond
 pass/fail:
 
-- **`decisions`** — autonomous choices the agent made, appended to the ticket
-  note's `## Decisions` section tagged with round and stage. This is the audit
-  trail for the decide-log-proceed posture.
+- **`decisions`** — autonomous choices the agent made, each appended to the
+  ticket note's `## Comments` trail as a
+  [decision entry](board-and-tickets.md#ticket-notes) stamped with stage and
+  round. This is the audit trail for the decide-log-proceed posture, and the one
+  part of the trail later stages read back.
 - **`observations`** — out-of-scope issues the agent noticed (pre-existing bugs,
   dead code, tooling gaps). Never fixed inline; after a passing run they become
   proposal cards in the board's **Inbox** column, deduplicated by text and tagged
@@ -212,7 +214,7 @@ is not an event — see
 ## Escalation and Blocked
 
 The default posture is **decide, log, proceed**: at a decision fork the agent makes
-the reasonable call, records it in `## Decisions`, and continues. Escalation is
+the reasonable call, records it as a decision comment, and continues. Escalation is
 prompted as a last resort for genuine hard blocks — contradictory requirements,
 missing access, work impossible as specified — and must carry a recommended
 answer, never a bare question.
@@ -268,7 +270,7 @@ A run ends in one of two states:
   for inspection. `jfdi run` exits with code 2 in this case.
 
 Either way, the complete paper trail is on disk: the ticket note holds the
-human-readable record (`## Decisions`, `## Questions`, `## Report`), and the state
+human-readable record (`## Comments`, `## Questions`, `## Report`), and the state
 directory holds the machine record — per-round verdicts and raw session logs under
 `runs/<ticket-id>/run-<k>/`, viewable with `jfdi logs <ticket-id>`. See
 [Events & State](../architecture/events-and-state.md) for the full layout.

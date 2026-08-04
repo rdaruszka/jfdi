@@ -189,15 +189,15 @@ describe("appendToSection", () => {
   it("creates the section at end of file when absent", async () => {
     const notePath = path.join(dir, "n.md");
     await fs.writeFile(notePath, "# Title\n\nBody.\n");
-    await appendToSection(notePath, "Decisions", "- chose sqlite over flat files");
+    await appendToSection(notePath, "Report", "Merged into `main`.");
     const content = await fs.readFile(notePath, "utf8");
-    expect(content).toBe("# Title\n\nBody.\n\n## Decisions\n\n- chose sqlite over flat files\n");
+    expect(content).toBe("# Title\n\nBody.\n\n## Report\n\nMerged into `main`.\n");
   });
 
   it("appends within an existing section, before the next heading", async () => {
     const notePath = path.join(dir, "n.md");
-    await fs.writeFile(notePath, "# T\n\n## Decisions\n\n- first\n\n## Report\n\ndone\n");
-    await appendToSection(notePath, "Decisions", "- second");
+    await fs.writeFile(notePath, "# T\n\n## Questions\n\n- first\n\n## Report\n\ndone\n");
+    await appendToSection(notePath, "Questions", "- second");
     const content = await fs.readFile(notePath, "utf8");
     expect(content).toContain("- first\n\n- second\n\n## Report");
   });

@@ -6,7 +6,8 @@ not from the diff.
 
 {{SPEC}}
 
-The ticket note (the implementer's logged Decisions and open Questions) is at:
+The ticket note (its full trail: the implementer's decision comments, the
+pipeline's transition comments, and open Questions) is at:
 {{NOTE_PATH}}
 
 ## What changed

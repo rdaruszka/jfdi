@@ -12,5 +12,5 @@ export PENNY_FILE="$work/penny.json"
 out="$(node dist/cli.js budget 2>&1 || true)"
 ! echo "$out" | grep -qi "unknown command"
 
-# The design choices were recorded in the ticket note's Decisions section.
-grep -A 3 "^## Decisions" .jfdi/tickets/budget-command.md | grep -q "^- "
+# The design choices were recorded as decision comments on the ticket note.
+grep -qE '^### .+ — Decision \(' .jfdi/tickets/budget-command.md

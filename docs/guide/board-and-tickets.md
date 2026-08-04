@@ -67,9 +67,10 @@ A card is a *pointer* to work. Two shapes:
 
 - **Wikilinked**: `- [ ] Fix the thing [[fix-thing]]` — the `[[wikilink]]`
   resolves against `.jfdi/tickets/fix-thing.md` (and **only** that directory;
-  JFDI never searches your vault or the wider filesystem). The note's body is the
-  spec handed to the Implementation agent. The ticket id is the slugified link
-  target: `fix-thing`. The `[[target|alias]]` form works; the alias is ignored.
+  JFDI never searches your vault or the wider filesystem). A
+  [defined slice](#what-the-agents-actually-read) of the note is the spec handed
+  to the Implementation agent. The ticket id is the slugified link target:
+  `fix-thing`. The `[[target|alias]]` form works; the alias is ignored.
 - **Bare**: `- [ ] Add a --version flag` — the card line itself is the entire
   spec. The id is the first six words slugified plus a 6-character hash of the
   full text (so distinct cards never collide): `add-a-version-flag-3f9a1c`.
@@ -82,41 +83,91 @@ ticket note `<ticketsDir>/<id>.md`.
 
 ## Ticket notes
 
-Ticket notes are plain markdown in `.jfdi/tickets/`. Write the task spec as the
-body — acceptance criteria, constraints, context. If a card has no note, the
-pipeline creates one at dispatch so run records have somewhere to land.
-
-During a run the pipeline appends structured sections:
-
-- **`## Decisions`** — autonomous choices agents made mid-run, one line each,
-  tagged with round and stage. This is the decide-log-proceed audit trail.
-- **`## Questions`** — written on escalation (question + recommended answer), on
-  exhausted rounds (the round history), or on a blocked integration. Each entry
-  ends with instructions for how to resume.
-- **`## Report`** — the final summary at sign-off: what was done, rounds taken,
-  the commit, QA tests added, decisions made.
-
-The note is the single human-readable record of what happened to that ticket. It
-is also *input*: the whole note body (minus frontmatter) is the spec the next
-session sees, which is exactly how answering a question works — edit the note,
-move the card back to the begin column, and the next dispatch resumes with your
-answer in context.
-
-### Frontmatter
-
-One key is recognized: `mode: ask` lowers the escalation bar for that ticket —
-the implementation agent is told to prefer escalating with a recommendation over
-guessing on any non-trivial choice.
+Ticket notes are plain markdown in `.jfdi/tickets/`, shaped like a JIRA issue.
+If a card has no note, the pipeline creates one at dispatch so run records have
+somewhere to land.
 
 ```markdown
 ---
 mode: ask
+blocked-by:
+  - "[[extract-storage]]"
 ---
 
-# Redesign the settings page
+# Add a category filter to penny list
 
-…spec…
+Users can't see spending in one area without paging through everything.
+
+## Acceptance criteria
+
+- `penny list --category groceries` prints only matching entries.
+
+## Questions
+
+### 2026-08-03 — implementation
+
+**Q:** which flag name?
+**Recommendation:** `--category`
+
+## Comments
+
+### 2026-08-03T09:00:00.000Z — implementation round 1
+
+Dispatched onto `jfdi/filter-by-category`.
+
+### 2026-08-03T09:30:00.000Z — Decision (implementation, round 1)
+
+Matched case-insensitively — the ticket didn't say.
 ```
+
+The anatomy, part by part. Every part is optional; an absent one is simply empty.
+
+- **Frontmatter** — Obsidian properties. Three keys are JFDI's: `mode: ask`
+  lowers the escalation bar for this ticket (the agent prefers escalating with a
+  recommendation over guessing), and `blocks` / `blocked-by` are lists of
+  wikilinks to other tickets. Like card wikilinks they resolve **only** against
+  the tickets directory; one that names no note there is reported on the event
+  stream (`unresolved_link`) rather than silently ignored. They are a human
+  aid — JFDI does not order dispatch by them. Any other key is yours, and is
+  left alone.
+- **The H1** — the canonical title.
+- **The description** — everything from the H1 down to the first section JFDI
+  owns. Write the spec here: acceptance criteria, constraints, context. Your own
+  `##` sub-sections are part of it.
+- **`## Questions`** — the escalation queue, written on escalation (question +
+  recommended answer), on exhausted rounds (the round history), or on a blocked
+  integration. Each entry ends with instructions for how to resume.
+- **`## Comments`** — an append-only trail, oldest first, in two kinds:
+  *transition* entries (`### <ISO timestamp> — <stage> round <n>`) narrating what
+  the pipeline did, and *decision* entries (`### <ISO timestamp> — Decision
+  (<stage>, round <n>)`), one per autonomous choice an agent logged. This is the
+  decide-log-proceed audit trail, and the JIRA emulation: an agent's decisions
+  land in the same chronological trail a human's comments would.
+- **`## Report`** — the final summary at sign-off: what was done, rounds taken,
+  the commit, QA tests added.
+
+Sections JFDI does not recognize — your own, or a legacy `## Decisions` block
+from before the anatomy — are never rewritten and never appended to.
+
+### What the agents actually read
+
+The note is the single human-readable record of what happened to a ticket, and
+it is also *input* — but stages read a **defined slice** of it, not the file:
+
+> title + description + `## Questions` + the **decision** entries from
+> `## Comments`.
+
+Transition entries, the report, and any unrecognized section stay out. Later
+stages must see the decisions (that is what logging them is for), but the
+pipeline's narration is written for you, and review feedback already reaches the
+implementer through the [feedback history](pipeline.md#rounds-and-feedback) —
+piping either into the prompt would waste context and invite an agent to answer
+a stale round. A bare card with no note is unaffected: the card line is the
+whole spec.
+
+Answering a question still works the way it always did — edit the note, move the
+card back to the begin column, and the next dispatch reads your answer in the
+description or the questions section.
 
 ## The Inbox (observations)
 

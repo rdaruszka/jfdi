@@ -97,7 +97,8 @@ the change's behavior is validated separately.
 
 {{SPEC}}
 
-The ticket note (the implementer's logged Decisions and open Questions) is at:
+The ticket note (its full trail: the implementer's decision comments, the
+pipeline's transition comments, and open Questions) is at:
 {{NOTE_PATH}}
 
 ## Change under review
@@ -149,8 +150,8 @@ Diffstat:
   synonym for an existing project concept instead of using the established name?
 - **Docs:** does the diff contradict anything the project's docs assert? A doc the
   diff falsifies but doesn't update is a failure.
-- **Decisions:** does the code match the assumptions the implementer logged in the
-  ticket note's Decisions section?
+- **Decisions:** does the code match the assumptions the implementer logged as
+  decision comments in the ticket note?
 
 ${COMMON_POSTURE}
 
@@ -172,7 +173,8 @@ not from the diff.
 
 {{SPEC}}
 
-The ticket note (the implementer's logged Decisions and open Questions) is at:
+The ticket note (its full trail: the implementer's decision comments, the
+pipeline's transition comments, and open Questions) is at:
 {{NOTE_PATH}}
 
 ## What changed

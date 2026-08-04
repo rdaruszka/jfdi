@@ -171,8 +171,8 @@ this repo.
    project folder — except through symlinks the user placed inside `.jfdi/`,
    which are treated as consent.
 7. **Decide, log, proceed.** Escalation is a last resort and must carry a
-   recommended answer. Decisions land in the ticket note; the board is the
-   question queue.
+   recommended answer. Decisions land in the ticket note as decision comments;
+   the board is the question queue.
 8. **The target branch is configurable** — never assume `main`.
 
 ## Trust boundaries

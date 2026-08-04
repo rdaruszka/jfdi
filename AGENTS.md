@@ -74,8 +74,8 @@ These are architectural requirements, not preferences (rationale in [docs/archit
 3. **Serialized integration.** Exactly one integration at a time, pulled from the merge-ready queue in completion order. Nothing but Integration ever touches the target branch.
 4. **Atomic board writes.** `board.md` is co-edited by Obsidian. Read → check mtime → write via temp-file rename → re-read/retry on mtime change. Edits are surgical (move one card line); never rewrite the file wholesale. Writes follow symlinks: the rename targets the link's real path — renaming onto the link itself would replace it with a private copy and silently split the board from the file the human edits.
 5. **Sequential reviews, commit-bound sign-offs.** Code Review gates QA (a Code Review fail skips the sandbox run). Both sign-offs bind to a specific commit — any code change re-enters at the gate and repeats both reviews.
-6. **Wikilink scope.** Card `[[wikilinks]]` resolve only against `.jfdi/tickets/`. Beyond its own state directory under `~/.jfdi/projects/`, the tool never reads or writes outside the project folder — except through symlinks the user placed inside `.jfdi/` (board/tickets linked into a vault): following a user-created link is user consent, and writes land on the link's target.
-7. **Decide, log, proceed.** Agent prompts keep escalation a last resort; escalations must carry a recommended answer. Decisions land in the ticket note's `## Decisions`; the board is the question queue (Blocked column + `## Questions`).
+6. **Wikilink scope.** Card `[[wikilinks]]`, and a ticket's `blocks`/`blocked-by` frontmatter links, resolve only against `.jfdi/tickets/`; one that names no note there is reported, never searched for elsewhere. Beyond its own state directory under `~/.jfdi/projects/`, the tool never reads or writes outside the project folder — except through symlinks the user placed inside `.jfdi/` (board/tickets linked into a vault): following a user-created link is user consent, and writes land on the link's target.
+7. **Decide, log, proceed.** Agent prompts keep escalation a last resort; escalations must carry a recommended answer. Decisions land in the ticket note as decision comments; the board is the question queue (Blocked column + `## Questions`).
 8. **Target branch is configurable** (`integration.target_branch`) — never assume `main`.
 
 ## Glossary — one name per concept
@@ -84,7 +84,9 @@ Use these terms exactly; introduce no synonyms. The list grows only by editing t
 
 - **board** — `.jfdi/board.md`, the Obsidian-Kanban file; its columns hold cards.
 - **card** — one line on the board; a pointer to work.
-- **ticket** — the markdown note in `.jfdi/tickets/` a card wikilinks to; carries `## Decisions` and `## Questions`.
+- **ticket** — the markdown note in `.jfdi/tickets/` a card wikilinks to; frontmatter, an H1 title, a description, `## Questions` and `## Comments`.
+- **description** — a ticket's free-form body, from its H1 down to the first section JFDI owns. With the title, the open questions and the decision comments, it is the slice a stage prompt reads; nothing else in the note is.
+- **comment** — one entry in a ticket's append-only `## Comments` trail: a *transition* comment (`### <ISO timestamp> — <stage> round <n>`), the pipeline narrating a round, or a *decision* comment (`### <ISO timestamp> — Decision (<stage>, round <n>)`), one autonomous choice an agent logged.
 - **run** — one ticket's trip through the pipeline; logs under the state directory's `runs/<ticket-id>/`.
 - **state directory** — `~/.jfdi/projects/<project-key>/`, where one project's run state lives: `runs/`, `events.jsonl`, `state.json`.
 - **stage** — one fresh agent session within a run: Implementation, Code Review, QA.
@@ -130,12 +132,12 @@ The generic rules with rationale and check questions live in [docs/coding-guidel
 
 **Conduct**
 
-- Decide, log, proceed: state assumptions and interpretation choices in the ticket's `## Decisions` *before* implementing. Never pick between plausible readings silently; escalate only when blocked, with a recommended answer.
+- Decide, log, proceed: state assumptions and interpretation choices in your verdict's `decisions` (the pipeline appends each as a decision comment on the ticket) *before* implementing. Never pick between plausible readings silently; escalate only when blocked, with a recommended answer.
 - Simplicity first: minimum code that solves the ticket. No speculative features, abstractions for single-use code, unrequested configurability, or handling for impossible states (those get assertions). Review question: what here is not required by the ticket?
 - Surgical changes: every changed line traces to the ticket. Clean up orphans your change created; don't touch pre-existing mess — flag it instead. Docs your change falsified are your mess: fix them in the same diff.
-- Bug tickets start with a failing repro test; the fix makes it pass. Skipping the repro requires a logged reason in `## Decisions`.
+- Bug tickets start with a failing repro test; the fix makes it pass. Skipping the repro requires a logged decision saying why.
 - Never average conflicting patterns: pick one (more recent, better tested), log why, flag the loser. Convention beats taste — follow the codebase's style even where you disagree; surface disagreement, don't silently fork.
-- Dependencies are decisions: prefer the Node stdlib, then dependencies already in package.json. Adding a package requires a logged justification in `## Decisions`; a new dependency for a few dozen lines' worth of code fails review.
+- Dependencies are decisions: prefer the Node stdlib, then dependencies already in package.json. Adding a package requires a logged decision justifying it; a new dependency for a few dozen lines' worth of code fails review.
 - Tests verify intent: a test that couldn't fail if the business logic broke is wrong. No implementation-mirroring (asserting methods were called), no tautologies.
 - Tests are deterministic and order-independent: wait on conditions, never sleep for durations; control time and randomness. A flaky test is a defect against the gate itself.
 - No commented-out code (git remembers); a TODO must reference a ticket or an inbox observation — otherwise do it or delete it.
