@@ -2,7 +2,7 @@ import * as path from "node:path";
 import { addCardIfAbsent } from "./board.js";
 import type { PipelineContext, RunReport } from "./pipeline.js";
 import { runsDir } from "./pipeline.js";
-import { appendToSection } from "./tickets.js";
+import { appendToSection } from "./ticket-note.js";
 import { todayIsoDate } from "./util/dates.js";
 import { atomicWrite, fileExists, readIfExists } from "./util/fsx.js";
 

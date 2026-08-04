@@ -15,6 +15,8 @@ export type EventType =
   | "gate_result"
   | "round_start"
   | "escalation"
+  /** A ticket note's `blocks`/`blocked-by` link names no note in ticketsDir. */
+  | "unresolved_link"
   | "blocked"
   | "merge_queued"
   | "merge_start"
@@ -152,6 +154,8 @@ function narrate(event: JfdiEvent, ticket: TicketState): string {
       return stringField(event.data, "text") ?? ticket.lastActivity;
     case "escalation":
       return "escalated";
+    case "unresolved_link":
+      return `unresolved ${stringField(event.data, "kind") ?? "ticket"} link [[${stringField(event.data, "target") ?? "?"}]]`;
     // The rest never reach here: applyTicketEvent writes their activity line
     // itself, or they have none. Enumerated rather than left to a `default`,
     // for the same reason as the tail of applyTicketEvent — a `default` clause
@@ -210,6 +214,7 @@ function applyTicketEvent(
     case "gate_result":
     case "session_activity":
     case "escalation":
+    case "unresolved_link":
       ticket.lastActivity = narrate(event, ticket);
       break;
     case "blocked":

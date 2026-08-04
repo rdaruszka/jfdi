@@ -49,6 +49,7 @@ export async function mergeCommand(ticketId: string): Promise<number> {
           cardText: ticketId,
           spec: ticketId,
           notePath: null,
+          links: [],
           mode: "default" as const,
         };
 

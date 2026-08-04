@@ -1,8 +1,16 @@
+import * as fsSync from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { atomicWrite, fileExists, readIfExists, readModifyWrite, withPathLock } from "./fsx.js";
+import {
+  atomicWrite,
+  fileExists,
+  MtimeConflictError,
+  readIfExists,
+  readModifyWrite,
+  withPathLock,
+} from "./fsx.js";
 
 let dir: string;
 
@@ -87,6 +95,40 @@ describe("readModifyWrite", () => {
     expect(wrote).toBe(true);
     expect(await fs.readFile(file, "utf8")).toBe("two");
   });
+  it("re-reads and retries when the file changed under it", async () => {
+    const file = path.join(dir, "raced.txt");
+    await fs.writeFile(file, "original\n");
+    let attempts = 0;
+    // Writing from inside `modify` lands exactly where a human's Obsidian save
+    // would: after the read this attempt worked from, before the re-read.
+    const wrote = await readModifyWrite(file, (content) => {
+      attempts++;
+      if (attempts === 1) fsSync.writeFileSync(file, "edited elsewhere\n");
+      return `${content}appended\n`;
+    });
+    expect(wrote).toBe(true);
+    expect(attempts).toBe(2);
+    expect(await fs.readFile(file, "utf8")).toBe("edited elsewhere\nappended\n");
+  });
+
+  it("gives up with a conflict error when the file never settles", async () => {
+    const file = path.join(dir, "hot.txt");
+    await fs.writeFile(file, "one\n");
+    let writes = 0;
+    await expect(
+      readModifyWrite(
+        file,
+        (content) => {
+          writes++;
+          fsSync.writeFileSync(file, `churn ${writes}\n`);
+          return content;
+        },
+        { retries: 2, retryDelayMs: 1 },
+      ),
+    ).rejects.toThrow(MtimeConflictError);
+    expect(writes).toBe(3);
+  });
+
   it("skips writing when modify returns null", async () => {
     const file = path.join(dir, "c.txt");
     await fs.writeFile(file, "keep");

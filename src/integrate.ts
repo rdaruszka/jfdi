@@ -21,7 +21,8 @@ import {
   worktreesDir,
 } from "./pipeline.js";
 import { formatGateCommands, loadPrompt, renderPrompt } from "./prompts.js";
-import { appendToSection, ensureTicketNote, type Ticket } from "./tickets.js";
+import { appendToSection } from "./ticket-note.js";
+import { ensureTicketNote, type Ticket } from "./tickets.js";
 import { todayIsoDate } from "./util/dates.js";
 import { ensureDir, fileExists } from "./util/fsx.js";
 import { type IntegrationVerdict, readIntegrationVerdict } from "./verdicts.js";

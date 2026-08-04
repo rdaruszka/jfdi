@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { appendToSection, ensureTicketNote, resolveTicket } from "./tickets.js";
+import { ensureTicketNote, resolveTicket } from "./tickets.js";
 
 let dir: string;
 let ticketsDir: string;
@@ -22,6 +22,7 @@ describe("resolveTicket", () => {
     const ticket = await resolveTicket("Add a --help flag", ticketsDir);
     expect(ticket.spec).toBe("Add a --help flag");
     expect(ticket.notePath).toBeNull();
+    expect(ticket.links).toEqual([]);
     expect(ticket.mode).toBe("default");
   });
 
@@ -46,7 +47,7 @@ describe("resolveTicket", () => {
     expect(ticket.spec).toBe("Sensitive work.");
   });
 
-  it("pins the spec slice: the whole note body, minus frontmatter", async () => {
+  it("pins the spec slice: title, description, questions and decision comments only", async () => {
     await fs.writeFile(
       path.join(ticketsDir, "full.md"),
       [
@@ -58,13 +59,27 @@ describe("resolveTicket", () => {
         "",
         "Detailed spec here.",
         "",
+        "## Acceptance criteria",
+        "",
+        "- it works",
+        "",
         "## Questions",
         "",
         "**Q:** which database?",
         "",
+        "## Comments",
+        "",
+        "### 2026-08-03T10:00:00.000Z — implementation round 1",
+        "",
+        "Dispatched, gate green.",
+        "",
+        "### 2026-08-03T10:05:00.000Z — Decision (implementation, round 1)",
+        "",
+        "Chose sqlite: already a dependency.",
+        "",
         "## Decisions",
         "",
-        "- (round 1, implementation) chose sqlite",
+        "- (round 1, implementation) legacy decision line",
         "",
         "## Report",
         "",
@@ -79,25 +94,67 @@ describe("resolveTicket", () => {
         "",
         "Detailed spec here.",
         "",
+        "## Acceptance criteria",
+        "",
+        "- it works",
+        "",
         "## Questions",
         "",
         "**Q:** which database?",
         "",
-        "## Decisions",
+        "## Decisions logged so far",
         "",
-        "- (round 1, implementation) chose sqlite",
+        "### 2026-08-03T10:05:00.000Z — Decision (implementation, round 1)",
         "",
-        "## Report",
-        "",
-        "Shipped in 2 rounds.",
+        "Chose sqlite: already a dependency.",
       ].join("\n"),
     );
+    expect(ticket.spec).not.toContain("Dispatched, gate green.");
+    expect(ticket.spec).not.toContain("legacy decision line");
+    expect(ticket.spec).not.toContain("Shipped in 2 rounds.");
   });
 
   it("wikilink with missing note falls back to card text as spec", async () => {
     const ticket = await resolveTicket("Do it [[ghost]]", ticketsDir);
     expect(ticket.spec).toBe("Do it [[ghost]]");
     expect(ticket.notePath).toBe(path.join(ticketsDir, "ghost.md"));
+  });
+
+  it("resolves blocks/blocked-by links against ticketsDir, marking missing ones unresolved", async () => {
+    await fs.writeFile(path.join(ticketsDir, "other.md"), "# Other\n");
+    await fs.writeFile(
+      path.join(ticketsDir, "linked.md"),
+      [
+        "---",
+        "blocks:",
+        '  - "[[other]]"',
+        "blocked-by: [[[ghost]]]",
+        "tags: [mine]",
+        "---",
+        "",
+        "# Linked",
+        "",
+        "Body.",
+        "",
+      ].join("\n"),
+    );
+    const ticket = await resolveTicket("[[linked]]", ticketsDir);
+    expect(ticket.links).toEqual([
+      { kind: "blocks", target: "other", notePath: path.join(ticketsDir, "other.md") },
+      { kind: "blocked-by", target: "ghost", notePath: null },
+    ]);
+    // Frontmatter is the tool's, not the agent's: none of it reaches the spec.
+    expect(ticket.spec).toBe("# Linked\n\nBody.");
+  });
+
+  it("never resolves a link outside ticketsDir", async () => {
+    await fs.writeFile(path.join(dir, "outside.md"), "# Outside\n");
+    await fs.writeFile(
+      path.join(ticketsDir, "escaper.md"),
+      '---\nblocked-by:\n  - "[[../outside]]"\n---\n\n# Escaper\n',
+    );
+    const ticket = await resolveTicket("[[escaper]]", ticketsDir);
+    expect(ticket.links).toEqual([{ kind: "blocked-by", target: "../outside", notePath: null }]);
   });
 });
 
@@ -115,29 +172,5 @@ describe("ensureTicketNote", () => {
     const ticket = await resolveTicket("[[fix-thing]]", ticketsDir);
     await ensureTicketNote(ticket, ticketsDir);
     expect(await fs.readFile(notePath, "utf8")).toBe("original");
-  });
-});
-
-describe("appendToSection", () => {
-  it("creates the section at end of file when absent", async () => {
-    const notePath = path.join(ticketsDir, "n.md");
-    await fs.writeFile(notePath, "# Title\n\nBody.\n");
-    await appendToSection(notePath, "Decisions", "- chose sqlite over flat files");
-    const content = await fs.readFile(notePath, "utf8");
-    expect(content).toBe("# Title\n\nBody.\n\n## Decisions\n\n- chose sqlite over flat files\n");
-  });
-
-  it("appends within an existing section, before the next heading", async () => {
-    const notePath = path.join(ticketsDir, "n.md");
-    await fs.writeFile(notePath, "# T\n\n## Decisions\n\n- first\n\n## Report\n\ndone\n");
-    await appendToSection(notePath, "Decisions", "- second");
-    const content = await fs.readFile(notePath, "utf8");
-    expect(content).toContain("- first\n\n- second\n\n## Report");
-  });
-
-  it("creates the file when missing", async () => {
-    const notePath = path.join(ticketsDir, "new.md");
-    await appendToSection(notePath, "Questions", "**Q:** which db?\n**Recommendation:** none");
-    expect(await fs.readFile(notePath, "utf8")).toContain("## Questions");
   });
 });

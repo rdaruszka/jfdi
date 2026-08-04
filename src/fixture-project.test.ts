@@ -185,7 +185,7 @@ describe("half-app end-to-end (fake harness)", () => {
       path.join(fixture.repo, ".jfdi", "tickets", "filter-by-category.md"),
       "utf8",
     );
-    expect(note).toContain("## Decisions");
+    expect(note).toContain("## Comments");
     expect(note).toContain("## Report");
     expect(note).toContain("Merged into `main`");
   });

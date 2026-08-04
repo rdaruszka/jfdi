@@ -68,9 +68,10 @@ describe("runPipeline", () => {
     expect(outcome.report.summary).toBe("implemented the feature");
     expect(outcome.report.testsAdded).toBe("one regression test");
 
-    // Decisions recorded in the ticket note.
+    // Decisions recorded as comment entries in the ticket note.
     const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
-    expect(note).toContain("## Decisions");
+    expect(note).toContain("## Comments");
+    expect(note).toMatch(/### \S+ — Decision \(implementation, round 1\)/);
     expect(note).toContain("flat file instead of a db");
 
     // Both commits are on the branch.

@@ -29,7 +29,8 @@ import {
   formatQaProvenance,
   formatReviewProvenance,
 } from "./stage-context.js";
-import { appendToSection, ensureTicketNote, type Ticket } from "./tickets.js";
+import { appendComment, appendToSection } from "./ticket-note.js";
+import { ensureTicketNote, type Ticket } from "./tickets.js";
 import { todayIsoDate } from "./util/dates.js";
 import { ensureDir, fileExists, readIfExists } from "./util/fsx.js";
 import { type ReviewVerdict, readImplementationVerdict, readReviewVerdict } from "./verdicts.js";
@@ -349,6 +350,24 @@ function formatFeedbackSection(history: FeedbackItem[], mode: "default" | "ask")
   return parts.length > 0 ? `${parts.join("\n")}\n` : "";
 }
 
+/**
+ * A `blocks`/`blocked-by` link naming a note that is not in ticketsDir is
+ * reported, never silently dropped: the human wrote a link to a ticket the
+ * tool cannot see (a typo, or a note not created yet), and the wikilink-scope
+ * invariant means looking for it anywhere else is not an option.
+ */
+function reportUnresolvedLinks(context: PipelineContext, ticket: Ticket): void {
+  for (const link of ticket.links) {
+    if (link.notePath === null)
+      context.log.emit("unresolved_link", ticket.id, { kind: link.kind, target: link.target });
+  }
+}
+
+/**
+ * Log each decision as its own entry in the note's `## Comments` trail, so an
+ * agent's assumptions sit chronologically among the rounds that produced them —
+ * and reach every later stage, which reads decision entries as part of the spec.
+ */
 async function recordDecisions(
   notePath: string,
   stage: string,
@@ -356,8 +375,15 @@ async function recordDecisions(
   decisions: string[] | undefined,
 ): Promise<string[]> {
   if (!decisions || decisions.length === 0) return [];
-  const stamped = decisions.map((d) => `- (round ${round}, ${stage}) ${d}`);
-  await appendToSection(notePath, "Decisions", stamped.join("\n"));
+  for (const decision of decisions) {
+    await appendComment(notePath, {
+      kind: "decision",
+      timestamp: new Date().toISOString(),
+      stage,
+      round,
+      body: decision,
+    });
+  }
   return decisions;
 }
 
@@ -874,6 +900,7 @@ export async function runPipeline(
   );
   const runDirs = await nextRunDir(context.stateDir, ticket.id);
   context.log.emit("dispatch", ticket.id, { title: ticket.cardText, branch: worktree.branch });
+  reportUnresolvedLinks(context, ticket);
 
   // A re-dispatched ticket may carry partial work and a half-finished git
   // state from a run that died; sanitize both before any session sees them.
