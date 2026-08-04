@@ -38,7 +38,13 @@ import {
 } from "./stage-context.js";
 import { appendComment, appendToSection, quoteAgentText } from "./ticket-note.js";
 import { ensureTicketNote, type Ticket } from "./tickets.js";
-import { BLOCKED_ROUTING, recordTransition, retryRouting, statusLine } from "./transitions.js";
+import {
+  BLOCKED_ROUTING,
+  recordTransition,
+  retryRouting,
+  shortSha,
+  statusLine,
+} from "./transitions.js";
 import { todayIsoDate } from "./util/dates.js";
 import { ensureDir, fileExists, readIfExists } from "./util/fsx.js";
 import { type ReviewVerdict, readImplementationVerdict, readReviewVerdict } from "./verdicts.js";
@@ -444,9 +450,6 @@ async function recordEscalation(
   context.log.emit("escalation", ticket.id, { stage, question, recommendation });
 }
 
-/** Commit sha, abbreviated for an activity line. */
-const SHORT_SHA_CHARS = 7;
-
 interface HandoffCommitInput {
   worktree: Worktree;
   notePath: string;
@@ -523,7 +526,7 @@ async function commitSessionHandoff(
   // One rendering, two surfaces: the commit and the note carry identical text.
   await recordTransition(input.notePath, handoff.stage, handoff.round, message);
   context.log.emit("session_activity", ticket.id, {
-    text: `${handoff.stage}: committed ${sha.slice(0, SHORT_SHA_CHARS)}`,
+    text: `${handoff.stage}: committed ${shortSha(sha)}`,
   });
   return sha;
 }

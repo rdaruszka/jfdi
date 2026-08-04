@@ -26,7 +26,7 @@ import {
 import { formatGateCommands, loadPrompt, renderPrompt } from "./prompts.js";
 import { appendToSection, quoteAgentText } from "./ticket-note.js";
 import { ensureTicketNote, type Ticket } from "./tickets.js";
-import { BLOCKED_ROUTING, recordTransition, statusLine } from "./transitions.js";
+import { BLOCKED_ROUTING, recordTransition, shortSha, statusLine } from "./transitions.js";
 import { todayIsoDate } from "./util/dates.js";
 import { ensureDir, fileExists } from "./util/fsx.js";
 import { type IntegrationVerdict, readIntegrationVerdict } from "./verdicts.js";
@@ -39,9 +39,6 @@ const MAX_MERGE_ERROR_CHARS = 500;
  * comments carry no round of their own — the same zero its QA re-run uses.
  */
 const INTEGRATION_ROUND = 0;
-
-/** Commit sha, abbreviated for a ticket comment. */
-const SHORT_SHA_CHARS = 7;
 
 export type IntegrateOutcome =
   | { status: "merged" }
@@ -325,7 +322,7 @@ export async function integrateTicket(
     statusLine(
       "integration",
       "merged",
-      `landed on \`${target}\` as \`${landingCommit.slice(0, SHORT_SHA_CHARS)}\``,
+      `landed on \`${target}\` as \`${shortSha(landingCommit)}\``,
     ),
   );
   // The resolution notes come from the Integration agent's verdict — quoted,

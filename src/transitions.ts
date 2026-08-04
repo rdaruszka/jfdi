@@ -21,6 +21,13 @@ export const STAGE_LABELS: Record<StageName, string> = {
 /** Where a run goes when nothing more is worth trying: a human. */
 export const BLOCKED_ROUTING = "moving to Blocked for human review";
 
+/** Commit sha as a human reads one: abbreviated, in an activity line or a comment. */
+const SHORT_SHA_CHARS = 7;
+
+export function shortSha(sha: string): string {
+  return sha.slice(0, SHORT_SHA_CHARS);
+}
+
 /** `JFDI <Stage> <outcome> — <routing>`: what happened, and where the run went. */
 export function statusLine(stage: StageName, outcome: string, routing: string): string {
   return `JFDI ${STAGE_LABELS[stage]} ${outcome} — ${routing}`;
