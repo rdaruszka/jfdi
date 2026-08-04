@@ -148,8 +148,8 @@ JFDI wires these tiers in for you: the gate is tier M, the Code Review stage pro
     *Why:* a TODO with no owner is a wish (see the enforcement meta-rule), and commented-out code is dead code with worse ergonomics.
     *Check:* does the diff introduce commented-out code, or a TODO that points nowhere?
 
-31. **Commit at coherent working states.** [P]
-    Never hand off with uncommitted changes. Intermediate commits are recovery points — reset beats hand-unwinding. Fix-round commits are *new* commits; never amend or squash while a review is in flight, so reviewers can diff exactly what changed since their sign-off.
+31. **The harness owns the commits.** [P]
+    Do not commit, amend, or reset — leave your work in the worktree and let the pipeline commit your handoff for you, on success and on failure alike. What you leave uncommitted is what lands, so delete scratch artifacts before you finish. Fix-round work becomes a *new* commit; nothing a reviewer has already seen is ever amended or squashed, so reviewers can diff exactly what changed since their sign-off.
 
 32. **Fail loud.** [M partial + R]
     "Completed" is false if anything was skipped silently; "tests pass" is false if any were skipped. Completion claims must match actual gate output. Anything skipped, stubbed, or degraded is stated prominently in the report, not buried. Mechanically: lint bans focused/skipped tests from landing.

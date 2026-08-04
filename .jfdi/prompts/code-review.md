@@ -30,7 +30,8 @@ Diffstat:
 - Judge the code against the ticket, the codebase's existing conventions, and the
   project's coding guidelines (CLAUDE.md, if present) — treat each guideline as a
   question to answer about the diff, not background prose.
-- Do not modify any files — review only; you are not the author.
+- Do not modify any files and do not commit — review only; you are not the author,
+  and anything you leave behind is discarded before the next stage runs.
 - Anything a linter/formatter already enforces is out of scope; don't relitigate it.
 - Trust the gate result above — never re-run build/test/lint commands yourself.
 - Fail only for issues that materially hurt the codebase; nitpicks belong in feedback

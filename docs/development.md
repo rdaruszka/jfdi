@@ -75,9 +75,12 @@ Two rules exist because their violations actually bit:
 
 Agent sessions in tests are played by `FakeHarness`
 ([src/harness/fake.ts](../src/harness/fake.ts)) — an in-process handler that
-performs real side effects (writes files, commits, drops verdict files) and
-records every call — or, for spawn-path coverage, by stub `claude`/`codex`
-scripts that replay canned JSON lines.
+performs real side effects (writes files, drops verdict files) and records every
+call — or, for spawn-path coverage, by stub `claude`/`codex` scripts that replay
+canned JSON lines. The scribe stands behind its own fake, seeded by
+`makeFixture` ([src/test-helpers.ts](../src/test-helpers.ts)), so a test that
+cares only about stages never has to answer a commit-message prompt; override it
+with `context(handler, { scribeHandler })`.
 
 ### Test ownership (the product's rule, applied here)
 

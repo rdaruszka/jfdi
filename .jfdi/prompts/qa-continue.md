@@ -18,8 +18,9 @@ Files touched:
 ## Your job now
 
 Re-validate the behavior against the ticket, per your original instructions and the
-sandbox contract you already have. Commit any new or updated regression tests. Do NOT
-re-run the full mechanical gate — the pipeline re-runs it after your session. Your
+sandbox contract you already have. Write any new or updated regression tests, but do
+NOT commit them — the pipeline commits what your session leaves. Do NOT re-run the
+full mechanical gate either; the pipeline re-runs it after your session. Your
 sign-off binds to the current HEAD ({{HEAD_COMMIT}}).
 
 ## Reporting your result (required)

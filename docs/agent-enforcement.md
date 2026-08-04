@@ -90,9 +90,10 @@ This is what keeps "surgical changes" honest: the rule can demand agents *not* f
 
 ## Commits and handoffs
 
-- Commit at each coherent working state; a stage may not hand off with uncommitted changes. Intermediate commits are the agent's recovery points — resetting to a known-good state beats hand-unwinding a mush of edits, which agents are bad at.
+- The harness commits, not the agent. A stage session leaves its work in the worktree and the pipeline commits it at session end — success, failure or crash. Asking agents to commit produced messages whose quality varied by provider, and a session that died before its own commit lost its work silently; both are properties of the harness to fix, not of the prompt. Enforcement is mechanical: HEAD is recorded before the session and any commit it made is reset back into the index, so one commit per session is a fact, not a request.
+- The message is written by a dedicated cheap session — a scribe — from the staged diff, the ticket, and the completing stage's own summary (the "why" a diff cannot carry). The harness appends the routing and round metadata itself, so what a machine has to parse never depends on an agent's formatting.
 - Fix-round commits append; never amend or squash while a review is in flight. Reviewers diff exactly what changed since their commit-bound sign-off. (Append-only history during a run, for the same reason the event log is append-only.)
-- Gate-green is required at *handoff* commits, not every intermediate commit — per-commit gating taxes the cadence to death.
+- Gate-green is required at *handoff*, not at every intermediate state — per-commit gating taxes the cadence to death.
 - A handoff report must be actionable by a session with zero shared context: what was done, what's verified (against actual gate output), what remains, what was decided. A stage isn't done until its report would let a stranger continue. "Done with caveats" states the caveats in the report, prominently.
 
 ## The merge tripwire

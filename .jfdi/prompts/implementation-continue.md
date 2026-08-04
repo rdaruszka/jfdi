@@ -8,8 +8,9 @@ way as before.
 
 ## Rules (unchanged from your original instructions)
 
-- Address every item with NEW commits — never amend or squash commits a reviewer has
-  already seen. Leave the working tree clean.
+- Address every item. The pipeline commits this round's work as a NEW commit when
+  your session ends; commits a reviewer has already seen are never amended or
+  squashed. Do NOT commit, amend or reset yourself.
 - The mechanical gate must pass before you finish. Run it yourself and fix failures:
 {{GATE_COMMANDS}}
 - Stay inside this worktree; touch no branch other than `{{BRANCH}}`.

@@ -27,7 +27,7 @@ Codex** sessions in the ticket's own git worktree (branch `jfdi/<ticket-id>`):
    **mechanical gate** (your build/test/lint commands) before handing off
 2. **Code Review** — judges the diff on structure and maintainability only
 3. **Quality Assurance** — exercises the built artifact per your sandbox
-   contract and commits what it verified as regression tests
+   contract and writes what it verified as regression tests
 4. **Integration** — coordinator-owned and strictly serialized: merges the
    target branch in, resolves conflicts, reruns the gate, then lands one merge
    commit per ticket — the signed-off commit stays reachable, and
@@ -37,6 +37,12 @@ Review failures loop back to the Implementation session with the feedback
 (capped rounds; later rounds continue existing sessions instead of paying to
 rebuild context). Both review sign-offs bind to a specific commit — any change
 repeats the gate and both reviews.
+
+**No agent commits.** The pipeline commits each session's handoff itself — on
+success and on failure, so interrupted work survives — and a dedicated cheap
+session, the *scribe*, writes the message from the diff, the ticket and the
+session's own summary. That exact text is also appended to the ticket note, so
+`git log` and the note each tell the whole story on their own.
 
 Agents **decide, log, proceed**: routine judgment calls are made autonomously
 and recorded in the ticket note for your review at the merge gate. Genuine hard

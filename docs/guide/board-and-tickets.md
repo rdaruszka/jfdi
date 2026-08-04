@@ -142,7 +142,11 @@ The anatomy, part by part. Every part is optional; an absent one is simply empty
   the pipeline did, and *decision* entries (`### <ISO timestamp> — Decision
   (<stage>, round <n>)`), one per autonomous choice an agent logged. This is the
   decide-log-proceed audit trail, and the JIRA emulation: an agent's decisions
-  land in the same chronological trail a human's comments would.
+  land in the same chronological trail a human's comments would. Every transition
+  a run makes is here — dispatch, each commit's message verbatim, each review
+  verdict, exhausted rounds, the merge — so the note tells the whole story
+  without `git log`, and `git log` tells it without the note. See
+  [Commits and the scribe](pipeline.md#commits-and-the-scribe).
 - **`## Report`** — the final summary at sign-off: what was done, rounds taken,
   the commit, QA tests added.
 
