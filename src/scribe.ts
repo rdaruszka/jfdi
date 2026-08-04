@@ -93,7 +93,8 @@ export function scribeVariables(
     ROUND: String(handoff.round),
     MAX_ROUNDS: String(handoff.maxRounds),
     STATUS_LINE: statusLine(handoff.stage, handoff.outcome, handoff.routing),
-    STAGE_SUMMARY: handoff.summary.slice(0, MAX_SUMMARY_CHARS) || "(the session recorded none)",
+    STAGE_SUMMARY:
+      handoff.summary.trim().slice(0, MAX_SUMMARY_CHARS) || "(the session recorded none)",
     STAGED_DIFF: commitContext.stagedDiff,
     RECENT_LOG: commitContext.recentLog,
   };
