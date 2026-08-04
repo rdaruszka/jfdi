@@ -62,6 +62,26 @@ const DECISION_HEADING_RE = /^###\s+(\S+)\s+—\s+Decision\s+\((.+?),\s*round\s+
 const TRANSITION_HEADING_RE = /^###\s+(\S+)\s+—\s+(.+?)\s+round\s+(\d+)\s*$/;
 const FRONTMATTER_KEY_RE = /^([A-Za-z][\w-]*)\s*:\s*(.*)$/;
 const FRONTMATTER_ITEM_RE = /^\s*-\s+(.*)$/;
+const HEADING_LINE_RE = /^([ \t]*)(#{1,6}\s)/gm;
+const ESCAPED_HEADING_LINE_RE = /^([ \t]*)\\(#{1,6}\s)/gm;
+
+/**
+ * Neutralize the markdown headings in text JFDI did not author, before it is
+ * appended to a note. Such text arrives from agent verdict JSON — a trust
+ * boundary — and a line there beginning with `#` would forge a section or an
+ * entry heading: the trail splits at the forgery, the parser keeps only the
+ * first section of a name, and everything after it silently stops reaching
+ * later prompts. A leading backslash renders as a literal `#` in Obsidian and
+ * CommonMark, so the text still reads as written; `parseTicketNote` strips the
+ * backslash again, leaving the round trip exact.
+ */
+export function escapeNoteHeadings(text: string): string {
+  return text.replace(HEADING_LINE_RE, "$1\\$2");
+}
+
+function unescapeNoteHeadings(text: string): string {
+  return text.replace(ESCAPED_HEADING_LINE_RE, "$1$2");
+}
 
 /** Parse a note into its anatomy. Absent sections are empty, never an error. */
 export function parseTicketNote(content: string): TicketNote {
@@ -104,13 +124,17 @@ export function ticketSpec(note: TicketNote): string {
   return parts.join("\n\n");
 }
 
-/** Render a comment as it appears in the note — the format `parseComments` reads back. */
+/**
+ * Render a comment as it appears in the note — the format `parseComments`
+ * reads back. The body is escaped, so a comment carrying a heading of its own
+ * (an agent quoting this very format in a decision) stays one entry.
+ */
 export function formatComment(comment: TicketComment): string {
   const heading =
     comment.kind === "decision"
       ? `### ${comment.timestamp} — Decision (${comment.stage}, round ${comment.round})`
       : `### ${comment.timestamp} — ${comment.stage} round ${comment.round}`;
-  return `${heading}\n\n${comment.body.trim()}`;
+  return `${heading}\n\n${escapeNoteHeadings(comment.body.trim())}`;
 }
 
 /** Append one entry to the note's `## Comments` trail, creating the section if absent. */
@@ -142,7 +166,9 @@ export async function appendToSection(
 
 function withAppendedBlock(existing: string, heading: string, block: string): string {
   const lines = existing.split("\n");
-  const headingIndex = lines.findIndex((line) => line.trim() === `## ${heading}`);
+  // The same notion of a section the parser has: a heading the parser would
+  // not see is not one this may append under either.
+  const headingIndex = lines.findIndex((line) => SECTION_RE.exec(line)?.[1] === heading);
   if (headingIndex === -1) {
     const base = existing.endsWith("\n") || existing === "" ? existing : `${existing}\n`;
     return `${base}\n## ${heading}\n\n${block}\n`;
@@ -236,7 +262,7 @@ function toComment(heading: string, body: string): TicketComment | null {
       timestamp: decision[1],
       stage: decision[2],
       round: Number(decision[3]),
-      body,
+      body: unescapeNoteHeadings(body),
     };
   const transition = TRANSITION_HEADING_RE.exec(heading);
   if (transition?.[1] && transition[2] && transition[3])
@@ -245,7 +271,7 @@ function toComment(heading: string, body: string): TicketComment | null {
       timestamp: transition[1],
       stage: transition[2],
       round: Number(transition[3]),
-      body,
+      body: unescapeNoteHeadings(body),
     };
   return null;
 }

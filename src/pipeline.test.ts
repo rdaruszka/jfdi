@@ -14,6 +14,7 @@ import {
   TEST_PAUSE_DELAYS,
   writeVerdict,
 } from "./test-helpers.js";
+import { parseTicketNote } from "./ticket-note.js";
 import { resolveTicket } from "./tickets.js";
 
 let fixture: Fixture;
@@ -495,6 +496,57 @@ describe("runPipeline", () => {
 
     const unresolved = events.find((event) => event.type === "unresolved_link");
     expect(unresolved?.data).toEqual({ kind: "blocked-by", target: "never-written" });
+  });
+
+  it("carries a decision that quotes the comment format itself into the next run's prompt", async () => {
+    // The shape that used to forge a second entry: a decision whose own text
+    // contains an entry heading. It reaches the note straight from verdict
+    // JSON, so nothing but the write path can neutralize it.
+    const decision = [
+      "Kept the old format. Example entry:",
+      "",
+      "### 2026-01-01T00:00:00.000Z — qa round 9",
+      "",
+      "SWALLOWED trailing rationale that matters",
+    ].join("\n");
+    await fs.writeFile(path.join(fixture.ticketsDir, "quoter.md"), "# Quoter\n\nDo the thing.\n");
+    let round = 0;
+    let secondRunPrompt = "";
+    const context = fixture.context(async (spec, options) => {
+      const stage = stageOf(spec.prompt);
+      if (stage === "implementation") {
+        round++;
+        if (round === 2) secondRunPrompt = spec.prompt;
+        await commitFile(options.cwd, "impl.txt", `done ${round}\n`, `implement ${round}`);
+        await writeVerdict(spec.prompt, {
+          status: "done",
+          decisions: round === 1 ? [decision] : [],
+        });
+      } else {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    });
+
+    expect(
+      (await runPipeline(context, await resolveTicket("[[quoter]]", fixture.ticketsDir))).status,
+    ).toBe("passed");
+    // Re-resolve: the second dispatch reads the note the first one wrote.
+    expect(
+      (await runPipeline(context, await resolveTicket("[[quoter]]", fixture.ticketsDir))).status,
+    ).toBe("passed");
+
+    const note = parseTicketNote(
+      await fs.readFile(path.join(fixture.ticketsDir, "quoter.md"), "utf8"),
+    );
+    expect(note.comments).toHaveLength(1);
+    expect(note.comments[0]?.kind).toBe("decision");
+    expect(note.comments[0]?.body).toBe(decision);
+    // The whole decision reaches the next session — not just the half above
+    // the quoted heading.
+    expect(secondRunPrompt).toContain("## Decisions logged so far");
+    expect(secondRunPrompt).toContain("Kept the old format. Example entry:");
+    expect(secondRunPrompt).toContain("SWALLOWED trailing rationale that matters");
   });
 
   it("later rounds continue the stage sessions instead of restarting them", async () => {

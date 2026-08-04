@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   appendComment,
   appendToSection,
+  escapeNoteHeadings,
+  formatComment,
   parseTicketNote,
   type TicketComment,
   ticketSpec,
@@ -162,6 +164,36 @@ describe("ticketSpec", () => {
     expect(spec).not.toContain("Dispatched onto jfdi/filter.");
   });
 
+  it("keeps a decision whose own text contains headings whole", () => {
+    const injected = [
+      "Kept the old format. Example entry:",
+      "",
+      "### 2026-01-01T00:00:00.000Z — qa round 9",
+      "",
+      "SWALLOWED trailing rationale that matters",
+    ].join("\n");
+    const note = parseTicketNote(
+      `# T\n\nBody.\n\n## Comments\n\n${formatComment({
+        kind: "decision",
+        timestamp: "2026-08-04T01:00:00.000Z",
+        stage: "implementation",
+        round: 1,
+        body: injected,
+      })}\n`,
+    );
+    // One decision entry, and no transition entry the pipeline never wrote.
+    expect(note.comments).toEqual([
+      {
+        kind: "decision",
+        timestamp: "2026-08-04T01:00:00.000Z",
+        stage: "implementation",
+        round: 1,
+        body: injected,
+      },
+    ]);
+    expect(ticketSpec(note)).toContain("SWALLOWED trailing rationale that matters");
+  });
+
   it("leaves legacy Decisions and Report blocks out", () => {
     const spec = ticketSpec(
       parseTicketNote(
@@ -182,6 +214,65 @@ describe("ticketSpec", () => {
       ),
     );
     expect(spec).toBe("# T\n\nBody.");
+  });
+});
+
+describe("escapeNoteHeadings", () => {
+  it("neutralizes every heading line and leaves the rest of the text alone", () => {
+    expect(
+      escapeNoteHeadings(
+        ["## Comments", "prose with a # inside", "  ### indented", "###### six", "#no space"].join(
+          "\n",
+        ),
+      ),
+    ).toBe(
+      [
+        "\\## Comments",
+        "prose with a # inside",
+        "  \\### indented",
+        "\\###### six",
+        "#no space",
+      ].join("\n"),
+    );
+  });
+
+  it("survives an append and comes back out of the note as it went in", async () => {
+    const notePath = path.join(dir, "n.md");
+    await fs.writeFile(notePath, "# T\n\nBody.\n");
+    const body = "The note now reads:\n\n## Comments\n\nINJECTED and this follows.";
+    await appendComment(notePath, {
+      kind: "decision",
+      timestamp: "2026-08-04T01:00:00.000Z",
+      stage: "implementation",
+      round: 1,
+      body,
+    });
+    const content = await fs.readFile(notePath, "utf8");
+    // Exactly one Comments section: the forged one never becomes a heading, so
+    // it cannot split the trail — nor be found as an insertion point later.
+    expect(content.match(/^## Comments$/gm)).toHaveLength(1);
+    expect(content).toContain("\\## Comments");
+    const note = parseTicketNote(content);
+    expect(note.comments).toEqual([
+      {
+        kind: "decision",
+        timestamp: "2026-08-04T01:00:00.000Z",
+        stage: "implementation",
+        round: 1,
+        body,
+      },
+    ]);
+
+    // A second append still lands in the one real section, after the first.
+    await appendComment(notePath, {
+      kind: "decision",
+      timestamp: "2026-08-04T02:00:00.000Z",
+      stage: "qa",
+      round: 2,
+      body: "second",
+    });
+    const after = parseTicketNote(await fs.readFile(notePath, "utf8"));
+    expect(after.comments.map((comment) => comment.body)).toEqual([body, "second"]);
   });
 });
 

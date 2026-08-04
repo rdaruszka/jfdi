@@ -21,7 +21,7 @@ import {
   worktreesDir,
 } from "./pipeline.js";
 import { formatGateCommands, loadPrompt, renderPrompt } from "./prompts.js";
-import { appendToSection } from "./ticket-note.js";
+import { appendToSection, escapeNoteHeadings } from "./ticket-note.js";
 import { ensureTicketNote, type Ticket } from "./tickets.js";
 import { todayIsoDate } from "./util/dates.js";
 import { ensureDir, fileExists } from "./util/fsx.js";
@@ -44,13 +44,20 @@ async function appendReport(
   const lines = [
     `### ${todayIsoDate()}`,
     "",
-    report?.summary ? `**Summary:** ${report.summary}` : "**Summary:** (none recorded)",
+    report?.summary
+      ? `**Summary:** ${escapeNoteHeadings(report.summary)}`
+      : "**Summary:** (none recorded)",
     "",
     `**Rounds:** ${report?.rounds ?? "?"} · **Branch:** \`${ticketBranch(ticket.id)}\``,
   ];
-  if (report?.testsAdded) lines.push("", `**QA tests added:** ${report.testsAdded}`);
+  if (report?.testsAdded)
+    lines.push("", `**QA tests added:** ${escapeNoteHeadings(report.testsAdded)}`);
   if (report && report.decisions.length > 0)
-    lines.push("", "**Decisions made autonomously:**", ...report.decisions.map((d) => `- ${d}`));
+    lines.push(
+      "",
+      "**Decisions made autonomously:**",
+      ...report.decisions.map((decision) => `- ${escapeNoteHeadings(decision)}`),
+    );
   lines.push("", mergeNote);
   await appendToSection(notePath, "Report", lines.join("\n"));
 }
@@ -265,7 +272,7 @@ async function blocked(
     [
       `### ${todayIsoDate()} — integration`,
       "",
-      reason,
+      escapeNoteHeadings(reason),
       "",
       `_The worktree is kept for inspection under \`.jfdi/worktrees/\`. Fix, then move the card back to "${context.config.board.columns.begin}"._`,
     ].join("\n"),

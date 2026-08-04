@@ -149,6 +149,12 @@ The anatomy, part by part. Every part is optional; an absent one is simply empty
 Sections JFDI does not recognize — your own, or a legacy `## Decisions` block
 from before the anatomy — are never rewritten and never appended to.
 
+Text an agent wrote — a decision, a question, a summary — reaches the note
+through a verdict, so JFDI escapes any line in it that would read as a markdown
+heading (`## Comments` becomes `\## Comments`, which renders the same). Without
+that, one entry quoting the format could forge a second section or entry, and
+everything after the forgery would silently stop reaching later prompts.
+
 ### What the agents actually read
 
 The note is the single human-readable record of what happened to a ticket, and
