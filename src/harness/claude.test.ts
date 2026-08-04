@@ -14,7 +14,7 @@ import type { HarnessEvent, HarnessSelection } from "./types.js";
 const NOW = new Date(2026, 7, 3, 9, 30).getTime();
 
 /** Harness-only selection: the tests that care about flags name their own. */
-const TEST_SELECTION: HarnessSelection = { stage: "implementation" };
+const TEST_SELECTION: HarnessSelection = { sessionKind: "implementation" };
 
 describe("mapClaudeLine", () => {
   it("maps assistant text blocks", () => {
@@ -310,7 +310,7 @@ describe("ClaudeHarness selection flags", () => {
   it("spells model and effort the way Claude Code does", async () => {
     const recorder = await argvRecorder();
     await new ClaudeHarness(
-      { stage: "qa", model: "claude-opus-5", effort: "xhigh" },
+      { sessionKind: "qa", model: "claude-opus-5", effort: "xhigh" },
       recorder.executable,
     ).spawn({ prompt: "p" }, { cwd: dir }).done;
     const argv = await recorder.argv();
@@ -322,7 +322,7 @@ describe("ClaudeHarness selection flags", () => {
 
   it("passes no flag for a value the stage did not configure", async () => {
     const recorder = await argvRecorder();
-    await new ClaudeHarness({ stage: "qa", model: "opus" }, recorder.executable).spawn(
+    await new ClaudeHarness({ sessionKind: "qa", model: "opus" }, recorder.executable).spawn(
       { prompt: "p" },
       { cwd: dir },
     ).done;
@@ -334,7 +334,7 @@ describe("ClaudeHarness selection flags", () => {
   it("passes the selection to an interactive launch too", async () => {
     const recorder = await argvRecorder();
     await new ClaudeHarness(
-      { stage: "implementation", model: "claude-opus-5", effort: "high" },
+      { sessionKind: "implementation", model: "claude-opus-5", effort: "high" },
       recorder.executable,
     ).spawnInteractive({ prompt: "brief" }, { cwd: dir, isSystemPrompt: true });
     expect(await recorder.argv()).toEqual([
@@ -347,9 +347,9 @@ describe("ClaudeHarness selection flags", () => {
     ]);
   });
 
-  it("names the binary and the stage entry when the CLI is not installed", async () => {
+  it("names the binary and the stages entry when the CLI is not installed", async () => {
     const result = await new ClaudeHarness(
-      { stage: "code-review" },
+      { sessionKind: "code-review" },
       path.join(dir, "not-installed"),
     ).spawn({ prompt: "p" }, { cwd: dir }).done;
     expect(result.ok).toBe(false);

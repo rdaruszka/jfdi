@@ -13,7 +13,7 @@ import { FakeHarness } from "./harness/fake.js";
 import { integrateTicket } from "./integrate.js";
 import { PauseController } from "./pause.js";
 import { type PipelineContext, runPipeline } from "./pipeline.js";
-import { DEFAULT_SCRIBE_HANDLER, stageOf, writeVerdict } from "./test-helpers.js";
+import { DEFAULT_SCRIBE_HANDLER, sessionKindOf, writeVerdict } from "./test-helpers.js";
 import { resolveTicket } from "./tickets.js";
 
 const TEMPLATE = fileURLToPath(new URL("../fixtures/half-app", import.meta.url));
@@ -121,7 +121,7 @@ describe("half-app end-to-end (fake harness)", () => {
     };
 
     const harness = new FakeHarness(async (spec, options) => {
-      switch (stageOf(spec.prompt)) {
+      switch (sessionKindOf(spec.prompt)) {
         case "implementation":
           expect(spec.prompt).toContain("case-insensitive");
           await fs.writeFile(

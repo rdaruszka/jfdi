@@ -22,12 +22,12 @@ export type IntegrationMode = "auto" | "on-approval";
 export type { HarnessName, SessionKind };
 
 /**
- * Which agent one stage runs. `model` and `effort` are provider-native strings
- * passed to the CLI verbatim; absent means the provider's own default, never a
- * value inherited from another stage — so naming only a harness can never pair
- * one provider with another's model.
+ * Which agent one `stages` entry runs. `model` and `effort` are provider-native
+ * strings passed to the CLI verbatim; absent means the provider's own default,
+ * never a value inherited from another entry — so naming only a harness can
+ * never pair one provider with another's model.
  */
-export interface StageConfig {
+export interface SessionConfig {
   harness: HarnessName;
   model?: string;
   effort?: string;
@@ -41,7 +41,7 @@ export interface JfdiConfig {
   integration: { target_branch: string; mode: IntegrationMode };
   max_concurrent: number;
   /** Required, one entry per stage plus the scribe — there is no global harness. */
-  stages: Record<SessionKind, StageConfig>;
+  stages: Record<SessionKind, SessionConfig>;
 }
 
 export const JFDI_DIR = ".jfdi";
@@ -131,9 +131,9 @@ function positiveInteger(value: unknown, fallback: number, where: string): numbe
   return value;
 }
 
-/** One `stages.<stage>` entry: harness required, model and effort optional. */
-function parseStageConfig(raw: unknown, stage: SessionKind): StageConfig {
-  const where = `stages.${stage}`;
+/** One `stages.<key>` entry: harness required, model and effort optional. */
+function parseSessionConfig(raw: unknown, sessionKind: SessionKind): SessionConfig {
+  const where = `stages.${sessionKind}`;
   if (!isRecord(raw)) throw new ConfigError(`${where} must be an object, e.g. ${STAGES_EXAMPLE}`);
   const harness = requiredString(raw.harness, `${where}.harness`);
   if (harness !== "claude" && harness !== "codex")
@@ -158,7 +158,7 @@ function parseStageConfig(raw: unknown, stage: SessionKind): StageConfig {
  * support: every rejection shows the block to paste in, because the only fix
  * is editing config.json by hand.
  */
-function parseStages(raw: unknown): Record<SessionKind, StageConfig> {
+function parseStages(raw: unknown): Record<SessionKind, SessionConfig> {
   if (raw === undefined)
     throw new ConfigError(
       `config is missing the required "stages" section; add it, e.g.\n${STAGES_EXAMPLE}`,
@@ -176,11 +176,11 @@ function parseStages(raw: unknown): Record<SessionKind, StageConfig> {
       `stages is missing an entry for ${missing.join(", ")}; every stage needs one, and "commit-message" selects the scribe that writes commit messages, e.g.\n${STAGES_EXAMPLE}`,
     );
   return {
-    implementation: parseStageConfig(raw.implementation, "implementation"),
-    "code-review": parseStageConfig(raw["code-review"], "code-review"),
-    qa: parseStageConfig(raw.qa, "qa"),
-    integration: parseStageConfig(raw.integration, "integration"),
-    "commit-message": parseStageConfig(raw["commit-message"], "commit-message"),
+    implementation: parseSessionConfig(raw.implementation, "implementation"),
+    "code-review": parseSessionConfig(raw["code-review"], "code-review"),
+    qa: parseSessionConfig(raw.qa, "qa"),
+    integration: parseSessionConfig(raw.integration, "integration"),
+    "commit-message": parseSessionConfig(raw["commit-message"], "commit-message"),
   };
 }
 

@@ -1,4 +1,4 @@
-import type { JfdiConfig, StageConfig } from "../config.js";
+import type { JfdiConfig, SessionConfig } from "../config.js";
 import { CLAUDE_EFFORT_LEVELS, ClaudeHarness } from "./claude.js";
 import { CODEX_EFFORT_LEVELS, CodexHarness } from "./codex.js";
 import type { Harness, HarnessName, SessionKind } from "./types.js";
@@ -20,9 +20,9 @@ export const EFFORT_LEVELS_BY_HARNESS: Record<HarnessName, readonly string[]> = 
 };
 
 /** Build the harness one `stages` entry asks for. */
-export function createHarness(stage: SessionKind, stageConfig: StageConfig): Harness {
-  const selection = { stage, model: stageConfig.model, effort: stageConfig.effort };
-  switch (stageConfig.harness) {
+export function createHarness(sessionKind: SessionKind, entry: SessionConfig): Harness {
+  const selection = { sessionKind, model: entry.model, effort: entry.effort };
+  switch (entry.harness) {
     case "claude":
       return new ClaudeHarness(selection);
     case "codex":
@@ -31,15 +31,15 @@ export function createHarness(stage: SessionKind, stageConfig: StageConfig): Har
 }
 
 /** One harness per `stages` entry, held for the life of the process. */
-export type StageHarnesses = Record<SessionKind, Harness>;
+export type SessionHarnesses = Record<SessionKind, Harness>;
 
 /**
- * The whole of per-stage selection: each stage's harness is fixed at context
- * construction, which is also what makes continuations safe — a session id is
- * only meaningful to the harness that minted it, and a stage always re-enters
- * its own.
+ * The whole of per-entry selection: each session kind's harness is fixed at
+ * context construction, which is also what makes continuations safe — a session
+ * id is only meaningful to the harness that minted it, and a stage always
+ * re-enters its own.
  */
-export function createStageHarnesses(config: JfdiConfig): StageHarnesses {
+export function createSessionHarnesses(config: JfdiConfig): SessionHarnesses {
   return {
     implementation: createHarness("implementation", config.stages.implementation),
     "code-review": createHarness("code-review", config.stages["code-review"]),

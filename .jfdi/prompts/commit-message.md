@@ -28,8 +28,12 @@ just ended, and the pipeline is committing what it left behind.
 
 - Output the message and nothing else: no preamble, no commentary, no code fence.
   Your entire answer is used verbatim.
-- First line: `{{TICKET_ID}}: <imperative summary>`, 72 characters or fewer, no
-  trailing period. Verb semantics: "add" = new, "update" = enhancement, "fix" = bug fix.
+- Write the summary alone as your first line — the pipeline prefixes
+  `{{TICKET_ID}}: ` itself. Imperative, 72 characters or fewer, no trailing
+  period. Verb semantics: "add" = new, "update" = enhancement, "fix" = bug fix.
+  A longer first line is not used as a subject at all: the pipeline keeps it as
+  body text and writes a plain subject of its own, so your summary lands only
+  if it fits.
 - Then a blank line, then the body: written for a reader with zero context who was
   not part of the session. Say what the change is in plain words before any
   mechanism, one idea per sentence, as long as the change needs and no longer.

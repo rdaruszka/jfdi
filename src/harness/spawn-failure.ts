@@ -12,5 +12,5 @@ export function spawnFailureText(
   selection: HarnessSelection,
   detail: string,
 ): string {
-  return `failed to spawn "${executable}" for the ${selection.stage} stage: ${detail} — install the ${executable} CLI and put it on PATH, or point stages.${selection.stage}.harness at a provider you have`;
+  return `failed to spawn "${executable}" for the ${selection.sessionKind} session: ${detail} — install the ${executable} CLI and put it on PATH, or point stages.${selection.sessionKind}.harness at a provider you have`;
 }

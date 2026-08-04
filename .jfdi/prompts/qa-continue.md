@@ -36,7 +36,7 @@ Schema (same as your previous verdict):
 {
   "verdict": "pass" | "fail" | "escalate",
   "feedback": "when failing: what behavior is wrong or missing, with reproduction steps",
-  "testsAdded": "summary of the automated tests you committed this round",
+  "testsAdded": "summary of the automated tests you wrote this round",
   "decisions": ["judgment call you made", ...],
   "observations": ["out-of-scope problem you noticed (not grounds for this verdict)", ...],
   "question": "only when escalating",

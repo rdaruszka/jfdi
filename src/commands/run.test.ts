@@ -2,7 +2,13 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { findColumn, moveCard, parseBoard } from "../board.js";
-import { commitFile, type Fixture, makeFixture, stageOf, writeVerdict } from "../test-helpers.js";
+import {
+  commitFile,
+  type Fixture,
+  makeFixture,
+  sessionKindOf,
+  writeVerdict,
+} from "../test-helpers.js";
 import { runTicketInline } from "./run.js";
 
 let fixture: Fixture;
@@ -44,7 +50,7 @@ async function readBoard(): Promise<ReturnType<typeof parseBoard>> {
 /** Handler that implements each ticket by writing a file named for its card. */
 function passingHandler(onImplementation?: () => Promise<void>) {
   return async (spec: { prompt: string }, options: { cwd: string }) => {
-    const stage = stageOf(spec.prompt);
+    const stage = sessionKindOf(spec.prompt);
     if (stage === "implementation") {
       const match = /feature (\w+)/.exec(spec.prompt);
       const name = match?.[1] ?? "unknown";

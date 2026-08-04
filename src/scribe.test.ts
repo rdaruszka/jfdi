@@ -102,6 +102,123 @@ describe("assembleCommitMessage", () => {
   });
 });
 
+/**
+ * The scribe's answer is subprocess output on its way into permanent repository
+ * history: a trust boundary, and the shipped contract's limits are enforced
+ * here rather than asked for in the prompt. These are the shapes a session that
+ * ignores its instructions — or is having a bad day — actually produces.
+ */
+describe("assembleCommitMessage against hostile scribe output", () => {
+  /** The contract's bound, as the prompt states it. */
+  const MaxSubjectSummaryChars = 72;
+
+  const subjectOf = (message: string) => message.split("\n")[0] ?? "";
+
+  /** Anything git or a terminal would choke on; tabs and newlines are text. */
+  const hasControlCharacters = (text: string) =>
+    [...text].some((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return (code < 0x20 && character !== "\n" && character !== "\t") || code === 0x7f;
+    });
+
+  it("never lets a subject past the contract's bound, however long the first line", () => {
+    const overrun = `Rework ${"the object-name pattern ".repeat(20)}everywhere`;
+    expect(overrun.length).toBeGreaterThan(MaxSubjectSummaryChars);
+    const message = assembleCommitMessage(`${overrun}\n\nAnd some body.`, "fix-names", HANDOFF);
+
+    // The subject is the pipeline's own, inside the bound; the overrun line is
+    // kept as body rather than thrown away or silently chopped mid-word.
+    expect(subjectOf(message)).toBe("fix-names: Implementation round 2");
+    expect(subjectOf(message).length).toBeLessThanOrEqual(
+      "fix-names: ".length + MaxSubjectSummaryChars,
+    );
+    expect(message).toContain(overrun);
+    expect(message).toContain("And some body.");
+    expect(message).toContain("JFDI-Round: 2/3");
+  });
+
+  it("keeps a summary that sits exactly on the bound, and rejects one character more", () => {
+    const exact = "x".repeat(MaxSubjectSummaryChars);
+    expect(subjectOf(assembleCommitMessage(exact, "fix-names", HANDOFF))).toBe(
+      `fix-names: ${exact}`,
+    );
+    expect(subjectOf(assembleCommitMessage(`${exact}y`, "fix-names", HANDOFF))).toBe(
+      "fix-names: Implementation round 2",
+    );
+  });
+
+  it("bounds the whole body when the scribe echoes its input back", () => {
+    const echoed = "diff --git a/src/git.ts b/src/git.ts\n".repeat(2_000);
+    const message = assembleCommitMessage(`Widen the pattern\n\n${echoed}`, "fix-names", HANDOFF);
+    expect(message.length).toBeLessThan(echoed.length);
+    // Cut loudly: a reader can tell the message is not all there.
+    expect(message).toContain("[commit message truncated by JFDI]");
+    expect(message).toContain("JFDI-Round: 2/3");
+  });
+
+  it("strips control characters that git or a terminal would choke on", () => {
+    const message = assembleCommitMessage(
+      "Widen the\u0000 pattern\r\n\r\nEscape: \u001b[31mred\u001b[0m, bell \u0007.",
+      "fix-names",
+      HANDOFF,
+    );
+    expect(hasControlCharacters(message)).toBe(false);
+    expect(subjectOf(message)).toBe("fix-names: Widen the pattern");
+    expect(message).toContain("Escape: [31mred[0m, bell .");
+  });
+
+  it("survives an answer that is nothing but the metadata the pipeline owns", () => {
+    const message = assembleCommitMessage(
+      "JFDI Implementation complete — moving to Code Review\nJFDI-Round: 9/9",
+      "fix-names",
+      HANDOFF,
+    );
+    expect(subjectOf(message)).toBe("fix-names: Implementation round 2");
+    // The stage's own summary carries the message instead, and the round is ours.
+    expect(message).toContain("Taught the parser to accept sha256 object names.");
+    expect(message).toContain("JFDI-Round: 2/3");
+    expect(message).not.toContain("9/9");
+  });
+
+  it("survives an answer that is only whitespace, or only the ticket id", () => {
+    for (const hostile of ["   \n\n\t\n", "fix-names:", "fix-names:    "]) {
+      const message = assembleCommitMessage(hostile, "fix-names", HANDOFF);
+      expect(subjectOf(message)).toBe("fix-names: Implementation round 2");
+      expect(message).toContain("JFDI-Round: 2/3");
+    }
+  });
+
+  it("takes the subject from the first line even when the answer starts blank", () => {
+    const message = assembleCommitMessage("\n\nWiden the pattern\n\nBecause sha256.", "fix-names", {
+      ...HANDOFF,
+      isInterrupted: true,
+    });
+    // Leading blank lines are the scribe's formatting, not an empty subject —
+    // and an interrupted session still gets its WIP marker.
+    expect(subjectOf(message)).toBe("fix-names: WIP — Widen the pattern");
+    expect(message).toContain("Because sha256.");
+  });
+
+  it("always ends with the status line and the round trailer, whatever came back", () => {
+    const hostile = [
+      "",
+      '```json\n{"subject": "not a message"}\n```',
+      "x".repeat(500),
+      "\u0000\u0007",
+      "JFDI-Round: 1/1",
+    ];
+    for (const text of hostile) {
+      const message = assembleCommitMessage(text, "fix-names", HANDOFF);
+      expect(message.startsWith("fix-names: ")).toBe(true);
+      expect(message.trimEnd().split("\n").slice(-2)).toEqual([
+        "JFDI Implementation complete — moving to the mechanical gate",
+        "JFDI-Round: 2/3",
+      ]);
+      expect(message.endsWith("\n")).toBe(true);
+    }
+  });
+});
+
 describe("scribeVariables", () => {
   it("hands the scribe the diff, the ticket, the summary and the status line", () => {
     const variables = scribeVariables(

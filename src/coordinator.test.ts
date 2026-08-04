@@ -7,7 +7,13 @@ import { EventLog, type JfdiEvent, loadState } from "./events.js";
 import { branchExists, deleteBranch, git, revParse } from "./git.js";
 import { worktreesDir } from "./pipeline.js";
 import { loadReport, saveReport } from "./report.js";
-import { commitFile, type Fixture, makeFixture, stageOf, writeVerdict } from "./test-helpers.js";
+import {
+  commitFile,
+  type Fixture,
+  makeFixture,
+  sessionKindOf,
+  writeVerdict,
+} from "./test-helpers.js";
 import { ticketIdFromCard } from "./util/ids.js";
 
 let fixture: Fixture;
@@ -161,7 +167,7 @@ async function recordSignOff(ticketId: string, commit: string): Promise<void> {
 /** Handler that implements each ticket by writing a file named for its card. */
 function autoHandler() {
   return async (spec: { prompt: string }, options: { cwd: string }) => {
-    const stage = stageOf(spec.prompt);
+    const stage = sessionKindOf(spec.prompt);
     if (stage === "implementation") {
       const match = /feature (\w+)/.exec(spec.prompt);
       const name = match?.[1] ?? "unknown";
@@ -239,7 +245,7 @@ function boardPath(): string {
 function countingHandler(stages: string[]) {
   let implementations = 0;
   return async (spec: { prompt: string }, options: { cwd: string }) => {
-    const stage = stageOf(spec.prompt);
+    const stage = sessionKindOf(spec.prompt);
     stages.push(stage);
     if (stage === "implementation") {
       implementations++;
@@ -570,7 +576,7 @@ describe("Coordinator", () => {
 
   it("materializes stage observations as inbox cards and never dispatches them", async () => {
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         const match = /feature (\w+)/.exec(spec.prompt);
         await commitFile(options.cwd, `${match?.[1]}.txt`, "x\n", "impl");
@@ -703,7 +709,7 @@ describe("Coordinator", () => {
     let peak = 0;
     let current = 0;
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         current++;
         peak = Math.max(peak, current);
@@ -750,7 +756,7 @@ describe("Coordinator under a broken provider", () => {
     const resetsAtMs = Date.now() + FAR_RESET_MS;
     let implementationAttempts = 0;
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage !== "implementation") {
         await writeVerdict(spec.prompt, { verdict: "pass" });
         return { ok: true, text: "" };
@@ -814,7 +820,7 @@ describe("Coordinator under a broken provider", () => {
     let alphaImplementations = 0;
     const healthy = autoHandler();
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       const name = /feature (\w+)/.exec(spec.prompt)?.[1] ?? "unknown";
       sessions.push(`${name}:${stage}`);
       // Beta's session is live when the tool pauses and survives it, so the

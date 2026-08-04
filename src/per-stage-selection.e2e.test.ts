@@ -432,7 +432,7 @@ describe("per-stage selection, end to end", () => {
         path.join(sandbox.project, ".jfdi", "tickets", `${ticketIdOf(run)}.md`),
         "utf8",
       );
-      expect(note).toContain('failed to spawn "codex" for the code-review stage');
+      expect(note).toContain('failed to spawn "codex" for the code-review session');
       expect(note).toContain("install the codex CLI and put it on PATH");
       expect(note).toContain("stages.code-review.harness");
     },

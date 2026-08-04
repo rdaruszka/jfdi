@@ -20,7 +20,7 @@ import {
   runHeldSession,
   runQaStage,
   runsDir,
-  stageSelectionFields,
+  sessionSelectionFields,
   worktreesDir,
 } from "./pipeline.js";
 import { formatGateCommands, loadPrompt, renderPrompt } from "./prompts.js";
@@ -96,7 +96,7 @@ async function runIntegrationAgent(
   const stage: StageName = "integration";
   context.log.emit("stage_start", ticket.id, {
     stage,
-    ...stageSelectionFields(context.config, stage),
+    ...sessionSelectionFields(context.config, stage),
   });
   const result = await runHeldSession(
     context,

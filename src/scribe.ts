@@ -9,6 +9,12 @@
  * machine-parseable (`git log --format='%(trailers:key=JFDI-Round)'`) cannot
  * depend on an agent getting a format right. The same rendered text goes to
  * the commit and to the ticket note's `## Comments` trail.
+ *
+ * The scribe's answer is subprocess output about to become permanent repository
+ * history, so it is a trust boundary and `assembleCommitMessage` treats it as
+ * one: the shipped contract's limits are enforced here, not asked for in the
+ * prompt and hoped for. Every bound below is a rule the message must satisfy no
+ * matter what came back.
  */
 import type { StageName } from "./events.js";
 import { git } from "./git.js";
@@ -49,6 +55,26 @@ const HOUSE_STYLE_COMMIT_COUNT = 5;
 
 /** Longest excerpt of a session's own account quoted into the scribe's prompt. */
 const MAX_SUMMARY_CHARS = 4_000;
+
+/**
+ * Longest summary the shipped contract allows in a subject — git's own
+ * convention, and what the commit-message template asks for. The pipeline adds
+ * the `<ticket-id>: ` prefix on top, so this bounds the scribe's half alone.
+ * A longer first line is not a subject the scribe shortened badly; it is a
+ * scribe that ignored the format, so the whole answer is treated as body text
+ * and the subject falls back to the pipeline's own.
+ */
+const MAX_SUBJECT_SUMMARY_CHARS = 72;
+
+/**
+ * Longest body kept from the scribe. A scribe that echoed the diff back would
+ * otherwise write a megabyte into every `git log`; the cut is loud (it ends in
+ * a marker) rather than silent.
+ */
+const MAX_BODY_CHARS = 8_000;
+
+/** What a truncated body ends with, so a reader knows the message is not all there. */
+const BODY_TRUNCATION_MARKER = "\n\n[commit message truncated by JFDI]";
 
 /**
  * A commit message's own trailing metadata, which the pipeline owns and the
@@ -102,19 +128,29 @@ export function scribeVariables(
 
 /**
  * The final message: the scribe's subject and body under a ticket-id subject
- * prefix, over the status line and the round trailer. Text the scribe did not
- * write usably — an empty answer, a session that died — falls back to the
- * stage's own summary, so a commit never waits on prose.
+ * prefix, over the status line and the round trailer. Every part of what came
+ * back is bounded and scrubbed first, and anything that does not fit the
+ * contract falls back to the pipeline's own wording rather than reaching
+ * `git commit` — a message is repository history, and the scribe's answer is
+ * subprocess output.
  */
 export function assembleCommitMessage(
   scribeText: string,
   ticketId: string,
   handoff: SessionHandoff,
 ): string {
-  const written = withoutPipelineMetadata(stripFences(scribeText));
+  const written = withoutPipelineMetadata(stripFences(scrubControlCharacters(scribeText)));
   const lines = written.length > 0 ? written.split("\n") : [];
-  const subject = subjectLine(ticketId, lines[0] ?? "", handoff);
-  const body = (lines.length > 0 ? lines.slice(1).join("\n") : handoff.summary).trim();
+  const summary = subjectSummary(ticketId, lines[0] ?? "");
+  const subject = `${ticketId}: ${handoff.isInterrupted ? "WIP — " : ""}${
+    summary ?? `${STAGE_LABELS[handoff.stage]} round ${handoff.round}`
+  }`;
+  // A first line the scribe overran is not a subject it wrote badly; it is
+  // prose that landed where the subject belongs. It stays, as body, under the
+  // pipeline's own subject — dropping it would throw away the only account of
+  // the change there is.
+  const writtenBody = summary === null ? written : lines.slice(1).join("\n");
+  const body = boundBody((writtenBody.trim() !== "" ? writtenBody : handoff.summary).trim());
   const trailers = [
     statusLine(handoff.stage, handoff.outcome, handoff.routing),
     `JFDI-Round: ${handoff.round}/${handoff.maxRounds}`,
@@ -122,11 +158,45 @@ export function assembleCommitMessage(
   return `${[subject, body, trailers].filter((part) => part !== "").join("\n\n")}\n`;
 }
 
-function subjectLine(ticketId: string, written: string, handoff: SessionHandoff): string {
+/**
+ * The scribe's subject, or null when what it wrote cannot be one: empty, or
+ * longer than the contract's bound. The `<ticket-id>: ` prefix is the
+ * pipeline's to add, so a scribe that added it too is not punished for it.
+ */
+function subjectSummary(ticketId: string, written: string): string | null {
   const stripped = written.trim().replace(new RegExp(`^${escapeForRegExp(ticketId)}:\\s*`), "");
-  const summary =
-    stripped !== "" ? stripped : `${STAGE_LABELS[handoff.stage]} round ${handoff.round}`;
-  return `${ticketId}: ${handoff.isInterrupted ? "WIP — " : ""}${summary}`;
+  if (stripped === "" || stripped.length > MAX_SUBJECT_SUMMARY_CHARS) return null;
+  return stripped;
+}
+
+/** Cut a body no reader would finish, and say that it was cut. */
+function boundBody(body: string): string {
+  if (body.length <= MAX_BODY_CHARS) return body;
+  return `${body.slice(0, MAX_BODY_CHARS).trimEnd()}${BODY_TRUNCATION_MARKER}`;
+}
+
+/** Code point below which a character is a C0 control, and the DEL code point. */
+const FIRST_PRINTABLE_CODE_POINT = 0x20;
+const DELETE_CODE_POINT = 0x7f;
+
+/**
+ * Strip what a commit message must not carry. A NUL byte makes `git commit -m`
+ * fail outright, and a terminal escape sequence in a message is a hazard for
+ * every later `git log` — neither is something an agent should be able to put
+ * into repository history by writing it. Tabs and newlines are legitimate text
+ * and are the only control characters kept; a CRLF is normalized rather than
+ * left to split a line in two.
+ */
+function scrubControlCharacters(text: string): string {
+  const kept: string[] = [];
+  for (const character of text.replace(/\r\n?/g, "\n")) {
+    const code = character.codePointAt(0) ?? 0;
+    const isControl =
+      (code < FIRST_PRINTABLE_CODE_POINT && character !== "\n" && character !== "\t") ||
+      code === DELETE_CODE_POINT;
+    if (!isControl) kept.push(character);
+  }
+  return kept.join("");
 }
 
 /** Agents fence things they were told not to fence; the fence is not the message. */

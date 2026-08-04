@@ -12,7 +12,7 @@ import {
   DEFAULT_SCRIBE_HANDLER,
   type Fixture,
   makeFixture,
-  stageOf,
+  sessionKindOf,
   TEST_PAUSE_DELAYS,
   writeVerdict,
 } from "./test-helpers.js";
@@ -35,7 +35,7 @@ describe("runPipeline", () => {
   it("happy path: implementation → gate → code review → QA → passed", async () => {
     const stages: string[] = [];
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       stages.push(stage);
       switch (stage) {
         case "implementation":
@@ -85,7 +85,7 @@ describe("runPipeline", () => {
 
   it("writes run artifacts to the state directory and worktrees to .jfdi/", async () => {
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         await commitFile(options.cwd, "impl.txt", "the feature\n", "implement");
         await writeVerdict(spec.prompt, { status: "done", summary: "done" });
@@ -113,7 +113,7 @@ describe("runPipeline", () => {
     const stages: string[] = [];
     let implementationRounds = 0;
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       stages.push(stage);
       switch (stage) {
         case "implementation":
@@ -169,7 +169,7 @@ describe("runPipeline", () => {
     let implementationRounds = 0;
     const stages: string[] = [];
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       stages.push(stage);
       if (stage === "implementation") {
         implementationRounds++;
@@ -217,7 +217,7 @@ describe("runPipeline", () => {
 
   it("exhausted rounds block with accumulated history in the note", async () => {
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         await commitFile(options.cwd, "impl.txt", `${Math.random()}\n`, "try");
         await writeVerdict(spec.prompt, { status: "done" });
@@ -243,7 +243,7 @@ describe("runPipeline", () => {
     );
     let sawOverride = false;
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         sawOverride = spec.prompt.includes("Escalation override");
         await commitFile(options.cwd, "impl.txt", "done\n", "implement");
@@ -262,7 +262,7 @@ describe("runPipeline", () => {
   it("a fresh ticket's implementation prompt says nothing about resuming", async () => {
     let prompt = "";
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         prompt = spec.prompt;
         await commitFile(options.cwd, "impl.txt", "x\n", "implement");
@@ -283,7 +283,7 @@ describe("runPipeline", () => {
     // Distinct content per round, so each round has something to actually commit.
     let attempt = 0;
     const failing = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         attempt += 1;
         await fs.writeFile(path.join(options.cwd, "impl.txt"), `attempt ${attempt}\n`);
@@ -299,7 +299,7 @@ describe("runPipeline", () => {
     // Run 2: the same card dispatched again.
     let prompt = "";
     const resumed = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         prompt = prompt || spec.prompt;
         await commitFile(options.cwd, "impl.txt", "final\n", "finish it");
@@ -323,7 +323,7 @@ describe("runPipeline", () => {
     // Run 1: code review never approves → retries exhausted, its feedback on disk.
     let attempt = 0;
     const failing = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         attempt += 1;
         await commitFile(options.cwd, "impl.txt", `attempt ${attempt}\n`, "partial attempt");
@@ -351,7 +351,7 @@ describe("runPipeline", () => {
     // run 2 — otherwise the escalation silently erases why run 1 failed.
     let prompt = "";
     const answering = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         prompt = prompt || spec.prompt;
         await commitFile(options.cwd, "impl.txt", "final\n", "finish it");
@@ -382,7 +382,7 @@ describe("runPipeline", () => {
     let statusAtStart = "unknown";
     let prompt = "";
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         statusAtStart = await git(options.cwd, "status", "--porcelain");
         prompt = spec.prompt;
@@ -415,7 +415,7 @@ describe("runPipeline", () => {
     let reviewPrompt = "";
     let qaPrompt = "";
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         await fs.writeFile(path.join(options.cwd, "impl.txt"), "the feature\n");
         await writeVerdict(spec.prompt, { status: "done", summary: "implement the feature" });
@@ -475,7 +475,7 @@ describe("runPipeline", () => {
     );
     let prompt = "";
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         prompt = spec.prompt;
         await commitFile(options.cwd, "impl.txt", "done\n", "implement");
@@ -515,7 +515,7 @@ describe("runPipeline", () => {
     let round = 0;
     let secondRunPrompt = "";
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         round++;
         if (round === 2) secondRunPrompt = spec.prompt;
@@ -556,7 +556,7 @@ describe("runPipeline", () => {
     let implementationCalls = 0;
     let reviewCalls = 0;
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       spawns.push({ stage, continueSessionId: options.continueSessionId });
       switch (stage) {
         case "implementation":
@@ -610,7 +610,7 @@ describe("runPipeline", () => {
     let secondReviewPrompt = "";
     let secondQaPrompt = "";
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       switch (stage) {
         case "implementation":
           await commitFile(options.cwd, "impl.txt", `${Math.random()}\n`, "implement");
@@ -665,7 +665,7 @@ describe("runPipeline", () => {
       return { ok: true, text: "", sessionId: "impl-1" };
     };
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") return implementationTurn(spec, options);
       if (stage === "code-review") {
         reviewCalls++;
@@ -696,7 +696,7 @@ describe("runPipeline", () => {
     let qaCalls = 0;
     let implementationCalls = 0;
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         implementationCalls++;
         if (implementationCalls === 1) {
@@ -729,7 +729,7 @@ describe("runPipeline", () => {
   it("a session that never writes a verdict burns a round with feedback", async () => {
     let implementationCalls = 0;
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         implementationCalls++;
         if (implementationCalls === 1) return { ok: false, text: "crashed mid-flight" };
@@ -761,7 +761,7 @@ describe("runPipeline under a broken provider", () => {
     const prompts: string[] = [];
     let implementationCalls = 0;
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage !== "implementation") {
         await writeVerdict(spec.prompt, { verdict: "pass" });
         return { ok: true, text: "" };
@@ -806,7 +806,7 @@ describe("runPipeline under a broken provider", () => {
   it("continues the dead session when the provider named one", async () => {
     let implementationCalls = 0;
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage !== "implementation") {
         await writeVerdict(spec.prompt, { verdict: "pass" });
         return { ok: true, text: "" };
@@ -835,7 +835,7 @@ describe("runPipeline under a broken provider", () => {
     const stageRetryCount = TEST_PAUSE_DELAYS.outageStageRetryMs.length;
     let implementationCalls = 0;
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage !== "implementation") {
         await writeVerdict(spec.prompt, { verdict: "pass" });
         return { ok: true, text: "" };
@@ -885,7 +885,7 @@ const MIXED_STAGES: JfdiConfig["stages"] = {
 };
 
 /** One fake per `stages` entry, so which harness a session reached is observable. */
-function perStageHarnesses(handler: FakeHandler): Record<SessionKind, FakeHarness> {
+function perSessionHarnesses(handler: FakeHandler): Record<SessionKind, FakeHarness> {
   return {
     implementation: new FakeHarness(handler),
     "code-review": new FakeHarness(handler),
@@ -905,7 +905,7 @@ describe("runPipeline with per-stage harness selection", () => {
       let implementationCalls = 0;
       let reviewCalls = 0;
       const handler: FakeHandler = async (spec, options) => {
-        const stage = stageOf(spec.prompt);
+        const stage = sessionKindOf(spec.prompt);
         switch (stage) {
           case "implementation":
             implementationCalls += 1;
@@ -936,7 +936,7 @@ describe("runPipeline with per-stage harness selection", () => {
         return { ok: true, text: "", sessionId: `${stage}-session` };
       };
 
-      const harnesses = perStageHarnesses(handler);
+      const harnesses = perSessionHarnesses(handler);
       const context: PipelineContext = { ...mixed.context(handler), harnesses };
       const starts: JfdiEvent[] = [];
       context.log.on((event) => {
@@ -947,9 +947,10 @@ describe("runPipeline with per-stage harness selection", () => {
       const outcome = await runPipeline(context, ticket);
       expect(outcome.status).toBe("passed");
 
-      // No harness ever saw a stage that was not its own.
-      for (const [stage, harness] of Object.entries(harnesses)) {
-        for (const call of harness.calls) expect(stageOf(call.promptSpec.prompt)).toBe(stage);
+      // No harness ever saw a session that was not its own.
+      for (const [sessionKind, harness] of Object.entries(harnesses)) {
+        for (const call of harness.calls)
+          expect(sessionKindOf(call.promptSpec.prompt)).toBe(sessionKind);
       }
       expect(harnesses.implementation.calls).toHaveLength(2);
       expect(harnesses["code-review"].calls).toHaveLength(2);
@@ -1007,7 +1008,7 @@ describe("runPipeline with per-stage harness selection", () => {
 describe("pipeline-owned commits", () => {
   it("folds a session's own commits back into the pipeline's one, from the pre-session HEAD", async () => {
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         // An agent that commits anyway — twice — and leaves work uncommitted.
         await commitFile(options.cwd, "impl.txt", "first\n", "agent commit one");
@@ -1044,7 +1045,7 @@ describe("pipeline-owned commits", () => {
   it("commits a dead session's partial work under a WIP marker, and a re-dispatch continues it", async () => {
     let implementationCalls = 0;
     const dying = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage !== "implementation") {
         await writeVerdict(spec.prompt, { verdict: "pass" });
         return { ok: true, text: "" };
@@ -1070,7 +1071,7 @@ describe("pipeline-owned commits", () => {
     // The next dispatch finds that work on the branch, not thrown away.
     let resumedPrompt = "";
     const resuming = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         resumedPrompt = spec.prompt;
         await fs.writeFile(path.join(options.cwd, "impl.txt"), "finished\n");
@@ -1094,7 +1095,7 @@ describe("pipeline-owned commits", () => {
     const scribePrompts: string[] = [];
     const context = fixture.context(
       async (spec, options) => {
-        const stage = stageOf(spec.prompt);
+        const stage = sessionKindOf(spec.prompt);
         if (stage === "implementation") {
           await fs.writeFile(path.join(options.cwd, "impl.txt"), "OBJECT_NAME_RE widened\n");
           await writeVerdict(spec.prompt, {
@@ -1133,7 +1134,7 @@ describe("pipeline-owned commits", () => {
   it("writes the identical text to the commit and to the note, and binds the sign-offs to it", async () => {
     let reviewedCommit = "";
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         await fs.writeFile(path.join(options.cwd, "impl.txt"), "the feature\n");
         await writeVerdict(spec.prompt, { status: "done", summary: "built the feature" });
@@ -1174,7 +1175,7 @@ describe("pipeline-owned commits", () => {
 
   it("narrates every transition into the note, failed round and exhaustion included", async () => {
     const context = fixture.context(async (spec, options) => {
-      const stage = stageOf(spec.prompt);
+      const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         await fs.writeFile(path.join(options.cwd, "impl.txt"), `${Math.random()}\n`);
         await writeVerdict(spec.prompt, { status: "done", summary: "tried again" });

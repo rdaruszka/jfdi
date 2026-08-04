@@ -8,9 +8,9 @@ import type {
   HarnessEvent,
   HarnessResult,
   PromptSpec,
+  SessionHarnesses,
   SessionKind,
   SpawnOptions,
-  StageHarnesses,
 } from "./harness/index.js";
 import type { PauseController } from "./pause.js";
 import { formatGateCommands, loadPrompt, type PromptName, renderPrompt } from "./prompts.js";
@@ -56,8 +56,8 @@ export interface PipelineContext {
   /** Absolute path to ~/.jfdi/projects/<project-key>/ — runs, events, state snapshot. */
   stateDir: string;
   config: JfdiConfig;
-  /** One harness per stage, as `config.stages` selected them. */
-  harnesses: StageHarnesses;
+  /** One harness per `stages` entry, as the config selected them. */
+  harnesses: SessionHarnesses;
   log: EventLog;
   /**
    * The tool-wide hold on agent sessions. Shared by every pipeline and by
@@ -157,12 +157,12 @@ interface StageOutcome {
 function narrateSessionActivity(
   context: PipelineContext,
   ticketId: string,
-  stage: SessionKind,
+  sessionKind: SessionKind,
   event: HarnessEvent,
 ): void {
   if (event.type === "tool") {
     context.log.emit("session_activity", ticketId, {
-      text: `${stage}: ${event.name}${event.detail ? ` ${event.detail}` : ""}`,
+      text: `${sessionKind}: ${event.name}${event.detail ? ` ${event.detail}` : ""}`,
     });
     return;
   }
@@ -170,20 +170,20 @@ function narrateSessionActivity(
     const line = event.text.split("\n")[0] ?? "";
     if (line.trim())
       context.log.emit("session_activity", ticketId, {
-        text: `${stage}: ${line.slice(0, MAX_ACTIVITY_CHARS)}`,
+        text: `${sessionKind}: ${line.slice(0, MAX_ACTIVITY_CHARS)}`,
       });
   }
 }
 
 /**
- * The stage's agent selection, as the event stream records it — so `jfdi logs`
- * can answer "which model produced this" long after the run.
+ * One `stages` entry's agent selection, as the event stream records it — so
+ * `jfdi logs` can answer "which model produced this" long after the run.
  */
-export function stageSelectionFields(
+export function sessionSelectionFields(
   config: JfdiConfig,
-  stage: SessionKind,
+  sessionKind: SessionKind,
 ): Record<string, string> {
-  const selection = config.stages[stage];
+  const selection = config.stages[sessionKind];
   return {
     harness: selection.harness,
     ...(selection.model ? { model: selection.model } : {}),
@@ -194,12 +194,12 @@ export function stageSelectionFields(
 /** One session, start to finish, with its events narrated as they arrive. */
 async function runOneSession(
   context: PipelineContext,
-  stage: SessionKind,
+  sessionKind: SessionKind,
   promptSpec: PromptSpec,
   options: SpawnOptions,
   onEvent: (event: HarnessEvent) => void,
 ): Promise<HarnessResult> {
-  const session = context.harnesses[stage].spawn(promptSpec, options);
+  const session = context.harnesses[sessionKind].spawn(promptSpec, options);
   context.sessions?.add(session);
   try {
     for await (const event of session.events) onEvent(event);
@@ -226,7 +226,7 @@ async function runOneSession(
 export async function runHeldSession(
   context: PipelineContext,
   ticketId: string,
-  stage: SessionKind,
+  sessionKind: SessionKind,
   promptSpec: PromptSpec,
   options: SpawnOptions,
   onEvent: (event: HarnessEvent) => void,
@@ -234,7 +234,7 @@ export async function runHeldSession(
   let attemptOptions = options;
   for (let attempt = 1; ; attempt++) {
     await context.pause.waitWhilePaused();
-    const result = await runOneSession(context, stage, promptSpec, attemptOptions, onEvent);
+    const result = await runOneSession(context, sessionKind, promptSpec, attemptOptions, onEvent);
     if (!result.failure) {
       context.pause.reportHealthy();
       return result;
@@ -263,7 +263,7 @@ async function runStageSession(
   const logPath = path.join(roundDir, `${stage}.log.jsonl`);
   context.log.emit("stage_start", ticket.id, {
     stage,
-    ...stageSelectionFields(context.config, stage),
+    ...sessionSelectionFields(context.config, stage),
     ...(continueSessionId ? { isContinuation: true } : {}),
   });
   const result = await runHeldSession(

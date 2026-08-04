@@ -113,7 +113,7 @@ export async function makeFixture(configOverrides: Partial<JfdiConfig> = {}): Pr
 }
 
 /** Which `stages` entry a prompt belongs to (matched on each default's task statement). */
-export function stageOf(prompt: string): SessionKind {
+export function sessionKindOf(prompt: string): SessionKind {
   if (prompt.includes("Write the commit message")) return "commit-message";
   if (prompt.includes("Implement the ticket below completely")) return "implementation";
   if (prompt.includes("Your implementation session is being continued")) return "implementation";
@@ -122,7 +122,7 @@ export function stageOf(prompt: string): SessionKind {
   if (prompt.includes("Derive your checks from the ticket")) return "qa";
   if (prompt.includes("Your QA session is being continued")) return "qa";
   if (prompt.includes("has hit conflicts")) return "integration";
-  throw new Error(`cannot determine stage from prompt: ${prompt.slice(0, 100)}`);
+  throw new Error(`cannot determine the session kind from prompt: ${prompt.slice(0, 100)}`);
 }
 
 /** Pull the verdict file path out of a rendered prompt. */

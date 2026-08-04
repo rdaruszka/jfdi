@@ -19,13 +19,13 @@ export type SessionKind = StageName | "commit-message";
  * provider-native strings passed through verbatim — there is no neutral model
  * vocabulary — and each implementation maps them to its own CLI's spelling.
  * Absent means "pass no flag": the provider's own default, never a value
- * borrowed from another stage.
+ * borrowed from another entry.
  *
- * `stage` is carried only as provenance: it is the config key that selected
- * this instance, so a spawn that fails can name the entry to fix.
+ * `sessionKind` is carried only as provenance: it is the config key that
+ * selected this instance, so a spawn that fails can name the entry to fix.
  */
 export interface HarnessSelection {
-  stage: SessionKind;
+  sessionKind: SessionKind;
   model?: string | undefined;
   effort?: string | undefined;
 }
