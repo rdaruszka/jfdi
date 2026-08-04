@@ -58,6 +58,48 @@ describe("worktrees", () => {
     expect(await fs.readFile(path.join(worktree.path, "README.md"), "utf8")).toBe("hello\n");
   });
 
+  /**
+   * The coordinator dispatches up to `max_concurrent` cards from one scan, so
+   * several `createWorktree` calls on one repo start together. `git worktree
+   * add` reads every entry already under `.git/worktrees/` while registering
+   * its own, so a sibling still writing its entry made the whole command fail
+   * ("failed to read .git/worktrees/<other>/commondir") and killed that run.
+   *
+   * These two pin the observable contract — every concurrent caller gets a
+   * registered worktree. They cannot pin the serialization itself: the git
+   * window is a few syscalls wide and only loses the race on a loaded
+   * filesystem, so a test that demanded a failure without the lock would be
+   * the flaky kind. `withPathLock`'s own tests are the deterministic guard.
+   */
+  it("creates concurrent worktrees on one repo without them tripping over each other", async () => {
+    const ticketIds = ["alpha", "beta", "gamma", "delta"];
+    const worktrees = await Promise.all(
+      ticketIds.map((ticketId) => createWorktree(repo, worktreesDir, ticketId, "main")),
+    );
+
+    expect(worktrees.map((worktree) => worktree.branch)).toEqual(ticketIds.map(ticketBranch));
+    for (const worktree of worktrees) {
+      expect(await currentBranch(worktree.path)).toBe(ticketBranch(path.basename(worktree.path)));
+    }
+    // git agrees they are all registered, not just that the directories exist.
+    const registered = await git(repo, "worktree", "list", "--porcelain");
+    for (const ticketId of ticketIds) expect(registered).toContain(ticketBranch(ticketId));
+  });
+
+  it("removes a worktree while another is being created on the same repo", async () => {
+    const doomed = await createWorktree(repo, worktreesDir, "doomed", "main");
+    // remove and add write the same registry; neither may see the other's
+    // half-written entry.
+    const [, created] = await Promise.all([
+      removeWorktree(repo, doomed.path),
+      createWorktree(repo, worktreesDir, "survivor", "main"),
+    ]);
+    expect(await currentBranch(created.path)).toBe(ticketBranch("survivor"));
+    const registered = await git(repo, "worktree", "list", "--porcelain");
+    expect(registered).toContain(ticketBranch("survivor"));
+    expect(registered).not.toContain(ticketBranch("doomed"));
+  });
+
   it("reuses an existing branch and worktree on resume", async () => {
     const worktree1 = await createWorktree(repo, worktreesDir, "t", "main");
     await write(worktree1.path, "work.txt", "wip\n");

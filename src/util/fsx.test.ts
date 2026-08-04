@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { atomicWrite, fileExists, readIfExists, readModifyWrite } from "./fsx.js";
+import { atomicWrite, fileExists, readIfExists, readModifyWrite, withPathLock } from "./fsx.js";
 
 let dir: string;
 
@@ -93,5 +93,59 @@ describe("readModifyWrite", () => {
     const wrote = await readModifyWrite(file, () => null);
     expect(wrote).toBe(false);
     expect(await fs.readFile(file, "utf8")).toBe("keep");
+  });
+});
+
+describe("withPathLock", () => {
+  /** Records entry and exit, so an overlap is visible as an interleaving. */
+  function tracedJob(trace: string[], name: string, holdMs: number) {
+    return async () => {
+      trace.push(`${name}:enter`);
+      await new Promise((resolve) => setTimeout(resolve, holdMs));
+      trace.push(`${name}:exit`);
+    };
+  }
+
+  it("never lets two jobs on one key overlap", async () => {
+    const trace: string[] = [];
+    // The second job holds for longer, so an unserialized pair would finish
+    // out of order — the assertion is the whole point of the lock.
+    await Promise.all([
+      withPathLock("/same", tracedJob(trace, "first", 20)),
+      withPathLock("/same", tracedJob(trace, "second", 5)),
+    ]);
+    expect(trace).toEqual(["first:enter", "first:exit", "second:enter", "second:exit"]);
+  });
+
+  it("holds the key for the next job even when the previous one throws", async () => {
+    const trace: string[] = [];
+    const failing = withPathLock("/same", async () => {
+      trace.push("failing:enter");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      throw new Error("boom");
+    });
+    const following = withPathLock("/same", tracedJob(trace, "following", 0));
+    await expect(failing).rejects.toThrow("boom");
+    await following;
+    expect(trace).toEqual(["failing:enter", "following:enter", "following:exit"]);
+  });
+
+  it("does not serialize different keys against each other", async () => {
+    const trace: string[] = [];
+    let releaseOne: () => void = () => undefined;
+    const isOneReleased = new Promise<void>((resolve) => {
+      releaseOne = resolve;
+    });
+    const one = withPathLock("/one", async () => {
+      trace.push("one:enter");
+      await isOneReleased;
+      trace.push("one:exit");
+    });
+    // Awaited while /one is still held: a lock that keyed on nothing would
+    // never let this run, so the test would hang rather than mis-assert.
+    await withPathLock("/two", tracedJob(trace, "two", 0));
+    releaseOne();
+    await one;
+    expect(trace).toEqual(["one:enter", "two:enter", "two:exit", "one:exit"]);
   });
 });

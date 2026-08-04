@@ -74,7 +74,9 @@ flowchart TB
   written by other JFDI processes. It dispatches nothing while the harness is
   paused.
 - **Pipeline** ([src/pipeline.ts](../../src/pipeline.ts)) — one ticket's trip:
-  worktree setup, resume sanitization, then up to `max_rounds` rounds of
+  worktree setup (serialized per repo — `git worktree add` reads the entries a
+  sibling `add` is still writing, so concurrent dispatches would otherwise kill
+  one another's run), resume sanitization, then up to `max_rounds` rounds of
   Implementation → gate → Code Review → QA, with session continuation between
   rounds. Emits events for every transition; writes verdicts and logs to the
   run directory. Detailed walkthrough: [The Pipeline](../guide/pipeline.md).

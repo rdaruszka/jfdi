@@ -90,7 +90,9 @@ export class MtimeConflictError extends Error {
 }
 
 /**
- * In-process writers to the same file are strictly serialized.
+ * In-process writers to the same path are strictly serialized. The path is a
+ * lock key, not something this reads: a file for `readModifyWrite`, a
+ * repository directory for the writers to its `.git/worktrees/`.
  *
  * Module-level mutable state, deliberately: the guarantee is "one writer per
  * path per process", which cannot be expressed by anything narrower than a
@@ -98,22 +100,22 @@ export class MtimeConflictError extends Error {
  *
  * Entries are evicted as they settle (see below) so the coordinator, which
  * runs for days and writes a new path per run directory, does not accumulate
- * one map entry per file it has ever touched.
+ * one map entry per path it has ever touched.
  */
-const fileLocks = new Map<string, Promise<unknown>>();
+const pathLocks = new Map<string, Promise<unknown>>();
 
-function withFileLock<T>(filePath: string, job: () => Promise<T>): Promise<T> {
-  const previous = fileLocks.get(filePath) ?? Promise.resolve();
+export function withPathLock<T>(lockPath: string, job: () => Promise<T>): Promise<T> {
+  const previous = pathLocks.get(lockPath) ?? Promise.resolve();
   const run = previous.then(job, job);
   const settled: Promise<void> = run.then(
     () => undefined,
     () => undefined,
   );
-  fileLocks.set(filePath, settled);
+  pathLocks.set(lockPath, settled);
   void settled.then(() => {
     // Drop the entry only if nobody chained onto it meanwhile — otherwise the
     // later writer would lose its predecessor and the two could interleave.
-    if (fileLocks.get(filePath) === settled) fileLocks.delete(filePath);
+    if (pathLocks.get(lockPath) === settled) pathLocks.delete(lockPath);
   });
   return run;
 }
@@ -132,7 +134,7 @@ export function readModifyWrite(
 ): Promise<boolean> {
   const retries = options.retries ?? DEFAULT_RETRIES;
   const retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
-  return withFileLock(filePath, async () => {
+  return withPathLock(filePath, async () => {
     // Termination measure: `attempt` only grows and the loop is bounded by
     // `retries`; the last attempt either writes or throws.
     for (let attempt = 0; attempt <= retries; attempt++) {

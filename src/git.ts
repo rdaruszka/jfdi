@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { promisify } from "node:util";
+import { withPathLock } from "./util/fsx.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -87,10 +88,27 @@ export function ticketBranch(ticketId: string): string {
 }
 
 /**
+ * Every command that writes `<repo>/.git/worktrees/` runs under this key.
+ *
+ * `git worktree add` walks the entries already registered there while it
+ * registers its own, and reads each one's `commondir`. A sibling `add` that has
+ * created its entry directory but not yet written that file makes the walk fail
+ * outright — `fatal: failed to read .git/worktrees/<other>/commondir` — and the
+ * whole command exits non-zero. `remove`/`prune` delete the same entries a
+ * concurrent `add` is reading. None of this is a corner case: the coordinator
+ * dispatches up to `max_concurrent` cards from a single scan, so two adds on
+ * one repo is the ordinary path, and the loser's run died with a git error
+ * nothing in the pipeline could interpret.
+ */
+function worktreeRegistryKey(repo: string): string {
+  return path.join(repo, ".git", "worktrees");
+}
+
+/**
  * Create a worktree for a ticket on branch jfdi/<id>, based on the target
  * branch. If the branch already exists (resume after Blocked), reuse it.
  */
-export async function createWorktree(
+export function createWorktree(
   repo: string,
   worktreesDir: string,
   ticketId: string,
@@ -98,33 +116,37 @@ export async function createWorktree(
 ): Promise<Worktree> {
   const branch = ticketBranch(ticketId);
   const worktreePath = path.join(worktreesDir, ticketId);
-  await fs.mkdir(worktreesDir, { recursive: true });
-  // Clean up a stale registration for this path if the dir vanished.
-  await gitTry(repo, "worktree", "prune");
-  try {
-    await fs.access(worktreePath);
-    // Worktree dir already exists — reuse it (resume case).
+  return withPathLock(worktreeRegistryKey(repo), async () => {
+    await fs.mkdir(worktreesDir, { recursive: true });
+    // Clean up a stale registration for this path if the dir vanished.
+    await gitTry(repo, "worktree", "prune");
+    try {
+      await fs.access(worktreePath);
+      // Worktree dir already exists — reuse it (resume case).
+      return { path: worktreePath, branch };
+    } catch {
+      // continue to create
+    }
+    if (await branchExists(repo, branch)) {
+      await git(repo, "worktree", "add", worktreePath, branch);
+    } else {
+      await git(repo, "worktree", "add", "-b", branch, worktreePath, baseBranch);
+    }
     return { path: worktreePath, branch };
-  } catch {
-    // continue to create
-  }
-  if (await branchExists(repo, branch)) {
-    await git(repo, "worktree", "add", worktreePath, branch);
-  } else {
-    await git(repo, "worktree", "add", "-b", branch, worktreePath, baseBranch);
-  }
-  return { path: worktreePath, branch };
+  });
 }
 
-export async function removeWorktree(
+export function removeWorktree(
   repo: string,
   worktreePath: string,
   options: { shouldForce?: boolean } = {},
 ): Promise<void> {
-  const args = ["worktree", "remove", worktreePath];
-  if (options.shouldForce) args.push("--force");
-  await gitTry(repo, ...args);
-  await gitTry(repo, "worktree", "prune");
+  return withPathLock(worktreeRegistryKey(repo), async () => {
+    const args = ["worktree", "remove", worktreePath];
+    if (options.shouldForce) args.push("--force");
+    await gitTry(repo, ...args);
+    await gitTry(repo, "worktree", "prune");
+  });
 }
 
 export async function deleteBranch(repo: string, branch: string): Promise<void> {
