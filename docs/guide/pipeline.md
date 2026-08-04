@@ -160,9 +160,16 @@ JFDI-Round: <n>/<max>
 
 The scribe writes the subject and body only. The status line and the trailer are
 appended by the pipeline, so they never depend on an agent getting a format
-right: `git log --format='%(trailers:key=JFDI-Round)'` always answers. A scribe
-that dies or answers with nothing degrades to the stage's own summary — the
-commit is never delayed for prose — and says so on the event stream.
+right: `git log --format='%(trailers:key=JFDI-Round)'` always answers.
+
+What comes back is subprocess output on its way into permanent history, so the
+pipeline enforces the rest of the shape rather than trusting it. A first line
+longer than 72 characters is not a subject: it is kept as body text under a
+plain subject the pipeline writes itself. Control characters git or a terminal
+would choke on are stripped, and a body long enough to be an echo of the diff is
+cut with a visible marker. A scribe that dies or answers with nothing degrades
+to the stage's own summary — the commit is never delayed for prose — and says so
+on the event stream.
 
 ### The comment trail
 
