@@ -187,6 +187,11 @@ async function runCli(
   }
 }
 
+/** The ticket note as it stands on disk, from outside the process. */
+function readTicketNote(sandbox: Sandbox, ticketId: string): Promise<string> {
+  return fs.readFile(path.join(sandbox.project, ".jfdi", "tickets", `${ticketId}.md`), "utf8");
+}
+
 function ticketIdOf(result: CliResult): string {
   const match = /ticket: (\S+)/.exec(result.stdout);
   if (!match?.[1]) throw new Error(`no ticket id in output: ${result.stdout}${result.stderr}`);
@@ -463,6 +468,25 @@ describe("pipeline behavior", () => {
       expect(landed).not.toContain("implement round 1");
       expect(await git(sandbox.project, "branch", "--list", `jfdi/${ticketId}`)).toBe("");
 
+      // The other surface tells the same story on its own: every transition of
+      // the run, ending at the merge, in the note's Comments trail.
+      const trail = (await readTicketNote(sandbox, ticketId)).split("### ").slice(1);
+      const headings = trail.map((entry) => entry.split("\n")[0] ?? "");
+      expect(headings.filter((heading) => /— dispatch round 1$/.test(heading))).toHaveLength(1);
+      expect(headings.filter((heading) => /— implementation round 1$/.test(heading))).toHaveLength(
+        1,
+      );
+      expect(headings.filter((heading) => /— code-review round 1$/.test(heading))).toHaveLength(1);
+      expect(headings.filter((heading) => /— qa round 1$/.test(heading))).toHaveLength(1);
+      const note = await readTicketNote(sandbox, ticketId);
+      expect(note).toContain("> JFDI run started — round 1");
+      // The commit's message, verbatim, on the note as well.
+      expect(note).toContain(`> ${ticketId}: stub-scribed subject`);
+      expect(note).toContain("> JFDI Implementation complete — moving to the mechanical gate");
+      expect(note).toContain("> JFDI-Round: 1/3");
+      expect(note).toContain("> JFDI Code Review PASSED — moving to QA");
+      expect(note).toMatch(/> JFDI Integration merged — landed on `main` as `[0-9a-f]{7}`/);
+
       // A second approval is a clean failure, not a double merge.
       const again = await runCli(sandbox, ["merge", ticketId]);
       expect(again.code).toBe(1);
@@ -495,6 +519,18 @@ describe("pipeline behavior", () => {
 
       // Nothing reached the target branch.
       expect(await git(sandbox.project, "log", "--oneline", "main")).not.toContain("implement");
+
+      // The note carries each failed round's handback — the reviewer's exact
+      // words — and the exhaustion that sent the card to Blocked.
+      const note = await readTicketNote(sandbox, ticketIdOf(run));
+      expect(
+        note.match(/> JFDI Code Review FAILED — returning to Implementation for round 2/g),
+      ).toHaveLength(1);
+      expect(note).toContain("> JFDI Code Review FAILED — moving to Blocked for human review");
+      expect(note).toContain("> needs work");
+      expect(note).toContain(
+        "> JFDI run exhausted its 3 rounds — moving to Blocked for human review",
+      );
     },
     PIPELINE_TIMEOUT_MS,
   );

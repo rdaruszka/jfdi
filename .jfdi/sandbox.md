@@ -35,6 +35,10 @@ JFDI-under-test spawns its own agent sessions and creates its own worktrees:
    `codex` executables on PATH that replay canned JSON event lines and write the
    verdict file its prompt names (match `/(\/\S+\.verdict\.json)/`). This also
    guards against runaway nested session spawning.
+2b. One prompt names no verdict file: the scribe's (`commit-message`), whose
+   whole answer is the commit message it prints as its result text. A stub that
+   ignores it still works — the pipeline falls back to its own wording — but a
+   stub that answers it lets a test assert on real commit subjects.
 3. The inner JFDI gets its own `.jfdi/` setup inside the scratch repo (its
    `init --bare` creates it). Never point it at this repo's `.jfdi/`.
 4. **Always export `JFDI_HOME` to a scratch directory.** Run state now lives in
