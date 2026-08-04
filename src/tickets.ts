@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { parseTicketNote, ticketSpec } from "./ticket-note.js";
+import { parseTicketNote, type TicketNote, ticketSpec } from "./ticket-note.js";
 import { atomicWrite, fileExists, readIfExists } from "./util/fsx.js";
 import { extractWikilink, ticketIdFromCard } from "./util/ids.js";
 
@@ -46,7 +46,7 @@ export async function resolveTicket(cardText: string, ticketsDir: string): Promi
         cardText,
         spec: ticketSpec(note),
         notePath,
-        links: await resolveLinks(note.blocks, note.blockedBy, ticketsDir),
+        links: await resolveLinks(note, ticketsDir),
         mode: note.mode,
       };
     }
@@ -57,15 +57,11 @@ export async function resolveTicket(cardText: string, ticketsDir: string): Promi
   return { id, cardText, spec: cardText, notePath: null, links: [], mode: "default" };
 }
 
-async function resolveLinks(
-  blocks: string[],
-  blockedBy: string[],
-  ticketsDir: string,
-): Promise<TicketLink[]> {
+async function resolveLinks(note: TicketNote, ticketsDir: string): Promise<TicketLink[]> {
   const links: TicketLink[] = [];
   const groups: Array<[TicketLink["kind"], string[]]> = [
-    ["blocks", blocks],
-    ["blocked-by", blockedBy],
+    ["blocks", note.blocks],
+    ["blocked-by", note.blockedBy],
   ];
   for (const [kind, targets] of groups) {
     for (const target of targets) {

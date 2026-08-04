@@ -4,14 +4,14 @@ import { extractWikilink } from "./util/ids.js";
 /**
  * A ticket note's anatomy — the JIRA shape JFDI emulates in markdown:
  * frontmatter, an H1 title, a free-form description, `## Questions`, and an
- * append-only `## Comments` trail. Every part is optional; anything else in
- * the file (a human's own sections, a legacy `## Decisions` or `## Report`
- * block) is unrecognized by design: never read into a prompt, never rewritten.
+ * append-only `## Comments` trail. Every part is optional, and an absent one
+ * parses as empty rather than as an error: notes predate this anatomy, and a
+ * human writes them by hand.
  */
 export interface TicketNote {
   /** The H1 text — the canonical title. Empty when the note has no H1. */
   title: string;
-  /** Everything between the H1 and the first `##` heading: the body agents implement from. */
+  /** The H1 down to the first JFDI-owned section: the body agents implement from. */
   description: string;
   /** The `## Questions` body verbatim — the escalation queue. */
   questions: string;
