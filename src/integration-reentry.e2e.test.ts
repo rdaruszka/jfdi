@@ -4,9 +4,9 @@
  *
  * Two failure modes are pinned here, both derived from the ticket rather than
  * the diff:
- *  - a worktree left mid-rebase by an integration that gave up must not make
- *    the next attempt die on "rebase already in progress" — the stale rebase is
- *    aborted, losslessly, and integration proceeds on its merits;
+ *  - a worktree left mid-merge by an integration that gave up must not make
+ *    the next attempt die on "you have not concluded your merge" — the stale
+ *    merge is aborted, losslessly, and integration proceeds on its merits;
  *  - the begin-column shortcut that treats a saved report as an approval must
  *    only fire while the branch still points at the commit that was signed off;
  *    a branch that moved gets the pipeline, not a silent merge of stale work.
@@ -46,7 +46,7 @@ const CARD_LINE = `- [ ] ${CARD_TEXT}`;
  * two stream-json lines, writes the verdict file its prompt names, and appends
  * each stage it served to `STUB_TRACE` so a test can count pipeline re-runs.
  * `STUB_CONTROL` is re-read on every invocation: `integration: "resolve"`
- * finishes the conflicted rebase, anything else walks away and leaves it in
+ * finishes the conflicted merge, anything else walks away and leaves it in
  * progress.
  */
 const STUB_AGENT = `#!/usr/bin/env node
@@ -85,10 +85,10 @@ if (match) {
     if (control.integration === "resolve") {
       fs.writeFileSync(process.cwd() + "/feature.txt", "reconciled\\n");
       run(["add", "-A"]);
-      run(["-c", "core.editor=true", "rebase", "--continue"]);
+      run(["commit", "--no-edit"]);
       verdict = { resolution: "clean", notes: "kept both sides" };
     } else {
-      verdict = { resolution: "clean", notes: "walked away mid-rebase" };
+      verdict = { resolution: "clean", notes: "walked away mid-merge" };
     }
   } else {
     verdict = { verdict: "pass" };
@@ -286,9 +286,9 @@ async function savedReportCommit(sandbox: Sandbox, ticketId: string): Promise<st
   return (JSON.parse(raw) as { commit: string }).commit;
 }
 
-async function isMidRebase(sandbox: Sandbox, ticketId: string): Promise<boolean> {
+async function isMidMerge(sandbox: Sandbox, ticketId: string): Promise<boolean> {
   const entries = await fs.readdir(path.join(sandbox.project, ".git", "worktrees", ticketId));
-  return entries.includes("rebase-merge") || entries.includes("rebase-apply");
+  return entries.includes("MERGE_HEAD");
 }
 
 async function setControl(sandbox: Sandbox, control: Record<string, string>): Promise<void> {
@@ -316,11 +316,11 @@ async function collideOnTarget(sandbox: Sandbox): Promise<void> {
 
 /**
  * Anything that would tell a user the re-entry tripped over its own leftovers —
- * git says "already a rebase-merge directory", the tool would say "rebase
- * already in progress"; neither is a reason a human can act on.
+ * git says "You have not concluded your merge (MERGE_HEAD exists)", the tool
+ * would say the merge is unfinished; neither is a reason a human can act on.
  */
-function mentionsStaleRebase(text: string): boolean {
-  return /rebase (already )?in progress|no rebase in progress|rebase-merge|rebase-apply/i.test(
+function mentionsStaleMerge(text: string): boolean {
+  return /not concluded your merge|MERGE_HEAD|merge (already )?in progress|no merge to abort/i.test(
     text,
   );
 }
@@ -338,7 +338,7 @@ afterEach(async () => {
 
 describe("re-entering integration from the begin column", () => {
   it(
-    "aborts the rebase a previous integration abandoned and merges on the retry",
+    "aborts the merge a previous integration abandoned and lands on the retry",
     async () => {
       const sandbox = await makeSandbox();
       await setControl(sandbox, { integration: "abandon" });
@@ -352,14 +352,14 @@ describe("re-entering integration from the begin column", () => {
         (board) => columnCards(board, "Blocked").length === 1,
       );
       expect(columnCards(await readBoard(sandbox), "Blocked"), abandoned).toHaveLength(1);
-      expect(await isMidRebase(sandbox, ticketId)).toBe(true);
+      expect(await isMidMerge(sandbox, ticketId)).toBe(true);
       // Aborting has to be lossless, so the branch must still be where the
-      // sign-off left it — a rebase only moves the ref once it completes.
+      // sign-off left it — a conflicted merge commits nothing.
       expect(await git(sandbox.project, "rev-parse", `jfdi/${ticketId}`)).toBe(
         await savedReportCommit(sandbox, ticketId),
       );
 
-      // Second re-dispatch onto that mid-rebase worktree: the stale rebase is
+      // Second re-dispatch onto that mid-merge worktree: the stale merge is
       // cleared and this behaves like any other conflicted integration.
       await setControl(sandbox, { integration: "resolve" });
       await moveCardTo(sandbox, "Ready");
@@ -371,12 +371,12 @@ describe("re-entering integration from the begin column", () => {
       expect(columnCards(await readBoard(sandbox), "Done"), retried).toEqual([
         `- [x] ${CARD_TEXT}`,
       ]);
-      expect(mentionsStaleRebase(abandoned + retried)).toBe(false);
+      expect(mentionsStaleMerge(abandoned + retried)).toBe(false);
       const note = await fs.readFile(
         path.join(sandbox.project, ".jfdi", "tickets", `${ticketId}.md`),
         "utf8",
       );
-      expect(mentionsStaleRebase(note)).toBe(false);
+      expect(mentionsStaleMerge(note)).toBe(false);
       expect(await git(sandbox.project, "log", "--oneline", "main")).toContain("implement v1");
       expect(await git(sandbox.project, "show", "main:feature.txt")).toBe("reconciled");
       // The work was integrated, not rebuilt: implementation ran exactly once.
@@ -386,7 +386,7 @@ describe("re-entering integration from the begin column", () => {
   );
 
   it(
-    "keeps every branch commit when it aborts a stale rebase",
+    "keeps every branch commit when it aborts a stale merge",
     async () => {
       const sandbox = await makeSandbox();
       await setControl(sandbox, { integration: "abandon" });
@@ -396,7 +396,7 @@ describe("re-entering integration from the begin column", () => {
 
       const blocked = await runCli(sandbox, ["merge", ticketId]);
       expect(blocked.code).toBe(2);
-      expect(await isMidRebase(sandbox, ticketId)).toBe(true);
+      expect(await isMidMerge(sandbox, ticketId)).toBe(true);
 
       // The human takes the colliding commit back off the target instead of
       // resolving in the worktree; the retry must find the branch intact.
@@ -404,11 +404,11 @@ describe("re-entering integration from the begin column", () => {
 
       const merged = await runCli(sandbox, ["merge", ticketId]);
       expect(merged.code, merged.output).toBe(0);
-      expect(mentionsStaleRebase(blocked.output + merged.output)).toBe(false);
+      expect(mentionsStaleMerge(blocked.output + merged.output)).toBe(false);
       // No conflict left, so no second integration agent: exactly the one that
-      // abandoned. The signed-off commit itself is what landed.
+      // abandoned. The signed-off commit is the merge commit's second parent.
       expect(await stagesRun(sandbox, "integration")).toBe(1);
-      expect(await git(sandbox.project, "rev-parse", "main")).toBe(signedOff);
+      expect(await git(sandbox.project, "rev-parse", "main^2")).toBe(signedOff);
       expect(await git(sandbox.project, "show", "main:feature.txt")).toBe("v1");
     },
     SCENARIO_TIMEOUT_MS,
@@ -465,9 +465,12 @@ describe("re-entering integration from the begin column", () => {
       );
 
       // Approval, not a rebuild: no second pipeline, and the exact commit the
-      // reviews signed off on is what reached the target branch.
+      // reviews signed off on is a parent of what reached the target branch.
       expect(await stagesRun(sandbox, "implementation"), output).toBe(1);
-      expect(await git(sandbox.project, "rev-parse", "main")).toBe(signedOff);
+      expect(await git(sandbox.project, "rev-parse", "main^2")).toBe(signedOff);
+      expect(await git(sandbox.project, "log", "--format=%s", "--first-parent", "main")).toContain(
+        `Merge jfdi/${ticketId} into main`,
+      );
       expect(columnCards(await readBoard(sandbox), "Done")).toEqual([`- [x] ${CARD_TEXT}`]);
       expect(await git(sandbox.project, "branch", "--list", `jfdi/${ticketId}`)).toBe("");
     },

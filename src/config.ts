@@ -71,7 +71,7 @@ export function defaultConfig(): JfdiConfig {
       // is not the author's own model does not share the author's blind spots.
       "code-review": { harness: "codex", model: "gpt-5.6-sol", effort: "high" },
       qa: { harness: "claude", model: "claude-opus-5", effort: "high" },
-      // Integration only spawns on rebase conflicts, so this prices conflict
+      // Integration only spawns on merge conflicts, so this prices conflict
       // resolution alone — rare, but its output lands on the target branch
       // where the gate cannot catch silently dropped logic.
       integration: { harness: "claude", model: "claude-opus-5", effort: "medium" },

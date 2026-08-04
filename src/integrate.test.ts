@@ -1,7 +1,8 @@
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { git, isAncestor, isRebaseInProgress } from "./git.js";
+import { git, isAncestor, isMergeInProgress, revParse } from "./git.js";
 import { type FakeHandler, FakeHarness } from "./harness/fake.js";
 import { IntegrationQueue, integrateTicket } from "./integrate.js";
 import { type PipelineContext, runPipeline } from "./pipeline.js";
@@ -25,7 +26,7 @@ function passingHandler(file: string) {
       await commitFile(options.cwd, file, "feature\n", `implement ${file}`);
       await writeVerdict(spec.prompt, { status: "done", summary: `built ${file}` });
     } else if (stage === "integration") {
-      throw new Error("integration agent should not run for clean rebases");
+      throw new Error("integration agent should not run for clean merges");
     } else {
       await writeVerdict(spec.prompt, { verdict: "pass" });
     }
@@ -42,19 +43,34 @@ afterEach(async () => {
 });
 
 describe("integrateTicket", () => {
-  it("clean rebase → merge, cleanup, report", async () => {
+  it("clean merge → merge commit on the target, cleanup, report", async () => {
     const context = fixture.context(passingHandler("feat.txt"));
     const ticket = await resolveTicket("Ship feature", fixture.ticketsDir);
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     if (outcome.status !== "passed") return;
+    const signedOff = await revParse(fixture.repo, outcome.worktree.branch);
 
-    // Move main forward (non-conflicting) to force a real rebase.
+    // Move main forward (non-conflicting) so the merge has something to do.
     await commitFile(fixture.repo, "other.txt", "other\n", "unrelated");
+    const targetHead = await revParse(fixture.repo, "main");
 
     const result = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
     expect(result).toEqual({ status: "merged" });
+    // The landing commit: target's prior head first, signed-off commit second.
+    expect(await git(fixture.repo, "rev-parse", "main^1")).toBe(targetHead);
+    expect(await git(fixture.repo, "rev-parse", "main^2")).toBe(signedOff);
+    expect(await isAncestor(fixture.repo, signedOff, "main")).toBe(true);
+    // One entry per ticket on the target's first-parent line.
+    expect(
+      await git(fixture.repo, "rev-list", "--count", "--first-parent", `${targetHead}..main`),
+    ).toBe("1");
+    expect(await git(fixture.repo, "log", "-1", "--format=%s", "main")).toBe(
+      `Merge ${outcome.worktree.branch} into main`,
+    );
+    // Both sides' work is in the landed tree.
     expect(await fs.readFile(path.join(fixture.repo, "feat.txt"), "utf8")).toBe("feature\n");
+    expect(await fs.readFile(path.join(fixture.repo, "other.txt"), "utf8")).toBe("other\n");
     // Worktree removed.
     await expect(fs.access(outcome.worktree.path)).rejects.toThrow();
     // Report appended to the note.
@@ -64,17 +80,65 @@ describe("integrateTicket", () => {
     expect(note).toContain("Merged into `main`");
   });
 
-  it("conflicting rebase: agent resolves, clean verdict → merged", async () => {
+  /**
+   * A target that never moved could fast-forward, and deliberately does not:
+   * one uniform shape per ticket, and a commit to anchor the ticket's trailers.
+   */
+  it("lands a merge commit even when the target could fast-forward", async () => {
+    const context = fixture.context(passingHandler("solo.txt"));
+    const ticket = await resolveTicket("Only ticket", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    if (outcome.status !== "passed") throw new Error("pipeline should pass");
+    const signedOff = await revParse(fixture.repo, outcome.worktree.branch);
+    const targetHead = await revParse(fixture.repo, "main");
+
+    const result = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
+
+    expect(result).toEqual({ status: "merged" });
+    expect(await revParse(fixture.repo, "main")).not.toBe(signedOff);
+    expect(await git(fixture.repo, "rev-parse", "main^1")).toBe(targetHead);
+    expect(await git(fixture.repo, "rev-parse", "main^2")).toBe(signedOff);
+    expect(
+      await git(fixture.repo, "rev-list", "--count", "--first-parent", `${targetHead}..main`),
+    ).toBe("1");
+  });
+
+  /**
+   * The sign-offs bind to a tested tree, so what lands must be the tree the
+   * pre-land gate ran against — not a re-derived one.
+   */
+  it("lands exactly the tree the pre-land gate ran against", async () => {
+    const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-gate-tree-"));
+    const treeFile = path.join(scratch, "tree.txt");
+    const gated = await makeFixture({
+      gate: [{ name: "record-tree", cmd: `git rev-parse "HEAD^{tree}" > ${treeFile}` }],
+    });
+    try {
+      const context = gated.context(passingHandler("gated.txt"));
+      const ticket = await resolveTicket("Gate tree", gated.ticketsDir);
+      const outcome = await runPipeline(context, ticket);
+      if (outcome.status !== "passed") throw new Error("pipeline should pass");
+      await commitFile(gated.repo, "other.txt", "other\n", "unrelated");
+
+      const result = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
+
+      expect(result).toEqual({ status: "merged" });
+      const gatedTree = (await fs.readFile(treeFile, "utf8")).trim();
+      expect(await git(gated.repo, "rev-parse", "main^{tree}")).toBe(gatedTree);
+    } finally {
+      await gated.cleanup();
+      await fs.rm(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it("conflicting merge: agent resolves, clean verdict → merged", async () => {
     const context = fixture.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       if (stage === "implementation") {
         await commitFile(options.cwd, "README.md", "branch version\n", "edit readme");
         await writeVerdict(spec.prompt, { status: "done" });
       } else if (stage === "integration") {
-        // Resolve the conflict like the real agent would.
-        await commitFile(options.cwd, "README.md", "merged version\n", "never used");
-        // commitFile committed; but a rebase is in progress — emulate properly:
-        return { ok: true, text: "" };
+        throw new Error("the pipeline context never resolves conflicts");
       } else {
         await writeVerdict(spec.prompt, { verdict: "pass" });
       }
@@ -84,16 +148,19 @@ describe("integrateTicket", () => {
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     if (outcome.status !== "passed") return;
+    const signedOff = await revParse(fixture.repo, outcome.worktree.branch);
 
     // Conflicting change on main.
     await commitFile(fixture.repo, "README.md", "main version\n", "main edit");
 
     // Swap in a proper conflict-resolving integration handler.
+    let integrationSessions = 0;
     const integrationContext = fixture.context(async (spec, options) => {
       expect(stageOf(spec.prompt)).toBe("integration");
+      integrationSessions++;
       await fs.writeFile(path.join(options.cwd, "README.md"), "merged version\n");
       await git(options.cwd, "add", "README.md");
-      await git(options.cwd, "-c", "core.editor=true", "rebase", "--continue");
+      await git(options.cwd, "commit", "--no-edit");
       await writeVerdict(spec.prompt, { resolution: "clean", notes: "kept both edits" });
       return { ok: true, text: "" };
     });
@@ -104,9 +171,15 @@ describe("integrateTicket", () => {
       outcome.report,
     );
     expect(result.status).toBe("merged");
+    // One conflict, one agent session — the resolution happens once.
+    expect(integrationSessions).toBe(1);
     expect(await fs.readFile(path.join(fixture.repo, "README.md"), "utf8")).toBe(
       "merged version\n",
     );
+    // The resolution lands in the merge commit, over the signed-off parent.
+    expect(await git(fixture.repo, "rev-parse", "main^2")).toBe(signedOff);
+    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
+    expect(note).toContain("kept both edits");
   });
 
   it("quotes the resolution notes into the report, so they cannot forge note anatomy", async () => {
@@ -178,7 +251,7 @@ describe("integrateTicket", () => {
       if (stage === "integration") {
         await fs.writeFile(path.join(options.cwd, "feat2.txt"), "reconciled\n");
         await git(options.cwd, "add", "-A");
-        await git(options.cwd, "-c", "core.editor=true", "rebase", "--continue");
+        await git(options.cwd, "commit", "--no-edit");
         await writeVerdict(spec.prompt, {
           resolution: "complicated",
           notes: "had to rework logic",
@@ -211,7 +284,7 @@ describe("integrateTicket", () => {
       if (stage === "integration") {
         await fs.writeFile(path.join(options.cwd, "feat3.txt"), "broken reconcile\n");
         await git(options.cwd, "add", "-A");
-        await git(options.cwd, "-c", "core.editor=true", "rebase", "--continue");
+        await git(options.cwd, "commit", "--no-edit");
         await writeVerdict(spec.prompt, { resolution: "complicated" });
       } else if (stage === "qa") {
         await writeVerdict(spec.prompt, { verdict: "fail", feedback: "behavior regressed" });
@@ -230,14 +303,15 @@ describe("integrateTicket", () => {
     expect(note).toContain("behavior regressed");
   });
 
-  it("aborts a rebase a previous integration left unfinished and re-integrates", async () => {
+  it("aborts a merge a previous integration left unfinished and re-integrates", async () => {
     const context = fixture.context(passingHandler("feat5.txt"));
-    const ticket = await resolveTicket("Stale rebase", fixture.ticketsDir);
+    const ticket = await resolveTicket("Stale merge", fixture.ticketsDir);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
+    const signedOff = await revParse(fixture.repo, outcome.worktree.branch);
     await commitFile(fixture.repo, "feat5.txt", "main version\n", "collide");
 
-    // First attempt: the agent walks away from the conflict, leaving the rebase open.
+    // First attempt: the agent walks away from the conflict, leaving the merge open.
     const abandoningContext = fixture.context(async (spec) => {
       await writeVerdict(spec.prompt, { resolution: "clean", notes: "gave up" });
       return { ok: true, text: "" };
@@ -249,15 +323,17 @@ describe("integrateTicket", () => {
       outcome.report,
     );
     expect(first.status).toBe("blocked");
-    expect(await isRebaseInProgress(outcome.worktree.path)).toBe(true);
+    expect(await isMergeInProgress(outcome.worktree.path)).toBe(true);
+    // Aborting has to be lossless: the branch is still at its sign-off.
+    expect(await revParse(fixture.repo, outcome.worktree.branch)).toBe(signedOff);
 
-    // Re-dispatch: the stale rebase is aborted, so this is a normal conflicted
-    // integration rather than "rebase already in progress".
+    // Re-dispatch: the stale merge is aborted, so this is a normal conflicted
+    // integration rather than "you have not concluded your merge".
     const resolvingContext = fixture.context(async (spec, options) => {
       expect(stageOf(spec.prompt)).toBe("integration");
       await fs.writeFile(path.join(options.cwd, "feat5.txt"), "reconciled\n");
       await git(options.cwd, "add", "-A");
-      await git(options.cwd, "-c", "core.editor=true", "rebase", "--continue");
+      await git(options.cwd, "commit", "--no-edit");
       await writeVerdict(spec.prompt, { resolution: "clean", notes: "kept both" });
       return { ok: true, text: "" };
     });
@@ -299,7 +375,7 @@ describe("integrateTicket", () => {
         };
       await fs.writeFile(path.join(options.cwd, "feat6.txt"), "reconciled\n");
       await git(options.cwd, "add", "-A");
-      await git(options.cwd, "-c", "core.editor=true", "rebase", "--continue");
+      await git(options.cwd, "commit", "--no-edit");
       await writeVerdict(spec.prompt, { resolution: "clean", notes: "kept both" });
       return { ok: true, text: "" };
     });
@@ -341,7 +417,7 @@ describe("integrateTicket", () => {
    * lands on the target branch — so it has to be the integration entry's own
    * agent, not whichever harness the pipeline stages happened to use.
    */
-  it("resolves a conflicted rebase through the integration stage's own harness", async () => {
+  it("resolves a conflicted merge through the integration stage's own harness", async () => {
     const mixed = await makeFixture({
       stages: {
         implementation: { harness: "claude", model: "claude-opus-5", effort: "high" },
@@ -361,7 +437,7 @@ describe("integrateTicket", () => {
         expect(stageOf(spec.prompt)).toBe("integration");
         await fs.writeFile(path.join(options.cwd, "feat7.txt"), "reconciled\n");
         await git(options.cwd, "add", "-A");
-        await git(options.cwd, "-c", "core.editor=true", "rebase", "--continue");
+        await git(options.cwd, "commit", "--no-edit");
         await writeVerdict(spec.prompt, { resolution: "clean", notes: "kept both" });
         return { ok: true, text: "" };
       };

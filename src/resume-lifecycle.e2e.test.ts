@@ -20,7 +20,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { git, isRebaseInProgress, rebaseOnto } from "./git.js";
+import { git, isMergeInProgress, mergeTargetIntoBranch } from "./git.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -419,14 +419,14 @@ describe("resuming an interrupted run", () => {
       expect(resumed[0]?.data).toMatchObject({
         commitCount: 3,
         hasCheckpointedChanges: false,
-        hasAbortedRebase: false,
+        hasAbortedMerge: false,
       });
     },
     PIPELINE_TIMEOUT_MS,
   );
 
   it(
-    "sanitizes a worktree a killed run left dirty and mid-rebase before the first session",
+    "sanitizes a worktree a killed run left dirty and mid-merge before the first session",
     async () => {
       const sandbox = await makeSandbox();
       await initProject(sandbox);
@@ -438,14 +438,14 @@ describe("resuming an interrupted run", () => {
       const ticketId = ticketIdOf(first);
       const worktree = worktreePath(sandbox, ticketId);
 
-      // What a session killed mid-flight leaves behind: a conflicted rebase and
+      // What a session killed mid-flight leaves behind: a conflicted merge and
       // edits that never got committed.
       await fs.writeFile(path.join(worktree, "README.md"), "branch version\n");
       await git(worktree, "commit", "-am", "branch edit");
       await fs.writeFile(path.join(sandbox.project, "README.md"), "main version\n");
       await git(sandbox.project, "commit", "-am", "main edit");
-      expect((await rebaseOnto(worktree, "main")).hasConflict).toBe(true);
-      expect(await isRebaseInProgress(worktree)).toBe(true);
+      expect((await mergeTargetIntoBranch(worktree, "main")).hasConflict).toBe(true);
+      expect(await isMergeInProgress(worktree)).toBe(true);
       await fs.writeFile(path.join(worktree, "salvaged.txt"), "half-written\n");
 
       const second = await runCli(sandbox, ["run", "Add a greeting"], {
@@ -456,8 +456,8 @@ describe("resuming an interrupted run", () => {
 
       // The agent found a clean, committed tree — not a conflicted one.
       expect(await readPrompt(sandbox, "run2", "tree-at-first-session.txt")).toBe("");
-      expect(await isRebaseInProgress(worktree)).toBe(false);
-      // The rebase was undone, not resolved: the branch's own edit survived.
+      expect(await isMergeInProgress(worktree)).toBe(false);
+      // The merge was undone, not resolved: the branch's own edit survived.
       expect(await fs.readFile(path.join(worktree, "README.md"), "utf8")).toBe("branch version\n");
       // The uncommitted work was salvaged, not discarded.
       expect(await fs.readFile(path.join(worktree, "salvaged.txt"), "utf8")).toBe("half-written\n");
@@ -473,14 +473,14 @@ describe("resuming an interrupted run", () => {
       // The prompt says what was done to the tree on the agent's behalf.
       const prompt = await readPrompt(sandbox, "run2", "implementation-0.txt");
       expect(prompt).toContain("recovered from interrupted run");
-      expect(prompt).toContain("rebase onto `main` was aborted");
+      expect(prompt).toContain("merge of `main` into this branch was aborted");
 
       // And the event stream records the recovery, not just the resume.
       const resumed = (await readEvents(sandbox)).filter((event) => event.type === "resumed");
       expect(resumed).toHaveLength(1);
       expect(resumed[0]?.data).toMatchObject({
         hasCheckpointedChanges: true,
-        hasAbortedRebase: true,
+        hasAbortedMerge: true,
       });
     },
     PIPELINE_TIMEOUT_MS,

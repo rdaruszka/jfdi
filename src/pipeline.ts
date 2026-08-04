@@ -423,7 +423,7 @@ export interface QaStageOptions {
   previousFailure?: FeedbackItem | undefined;
 }
 
-/** Run QA alone (used post-rebase on a complicated merge). */
+/** Run QA alone (used on a complicated integration merge). */
 export async function runQaStage(
   context: PipelineContext,
   ticket: Ticket,
@@ -911,7 +911,7 @@ export async function runPipeline(
     context.log.emit("resumed", ticket.id, {
       commitCount: resume.commitCount,
       hasCheckpointedChanges: resume.hasCheckpointedChanges,
-      hasAbortedRebase: resume.hasAbortedRebase,
+      hasAbortedMerge: resume.hasAbortedMerge,
     });
 
   // Why the previous run failed, recovered from disk; `history` is this run's own.

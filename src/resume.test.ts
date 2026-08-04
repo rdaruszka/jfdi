@@ -1,7 +1,13 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createWorktree, git, isRebaseInProgress, rebaseOnto, type Worktree } from "./git.js";
+import {
+  createWorktree,
+  git,
+  isMergeInProgress,
+  mergeTargetIntoBranch,
+  type Worktree,
+} from "./git.js";
 import {
   type FeedbackItem,
   formatResumeSection,
@@ -39,7 +45,7 @@ describe("prepareResume", () => {
     expect(resume?.commitCount).toBe(1);
     expect(resume?.recentCommits).toContain("start the feature");
     expect(resume?.hasCheckpointedChanges).toBe(false);
-    expect(resume?.hasAbortedRebase).toBe(false);
+    expect(resume?.hasAbortedMerge).toBe(false);
   });
 
   it("checkpoint-commits what a killed session left uncommitted", async () => {
@@ -53,17 +59,17 @@ describe("prepareResume", () => {
     expect(resume?.commitCount).toBe(1);
   });
 
-  it("aborts a rebase the interrupted run left in progress", async () => {
+  it("aborts a merge the interrupted run left in progress", async () => {
     await commitFile(worktree.path, "shared.txt", "branch version\n", "branch edit");
     await commitFile(fixture.repo, "shared.txt", "main version\n", "main edit");
-    const rebase = await rebaseOnto(worktree.path, "main");
-    expect(rebase.hasConflict).toBe(true);
-    expect(await isRebaseInProgress(worktree.path)).toBe(true);
+    const merge = await mergeTargetIntoBranch(worktree.path, "main");
+    expect(merge.hasConflict).toBe(true);
+    expect(await isMergeInProgress(worktree.path)).toBe(true);
 
     const resume = await prepareResume(worktree.path, "main", "ticket");
-    expect(resume?.hasAbortedRebase).toBe(true);
-    expect(await isRebaseInProgress(worktree.path)).toBe(false);
-    // Pre-rebase state restored: the branch's own commit is back and intact.
+    expect(resume?.hasAbortedMerge).toBe(true);
+    expect(await isMergeInProgress(worktree.path)).toBe(false);
+    // Pre-merge state restored: the branch's own commit is back and intact.
     expect(await fs.readFile(path.join(worktree.path, "shared.txt"), "utf8")).toBe(
       "branch version\n",
     );
@@ -85,13 +91,13 @@ describe("formatResumeSection", () => {
     expect(section).toContain("do not start over");
     // Nothing was recovered or aborted, so neither is claimed.
     expect(section).not.toContain("recovered from interrupted run");
-    expect(section).not.toContain("rebase");
+    expect(section).not.toContain("was aborted");
   });
 
   it("names the recovery steps it took", async () => {
     await commitFile(worktree.path, "shared.txt", "branch version\n", "branch edit");
     await commitFile(fixture.repo, "shared.txt", "main version\n", "main edit");
-    await rebaseOnto(worktree.path, "main");
+    await mergeTargetIntoBranch(worktree.path, "main");
     await fs.writeFile(path.join(worktree.path, "scratch.txt"), "half-written\n");
 
     const section = formatResumeSection(
@@ -100,7 +106,7 @@ describe("formatResumeSection", () => {
       "main",
     );
     expect(section).toContain("recovered from interrupted run");
-    expect(section).toContain("rebase onto `main` was aborted");
+    expect(section).toContain("merge of `main` into this branch was aborted");
   });
 });
 

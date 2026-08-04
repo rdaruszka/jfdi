@@ -1,5 +1,5 @@
-A rebase of branch `{{BRANCH}}` onto `{{TARGET_BRANCH}}` has hit conflicts.
-Resolve them and complete the rebase.
+A merge of `{{TARGET_BRANCH}}` into branch `{{BRANCH}}` has hit conflicts.
+Resolve them and complete the merge.
 
 ## Ticket: {{TICKET_ID}}
 
@@ -7,9 +7,9 @@ Resolve them and complete the rebase.
 
 ## Rules
 
-- Resolve every conflict, preserving the intent of both sides, then continue the
-  rebase to completion (`git add` the resolutions, `git rebase --continue`).
-- Never abort the rebase; never force-push; never touch `{{TARGET_BRANCH}}` itself.
+- Resolve every conflict, preserving the intent of both sides, then complete the
+  merge (`git add` the resolutions, `git commit --no-edit`).
+- Never abort the merge; never force-push; never touch `{{TARGET_BRANCH}}` itself.
 - Afterwards, judge your own resolution honestly: if you had to touch real logic
   (not adjacent-line noise), report "complicated" — the change will be re-validated.
 

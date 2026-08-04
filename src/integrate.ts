@@ -2,13 +2,15 @@ import * as path from "node:path";
 import type { StageName } from "./events.js";
 import { formatGateFailure, runGate } from "./gate.js";
 import {
-  abortRebase,
+  abortMerge,
+  commitMerge,
   deleteBranch,
   fastForward,
   isAncestor,
-  isRebaseInProgress,
-  rebaseOnto,
+  isMergeInProgress,
+  mergeTargetIntoBranch,
   removeWorktree,
+  revParse,
   ticketBranch,
   type Worktree,
 } from "./git.js";
@@ -27,8 +29,8 @@ import { todayIsoDate } from "./util/dates.js";
 import { ensureDir, fileExists } from "./util/fsx.js";
 import { type IntegrationVerdict, readIntegrationVerdict } from "./verdicts.js";
 
-/** Git output quoted into a blocked reason when a rebase fails outright. */
-const MAX_REBASE_ERROR_CHARS = 500;
+/** Git output quoted into a blocked reason when the merge fails outright. */
+const MAX_MERGE_ERROR_CHARS = 500;
 
 export type IntegrateOutcome =
   | { status: "merged" }
@@ -124,7 +126,7 @@ async function requalifyAfterMerge(
   await ensureDir(qaDir);
   const qa = await runQaStage(context, ticket, worktree, qaDir, notePath, 0, {
     gateSummary:
-      "The branch was just rebased with conflict resolutions; the pipeline re-runs the full mechanical gate after your session — do not run it yourself.",
+      "The target branch was just merged in with conflict resolutions; the pipeline re-runs the full mechanical gate after your session — do not run it yourself.",
   });
   if (qa.verdict?.verdict !== "pass") {
     const detail = qa.verdict?.feedback ?? qa.verdict?.question ?? "no valid verdict";
@@ -137,11 +139,11 @@ async function requalifyAfterMerge(
 }
 
 /**
- * A conflicted rebase, from conflict to landable branch: the Integration agent
+ * A conflicted merge, from conflict to landable tree: the Integration agent
  * resolves in the worktree, the gate reruns on the result, and a complicated
  * resolution goes back through QA before it is allowed near the target.
  */
-async function resolveConflictedRebase(
+async function resolveConflictedMerge(
   context: PipelineContext,
   ticket: Ticket,
   worktree: Worktree,
@@ -150,10 +152,10 @@ async function resolveConflictedRebase(
   const runDir = path.join(runsDir(context.stateDir, ticket.id), "integration");
   await ensureDir(runDir);
   const verdict = await runIntegrationAgent(context, ticket, worktree, runDir);
-  if (await isRebaseInProgress(worktree.path))
+  if (await isMergeInProgress(worktree.path))
     return {
       status: "blocked",
-      reason: "integration agent left the rebase unfinished — resolve manually in the worktree",
+      reason: "integration agent left the merge unfinished — resolve manually in the worktree",
     };
   if (!verdict) return { status: "blocked", reason: "integration agent produced no valid verdict" };
   const notes = verdict.notes ?? "";
@@ -171,9 +173,20 @@ async function resolveConflictedRebase(
 }
 
 /**
- * Integrate one finished ticket: rebase onto the target branch, resolve
- * conflicts via the Integration agent, rerun the gate, judge complicated
- * merges back through QA, then fast-forward the target. The caller is
+ * The landing commit's message. It names the ticket, and is where trailers
+ * (sign-off shas, run id) belong once the pipeline grows them.
+ */
+function mergeCommitMessage(ticket: Ticket, branch: string, target: string): string {
+  return `Merge ${branch} into ${target}\n\n${ticket.cardText}\n`;
+}
+
+/**
+ * Integrate one finished ticket: merge the target branch into the ticket
+ * branch in its own worktree, resolve conflicts via the Integration agent,
+ * rerun the gate, judge complicated merges back through QA, then land the
+ * tested tree on the target as a merge commit — target's prior head first
+ * parent, signed-off branch head second, so the sign-offs stay reachable and
+ * `git log --first-parent` reads one entry per ticket. The caller is
  * responsible for serialization — exactly one integration runs at a time.
  */
 export async function integrateTicket(
@@ -187,20 +200,20 @@ export async function integrateTicket(
     ticket,
     path.join(context.repoRoot, context.config.ticketsDir),
   );
-  // A previous integration can leave the worktree mid-rebase (the agent gave
-  // up half-resolved and we blocked). Re-entering there makes git refuse with
-  // "rebase already in progress" — which is not a conflict, so it would block
-  // again with a baffling reason. Abort first: a mid-rebase worktree has a
-  // detached HEAD and an untouched branch ref, so this restores the
-  // pre-rebase state losslessly. A worktree that is gone has no rebase to
-  // abort; the rebase below reports its absence as a blocked integration.
-  const hadStaleRebase =
-    (await fileExists(worktree.path)) && (await isRebaseInProgress(worktree.path));
-  if (hadStaleRebase) await abortRebase(worktree.path);
+  // A previous integration can leave the worktree mid-merge (the agent gave up
+  // half-resolved and we blocked). Re-entering there makes git refuse with
+  // "you have not concluded your merge" — which is not a conflict, so it would
+  // block again with a baffling reason. Abort first: a conflicted merge has
+  // committed nothing and left the branch ref alone, so this restores the
+  // pre-merge state losslessly. A worktree that is gone has no merge to abort;
+  // the merge below reports its absence as a blocked integration.
+  const hadStaleMerge =
+    (await fileExists(worktree.path)) && (await isMergeInProgress(worktree.path));
+  if (hadStaleMerge) await abortMerge(worktree.path);
   context.log.emit(
     "merge_start",
     ticket.id,
-    hadStaleRebase ? { note: "aborted a stale rebase left in the worktree" } : undefined,
+    hadStaleMerge ? { note: "aborted a stale merge left in the worktree" } : undefined,
   );
 
   // Human may have merged by hand (on-approval mode) — never double-merge.
@@ -211,21 +224,25 @@ export async function integrateTicket(
     return { status: "already-merged" };
   }
 
-  // 1. Rebase onto the target.
-  const rebase = await rebaseOnto(worktree.path, target);
+  // Both parents of the landing commit, read before the merge moves either.
+  const signedOffCommit = await revParse(context.repoRoot, worktree.branch);
+  const targetHead = await revParse(context.repoRoot, target);
+
+  // 1. Merge the target into the branch, in the worktree.
+  const merge = await mergeTargetIntoBranch(worktree.path, target);
   let resolutionNote = "";
-  if (!rebase.ok) {
-    if (!rebase.hasConflict) {
-      const reason = `rebase onto ${target} failed: ${rebase.output.slice(0, MAX_REBASE_ERROR_CHARS)}`;
+  if (!merge.ok) {
+    if (!merge.hasConflict) {
+      const reason = `merging ${target} into ${worktree.branch} failed: ${merge.output.slice(0, MAX_MERGE_ERROR_CHARS)}`;
       return blocked(context, ticket, notePath, reason);
     }
     // 2–4. Conflicts — agent resolution, gate, and re-QA if it got complicated.
-    const resolution = await resolveConflictedRebase(context, ticket, worktree, notePath);
+    const resolution = await resolveConflictedMerge(context, ticket, worktree, notePath);
     if (resolution.status === "blocked")
       return blocked(context, ticket, notePath, resolution.reason);
     resolutionNote = resolution.notes;
   } else {
-    // Clean rebase still reruns the gate pre-merge.
+    // Clean merge still reruns the gate pre-land.
     const gate = await runGate(context.config.gate, worktree.path);
     context.log.emit("gate_result", ticket.id, { ok: gate.ok });
     if (!gate.ok) {
@@ -233,14 +250,20 @@ export async function integrateTicket(
         context,
         ticket,
         notePath,
-        `gate failed after rebase onto ${target}:\n\n${formatGateFailure(gate)}`,
+        `gate failed after merging ${target} into ${worktree.branch}:\n\n${formatGateFailure(gate)}`,
       );
     }
   }
 
-  // 5. Land it.
+  // 5. Land it: the tree the gate just ran against, under a merge commit that
+  //    keeps the target's line first and the signed-off commit reachable.
   try {
-    await fastForward(context.repoRoot, target, worktree.branch);
+    const landing = await commitMerge(
+      worktree.path,
+      { firstParent: targetHead, secondParent: signedOffCommit },
+      mergeCommitMessage(ticket, worktree.branch, target),
+    );
+    await fastForward(context.repoRoot, target, landing);
   } catch (error) {
     return blocked(context, ticket, notePath, `merge failed: ${(error as Error).message}`);
   }

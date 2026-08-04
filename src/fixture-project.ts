@@ -90,7 +90,7 @@ export async function createProjectFixture(
   await ensureJfdiGitignore(jfdiDir);
   await ensurePrompts(jfdiDir);
 
-  // A short realistic history, not one blob commit — merges and rebases get a
+  // A short realistic history, not one blob commit — merges get a
   // deterministic baseline and `git log` archaeology has something to find.
   await commitPaths(destinationDir, "chore: project tooling", [
     "package.json",

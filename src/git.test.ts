@@ -3,18 +3,21 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  abortMerge,
   branchExists,
   commitAllIfDirty,
   commitCount,
+  commitMerge,
   createWorktree,
   currentBranch,
   fastForward,
   GitError,
   git,
   isAncestor,
-  isRebaseInProgress,
-  rebaseOnto,
+  isMergeInProgress,
+  mergeTargetIntoBranch,
   removeWorktree,
+  revParse,
   ticketBranch,
 } from "./git.js";
 
@@ -118,41 +121,101 @@ describe("worktrees", () => {
   });
 });
 
-describe("rebase and merge", () => {
-  it("clean rebase onto a moved target, then fast-forward when target not checked out elsewhere", async () => {
+describe("merge and land", () => {
+  it("clean merge of a moved target, then lands a merge commit with the target first", async () => {
     const worktree = await createWorktree(repo, worktreesDir, "feat", "main");
     await write(worktree.path, "feat.txt", "feature\n");
     await commit(worktree.path, "feat");
+    const signedOff = await revParse(repo, "jfdi/feat");
     // Move main forward with a non-conflicting change.
     await write(repo, "other.txt", "other\n");
     await commit(repo, "other");
-
-    const rebase = await rebaseOnto(worktree.path, "main");
-    expect(rebase).toMatchObject({ ok: true, hasConflict: false });
+    const targetHead = await revParse(repo, "main");
     expect(await commitCount(worktree.path, "main")).toBe(1);
 
+    const merge = await mergeTargetIntoBranch(worktree.path, "main");
+    expect(merge).toMatchObject({ ok: true, hasConflict: false });
+    const testedTree = await git(worktree.path, "rev-parse", "HEAD^{tree}");
+
+    const landing = await commitMerge(
+      worktree.path,
+      { firstParent: targetHead, secondParent: signedOff },
+      "Merge jfdi/feat into main",
+    );
     // main is checked out in the primary worktree and clean → ff merge.
-    await fastForward(repo, "main", "jfdi/feat");
-    expect(await isAncestor(repo, "jfdi/feat", "main")).toBe(true);
+    await fastForward(repo, "main", landing);
+
+    expect(await revParse(repo, "main")).toBe(landing);
+    expect(await git(repo, "rev-parse", "main^1")).toBe(targetHead);
+    expect(await git(repo, "rev-parse", "main^2")).toBe(signedOff);
+    expect(await git(repo, "rev-parse", "main^{tree}")).toBe(testedTree);
+    expect(await isAncestor(repo, signedOff, "main")).toBe(true);
     expect(await fs.readFile(path.join(repo, "feat.txt"), "utf8")).toBe("feature\n");
+    expect(await fs.readFile(path.join(repo, "other.txt"), "utf8")).toBe("other\n");
   });
 
-  it("detects conflicts and leaves the rebase in progress for the agent", async () => {
+  it("lands a merge commit even when the target could fast-forward", async () => {
+    const worktree = await createWorktree(repo, worktreesDir, "noff", "main");
+    await write(worktree.path, "only.txt", "only\n");
+    await commit(worktree.path, "only");
+    const signedOff = await revParse(repo, "jfdi/noff");
+    const targetHead = await revParse(repo, "main");
+
+    // Target has not moved: nothing to merge, but the landing shape is uniform.
+    const merge = await mergeTargetIntoBranch(worktree.path, "main");
+    expect(merge.ok).toBe(true);
+    expect(await revParse(worktree.path, "HEAD")).toBe(signedOff);
+
+    const landing = await commitMerge(
+      worktree.path,
+      { firstParent: targetHead, secondParent: signedOff },
+      "Merge jfdi/noff into main",
+    );
+    await fastForward(repo, "main", landing);
+
+    expect(await git(repo, "rev-list", "--count", "--first-parent", `${targetHead}..main`)).toBe(
+      "1",
+    );
+    expect(await git(repo, "rev-parse", "main^2")).toBe(signedOff);
+  });
+
+  it("detects conflicts and leaves the merge in progress for the agent", async () => {
     const worktree = await createWorktree(repo, worktreesDir, "clash", "main");
     await write(worktree.path, "README.md", "branch version\n");
     await commit(worktree.path, "branch edit");
+    const signedOff = await revParse(repo, "jfdi/clash");
     await write(repo, "README.md", "main version\n");
     await commit(repo, "main edit");
 
-    const rebase = await rebaseOnto(worktree.path, "main");
-    expect(rebase.ok).toBe(false);
-    expect(rebase.hasConflict).toBe(true);
-    expect(await isRebaseInProgress(worktree.path)).toBe(true);
+    const merge = await mergeTargetIntoBranch(worktree.path, "main");
+    expect(merge.ok).toBe(false);
+    expect(merge.hasConflict).toBe(true);
+    expect(await isMergeInProgress(worktree.path)).toBe(true);
+    // A conflicted merge commits nothing: the signed-off tip is untouched.
+    expect(await revParse(repo, "jfdi/clash")).toBe(signedOff);
     // Resolve as the integration agent would.
     await write(worktree.path, "README.md", "merged version\n");
     await git(worktree.path, "add", "README.md");
-    await git(worktree.path, "-c", "core.editor=true", "rebase", "--continue");
-    expect(await isRebaseInProgress(worktree.path)).toBe(false);
+    await git(worktree.path, "commit", "--no-edit");
+    expect(await isMergeInProgress(worktree.path)).toBe(false);
+  });
+
+  it("aborts a conflicted merge losslessly", async () => {
+    const worktree = await createWorktree(repo, worktreesDir, "abandoned", "main");
+    await write(worktree.path, "README.md", "branch version\n");
+    await commit(worktree.path, "branch edit");
+    const signedOff = await revParse(repo, "jfdi/abandoned");
+    await write(repo, "README.md", "main version\n");
+    await commit(repo, "main edit");
+    expect((await mergeTargetIntoBranch(worktree.path, "main")).hasConflict).toBe(true);
+
+    await abortMerge(worktree.path);
+
+    expect(await isMergeInProgress(worktree.path)).toBe(false);
+    expect(await revParse(repo, "jfdi/abandoned")).toBe(signedOff);
+    expect(await fs.readFile(path.join(worktree.path, "README.md"), "utf8")).toBe(
+      "branch version\n",
+    );
   });
 
   it("fastForward refuses non-descendants", async () => {
