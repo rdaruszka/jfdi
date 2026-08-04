@@ -32,7 +32,7 @@ JFDI is self-hosting from milestone 1: JFDI's own tickets become its first board
 
 ## Architecture (one paragraph)
 
-The **coordinator** watches `board.md` (Obsidian Kanban format), dispatches each ready card into its own **git worktree** on branch `jfdi/<ticket-id>`, and runs a per-ticket pipeline of fresh Claude Code or Codex sessions: **Implementation → mechanical gate → Code Review → QA**, with feedback rounds (cap: `pipeline.max_rounds`, default 3). **Integration** is coordinator-owned and globally serialized — one merge at a time, rebase onto the target branch, rerun the gate, merge. Every transition appends to the project's `events.jsonl` under `~/.jfdi/projects/<project-key>/`; `state.json` is a derived snapshot; the TUI is a pure renderer over that stream.
+The **coordinator** watches `board.md` (Obsidian Kanban format), dispatches each ready card into its own **git worktree** on branch `jfdi/<ticket-id>`, and runs a per-ticket pipeline of fresh Claude Code or Codex sessions: **Implementation → mechanical gate → Code Review → QA**, with feedback rounds (cap: `pipeline.max_rounds`, default 3). **Integration** is coordinator-owned and globally serialized — one merge at a time: merge the target branch into the ticket branch, rerun the gate, then land that tested tree on the target as a merge commit (target's prior head first parent, signed-off branch head second). Every transition appends to the project's `events.jsonl` under `~/.jfdi/projects/<project-key>/`; `state.json` is a derived snapshot; the TUI is a pure renderer over that stream.
 
 ## Layout
 
@@ -93,7 +93,7 @@ Use these terms exactly; introduce no synonyms. The list grows only by editing t
 - **gate** — the mechanical check (`pnpm build && pnpm test && pnpm lint`); all must exit zero.
 - **round** — one feedback cycle: fix → gate → reviews (cap: `pipeline.max_rounds`).
 - **sign-off** — a review stage's approval, bound to a specific commit.
-- **integration** — the coordinator-owned rebase → gate → merge step; globally serialized.
+- **integration** — the coordinator-owned merge → gate → land step; globally serialized. Lands one merge commit per ticket; the signed-off commit stays reachable as its second parent.
 - **coordinator** — the long-running process that watches the board and dispatches runs.
 - **harness** — the agent-session abstraction (`spawn(promptSpec, cwd) → event stream`, plus interactive launch); Claude Code and Codex are implementations.
 - **worktree** — the isolated git checkout (branch `jfdi/<ticket-id>`) a run works in.

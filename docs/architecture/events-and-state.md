@@ -59,7 +59,7 @@ One JSON object per line:
 | Type | Payload | Meaning |
 |---|---|---|
 | `dispatch` | `title`, `branch` | A run started for the ticket |
-| `resumed` | `commitCount`, `hasCheckpointedChanges`, `hasAbortedRebase` | The run continues prior partial work |
+| `resumed` | `commitCount`, `hasCheckpointedChanges`, `hasAbortedMerge` | The run continues prior partial work |
 | `round_start` | `round` | A feedback round began |
 | `stage_start` | `stage`, `harness`, `model?`, `effort?`, `isContinuation?` | An agent session started. The selection fields are the record of which agent produced the work — `model`/`effort` are absent when the stage configured none. |
 | `stage_end` | `stage`, `verdict` | …and ended (`pass`/`fail`/`done`/`escalate`/`clean`/`complicated`, or `invalid-verdict` / `session-failed`) |

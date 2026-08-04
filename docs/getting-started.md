@@ -81,8 +81,10 @@ Review the report in the ticket note under `.jfdi/tickets/`, then:
 jfdi merge add-a-version-flag-<hash>
 ```
 
-which rebases the ticket branch onto your target branch, reruns the gate, and
-fast-forwards. Linear history, no merge commit.
+which merges your target branch into the ticket branch, reruns the gate, and
+lands the result on the target as a single merge commit — so the commit the
+reviews signed off on stays reachable, and `git log --first-parent` still reads
+one entry per ticket.
 
 If the run **blocks** instead (exit code 2), the reason — an escalated question
 with a recommended answer, or the round-by-round feedback history — is in the

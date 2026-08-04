@@ -149,7 +149,7 @@ event, so `jfdi logs` answers "which model produced this" after the fact.
   scaffolded project fails at code-review. The failure names the missing binary
   and points at `stages.code-review` — change that entry, or install the CLI.
 - **Integration runs a strong model at medium effort.** It only spawns on
-  rebase conflicts, so the setting prices conflict resolution alone: rare
+  merge conflicts, so the setting prices conflict resolution alone: rare
   enough that cost is negligible, and its output lands directly on the target
   branch where the gate cannot catch silently dropped logic.
 

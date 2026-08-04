@@ -15,42 +15,47 @@ to be `main`.
 flowchart TD
     START([merge_start]) --> AM{Branch already<br/>contained in target?}
     AM -->|yes| CLOSE([Close card — already merged])
-    AM -->|no| REBASE[git rebase target]
-    REBASE -->|clean| GATE1{Gate}
-    REBASE -->|conflicts| AGENT[Integration agent<br/>resolves conflicts]
+    AM -->|no| MERGE[git merge target<br/>in the worktree]
+    MERGE -->|clean| GATE1{Gate}
+    MERGE -->|conflicts| AGENT[Integration agent<br/>resolves conflicts]
     AGENT --> GATE2{Gate}
     GATE2 -->|pass| JUDGE{Agent's own judgment:<br/>clean or complicated?}
-    JUDGE -->|clean| FF
-    JUDGE -->|complicated| REQA[Re-run QA on the<br/>rebased branch]
-    REQA -->|pass + gate| FF[Fast-forward target<br/>to the branch]
+    JUDGE -->|clean| LAND
+    JUDGE -->|complicated| REQA[Re-run QA on the<br/>merged branch]
+    REQA -->|pass + gate| LAND[Land the tested tree as a<br/>merge commit on the target]
     REQA -->|fail| BLOCKED([Blocked])
-    GATE1 -->|pass| FF
+    GATE1 -->|pass| LAND
     GATE1 -->|fail| BLOCKED
     GATE2 -->|fail| BLOCKED
-    FF --> DONE([merged — worktree removed,<br/>branch deleted, card → Done ✓])
+    LAND --> DONE([merged — worktree removed,<br/>branch deleted, card → Done ✓])
 ```
 
 In detail:
 
 1. **Already-merged short-circuit.** If the branch is already contained in the
    target (you merged it by hand), the card is closed without touching git.
-2. **Rebase** the ticket branch onto the target, in the ticket's worktree. A
-   stale in-progress rebase left by a crash is aborted first.
+2. **Merge the target into the ticket branch**, in the ticket's worktree — so
+   the merged state is built and tested where the run already lives. A stale
+   in-progress merge left by a crash is aborted first (a conflicted merge has
+   committed nothing, so this is lossless).
 3. **Conflicts are agent-resolved.** A fresh Integration agent session resolves
-   every conflict, preserving both sides' intent, and continues the rebase. It is
-   forbidden to abort, force-push, or touch the target branch.
-4. **Gate rerun.** The full mechanical gate runs on the rebased result — whether
+   every conflict, preserving both sides' intent, and completes the merge. It is
+   forbidden to abort, force-push, or touch the target branch. One merge means
+   one resolution, however many commits the branch holds.
+4. **Gate rerun.** The full mechanical gate runs on the merged result — whether
    or not there were conflicts.
 5. **The complicated-merge valve.** The Integration agent judges its own
    resolution: `clean` (adjacent-line noise) or `complicated` (it touched real
-   logic). A complicated resolution triggers a fresh QA session on the rebased
-   branch — the reviews signed off on a commit that no longer exists as-was, so
-   the behavior gets re-validated before landing. QA must pass, and the gate runs
-   once more after it.
-6. **Fast-forward.** The merge itself is strictly linear: rebase then
-   fast-forward (or a plain ref update when the target isn't checked out). No
-   merge commits. If the target branch is checked out with uncommitted changes,
-   integration blocks rather than stepping on your working tree.
+   logic). A complicated resolution triggers a fresh QA session on the merged
+   branch — the reviews signed off on code that now sits next to changes they
+   never saw, so the behavior gets re-validated before landing. QA must pass,
+   and the gate runs once more after it.
+6. **Land the merge commit.** The tree the gate just passed is committed with
+   the target's prior head as **first** parent and the signed-off branch head as
+   **second**, and the target moves to it (a fast-forward, or a plain ref update
+   when the target isn't checked out). Always a merge commit, even when a
+   fast-forward would do. If the target branch is checked out with uncommitted
+   changes, integration blocks rather than stepping on your working tree.
 7. **Cleanup.** On success the worktree is removed and the `jfdi/<id>` branch
    deleted; the card moves to Done, checked off, and a dated `## Report` entry is
    appended to the ticket note.
@@ -104,9 +109,26 @@ the same branch with your feedback in context.
 ## Why serialized?
 
 Concurrent builds finish out of order, and each merge changes the target branch
-that the next merge must rebase onto. Serializing integration — one global
+that the next merge has to reconcile with. Serializing integration — one global
 critical section, pulled in completion order — is what turns N parallel
-pipelines into a linear, always-green target branch. The complicated-merge → re-QA
-valve is the safety net for the rebases this forces; a dependency graph between
-tickets is deliberately out of scope (ordering is expressed by what you choose to
-put in the begin column).
+pipelines into an always-green target branch whose first-parent line reads one
+ticket at a time. The complicated-merge → re-QA valve is the safety net for the
+merges this forces; a dependency graph between tickets is deliberately out of
+scope (ordering is expressed by what you choose to put in the begin column).
+
+## Why a merge commit, not a rebase
+
+Sign-offs bind to a specific commit sha. A rebase rewrites the branch, so the
+commits the reviewers approved would stop existing the moment integration
+succeeded — what landed would be a set of commits no reviewer ever saw, and
+every intermediate rebased commit would be a state the gate never ran against.
+The merge commit keeps the signed-off sha as a parent: permanently reachable,
+and auditable against the ticket note's report.
+
+The tidy view survives it. `git log --first-parent <target>` shows one entry per
+ticket, and `git bisect --first-parent` follows the same line; the full graph —
+what the agent actually built, which round fixed what — stays underneath instead
+of being deleted. Conflicts resolve once for the whole branch rather than once
+per commit replayed.
+
+There is no config option for this: merge is the behavior, not a mode.
