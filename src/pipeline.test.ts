@@ -441,6 +441,62 @@ describe("runPipeline", () => {
     expect(qaPrompt).not.toContain("```diff");
   });
 
+  it("hands stages the note's slice, and reports a link naming no ticket", async () => {
+    await fs.writeFile(
+      path.join(fixture.ticketsDir, "sliced.md"),
+      [
+        "---",
+        "blocked-by:",
+        "  - [[never-written]]",
+        "---",
+        "",
+        "# Slice the note",
+        "",
+        "Only part of this note belongs in a prompt.",
+        "",
+        "## Comments",
+        "",
+        "### 2026-08-03T09:00:00.000Z — implementation round 1",
+        "",
+        "Pipeline narration for humans.",
+        "",
+        "### 2026-08-03T09:30:00.000Z — Decision (implementation, round 1)",
+        "",
+        "Assumed UTC timestamps.",
+        "",
+        "## Report",
+        "",
+        "An earlier run's report.",
+        "",
+      ].join("\n"),
+    );
+    let prompt = "";
+    const context = fixture.context(async (spec, options) => {
+      const stage = stageOf(spec.prompt);
+      if (stage === "implementation") {
+        prompt = spec.prompt;
+        await commitFile(options.cwd, "impl.txt", "done\n", "implement");
+        await writeVerdict(spec.prompt, { status: "done" });
+      } else {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    });
+    const events: JfdiEvent[] = [];
+    context.log.on((event) => events.push(event));
+
+    const ticket = await resolveTicket("[[sliced]]", fixture.ticketsDir);
+    expect((await runPipeline(context, ticket)).status).toBe("passed");
+
+    expect(prompt).toContain("Only part of this note belongs in a prompt.");
+    expect(prompt).toContain("Assumed UTC timestamps.");
+    expect(prompt).not.toContain("Pipeline narration for humans.");
+    expect(prompt).not.toContain("An earlier run's report.");
+
+    const unresolved = events.find((event) => event.type === "unresolved_link");
+    expect(unresolved?.data).toEqual({ kind: "blocked-by", target: "never-written" });
+  });
+
   it("later rounds continue the stage sessions instead of restarting them", async () => {
     const spawns: Array<{ stage: string; continueSessionId: string | undefined }> = [];
     let implementationCalls = 0;

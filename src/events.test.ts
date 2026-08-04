@@ -53,6 +53,15 @@ describe("EventLog", () => {
     expect(ticket?.status).toBe("running");
   });
 
+  it("names an unresolved ticket link in the activity line, without moving status", () => {
+    const log = new EventLog(dir, false);
+    log.emit("dispatch", "t1", { title: "Ticket One" });
+    log.emit("unresolved_link", "t1", { kind: "blocked-by", target: "never-written" });
+    const ticket = log.snapshot().tickets.t1;
+    expect(ticket?.lastActivity).toBe("unresolved blocked-by link [[never-written]]");
+    expect(ticket?.status).toBe("running");
+  });
+
   it("blocked removes from queue and sets status", () => {
     const log = new EventLog(dir, false);
     log.emit("merge_queued", "x");
