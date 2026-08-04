@@ -10,11 +10,14 @@
  * depend on an agent getting a format right. The same rendered text goes to
  * the commit and to the ticket note's `## Comments` trail.
  *
- * The scribe's answer is subprocess output about to become permanent repository
- * history, so it is a trust boundary and `assembleCommitMessage` treats it as
- * one: the shipped contract's limits are enforced here, not asked for in the
- * prompt and hoped for. Every bound below is a rule the message must satisfy no
- * matter what came back.
+ * Everything that reaches a commit message here comes from outside the
+ * pipeline: the scribe's answer is subprocess output, the completing stage's
+ * summary is agent verdict text, and an interrupted session's outcome quotes
+ * that session's own output back. All of it is about to become permanent
+ * repository history, so `assembleCommitMessage` treats the lot as a trust
+ * boundary: the shipped contract's limits are enforced here, not asked for in
+ * the prompt and hoped for. Every bound below is a rule the message must
+ * satisfy no matter what came back.
  */
 import type { StageName } from "./events.js";
 import { git } from "./git.js";
@@ -128,11 +131,14 @@ export function scribeVariables(
 
 /**
  * The final message: the scribe's subject and body under a ticket-id subject
- * prefix, over the status line and the round trailer. Every part of what came
- * back is bounded and scrubbed first, and anything that does not fit the
- * contract falls back to the pipeline's own wording rather than reaching
- * `git commit` — a message is repository history, and the scribe's answer is
- * subprocess output.
+ * prefix, over the status line and the round trailer.
+ *
+ * Three of the fragments here are external, not just the scribe's answer: the
+ * handoff's `summary` is agent verdict text, and its `outcome` can quote a dead
+ * session's own output. All three are scrubbed, the ones that must stay on one
+ * line are flattened to one, and the assembled message is scrubbed once more at
+ * the end — so the guarantee is about the message, not about remembering to
+ * treat each new fragment as external.
  */
 export function assembleCommitMessage(
   scribeText: string,
@@ -150,12 +156,28 @@ export function assembleCommitMessage(
   // pipeline's own subject — dropping it would throw away the only account of
   // the change there is.
   const writtenBody = summary === null ? written : lines.slice(1).join("\n");
-  const body = boundBody((writtenBody.trim() !== "" ? writtenBody : handoff.summary).trim());
+  const fallbackBody = scrubControlCharacters(handoff.summary);
+  const body = boundBody((writtenBody.trim() !== "" ? writtenBody : fallbackBody).trim());
   const trailers = [
-    statusLine(handoff.stage, handoff.outcome, handoff.routing),
+    // The status line is one line by definition: a reason quoted from a dead
+    // session's output would otherwise wrap the trailer onto a line of its own,
+    // where `git log --format='%(trailers:…)'` stops finding it.
+    statusLine(handoff.stage, flattenToLine(handoff.outcome), flattenToLine(handoff.routing)),
     `JFDI-Round: ${handoff.round}/${handoff.maxRounds}`,
   ].join("\n");
-  return `${[subject, body, trailers].filter((part) => part !== "").join("\n\n")}\n`;
+  const message = `${[subject, body, trailers].filter((part) => part !== "").join("\n\n")}\n`;
+  // Belt and braces over every fragment at once: newlines survive this, so the
+  // shape above is untouched and a fragment nobody scrubbed still cannot put a
+  // NUL — which `git commit -m` rejects outright — into repository history.
+  return scrubControlCharacters(message);
+}
+
+/**
+ * One line, whatever came in: control characters gone and every run of
+ * whitespace — newlines included — collapsed to a single space.
+ */
+function flattenToLine(text: string): string {
+  return scrubControlCharacters(text).replace(/\s+/g, " ").trim();
 }
 
 /**

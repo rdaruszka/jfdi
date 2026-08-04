@@ -199,6 +199,65 @@ describe("assembleCommitMessage against hostile scribe output", () => {
     expect(message).toContain("Because sha256.");
   });
 
+  it("scrubs the stage's own summary before it stands in for a missing answer", () => {
+    // The summary comes out of an agent's verdict JSON: external text, and the
+    // path an empty scribe answer falls back to.
+    const hostileSummary =
+      "Widened the\u0000 pattern\r\nEscape: \u001b[31mred\u001b[0m, bell \u0007";
+    for (const noAnswer of ["", "   \n\t ", "JFDI-Round: 9/9"]) {
+      const message = assembleCommitMessage(noAnswer, "fix-names", {
+        ...HANDOFF,
+        summary: hostileSummary,
+      });
+      expect(hasControlCharacters(message)).toBe(false);
+      // Scrubbed, not dropped: what the session said still reaches the reader.
+      expect(message).toContain("Widened the pattern");
+      expect(message).toContain("Escape: [31mred[0m, bell");
+      expect(subjectOf(message)).toBe("fix-names: Implementation round 2");
+      expect(message).toContain("JFDI-Round: 2/3");
+    }
+  });
+
+  it("scrubs and flattens an interrupted session's outcome into one status line", () => {
+    // `outcome` quotes the dead session's own output — subprocess text, and it
+    // has to stay on one line or the trailer below it stops being a trailer.
+    const message = assembleCommitMessage("", "fix-names", {
+      ...HANDOFF,
+      isInterrupted: true,
+      outcome: "interrupted: killed\u0000 mid-edit\nsecond line\u001b[0m",
+      routing: "returning to\nImplementation for round 3",
+      summary: "Half a parser\u0007",
+    });
+    expect(hasControlCharacters(message)).toBe(false);
+    const messageLines = message.trimEnd().split("\n");
+    expect(messageLines[0]).toBe("fix-names: WIP — Implementation round 2");
+    // One line for the status, one for the trailer, in that order.
+    expect(messageLines.slice(-2)).toEqual([
+      "JFDI Implementation interrupted: killed mid-edit second line[0m — returning to Implementation for round 3",
+      "JFDI-Round: 2/3",
+    ]);
+  });
+
+  it("still produces a well-formed message when every external fragment is hostile", () => {
+    const message = assembleCommitMessage("\u0000\u0007\u001b", "fix-names", {
+      ...HANDOFF,
+      outcome: "\u0000complete",
+      routing: "\u0007moving on",
+      summary: "\u0000\u0007",
+    });
+    expect(hasControlCharacters(message)).toBe(false);
+    // A summary that scrubs away to nothing leaves subject and trailers only.
+    expect(message).toBe(
+      [
+        "fix-names: Implementation round 2",
+        "",
+        "JFDI Implementation complete — moving on",
+        "JFDI-Round: 2/3",
+        "",
+      ].join("\n"),
+    );
+  });
+
   it("always ends with the status line and the round trailer, whatever came back", () => {
     const hostile = [
       "",
