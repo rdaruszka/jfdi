@@ -281,7 +281,7 @@ describe("integrateTicket", () => {
       expect(stageOf(spec.prompt)).toBe("integration");
       await fs.writeFile(path.join(options.cwd, "README.md"), "merged version\n");
       await git(options.cwd, "add", "README.md");
-      await git(options.cwd, "-c", "core.editor=true", "rebase", "--continue");
+      await git(options.cwd, "commit", "--no-edit");
       await writeVerdict(spec.prompt, { resolution: "clean", notes: forgingNotes });
       return { ok: true, text: "" };
     });
