@@ -37,6 +37,11 @@ const TARGET_BRANCH = "trunk";
  * the stream-json lines each parser needs, writes the verdict file its prompt
  * names, and — for the implementation stage — commits the file named in
  * `STUB_FILE` so each ticket touches a different path.
+ *
+ * With `STUB_LEFTOVERS` set it plays the sloppy agent instead: the integration
+ * session resolves the conflict and commits it but drops a stray file it never
+ * commits, calls the resolution `complicated`, and the re-QA session it
+ * triggers writes its regression test without committing that either.
  */
 const STUB_AGENT = `#!/usr/bin/env node
 const fs = require("node:fs");
@@ -64,8 +69,19 @@ if (match) {
     run(["commit", "-m", "implement " + file]);
     verdict = { status: "done", summary: "implemented " + file };
   } else if (stage === "integration") {
-    verdict = { resolution: "clean", notes: "nothing to reconcile" };
+    if (process.env.STUB_LEFTOVERS) {
+      fs.writeFileSync(process.cwd() + "/" + process.env.STUB_FILE, "reconciled\\n");
+      run(["add", process.env.STUB_FILE]);
+      run(["commit", "--no-edit"]);
+      fs.writeFileSync(process.cwd() + "/agent-leftover.txt", "stray\\n");
+      verdict = { resolution: "complicated", notes: "reworked logic" };
+    } else {
+      verdict = { resolution: "clean", notes: "nothing to reconcile" };
+    }
   } else {
+    if (process.env.STUB_LEFTOVERS && verdictPath.includes("requalify")) {
+      fs.writeFileSync(process.cwd() + "/requalify-note.txt", "re-verified\\n");
+    }
     verdict = { verdict: "pass" };
   }
   fs.mkdirSync(verdictPath.replace(/\\/[^/]+$/, ""), { recursive: true });
@@ -111,13 +127,20 @@ async function makeSandbox(): Promise<Sandbox> {
   return { root, project, home, jfdiHome: path.join(home, ".jfdi"), binDir };
 }
 
-function sandboxEnv(sandbox: Sandbox, file: string): NodeJS.ProcessEnv {
+/** Which agent the stubs play for one CLI invocation. */
+interface StubOptions {
+  file: string;
+  shouldLeaveLeftovers?: boolean;
+}
+
+function sandboxEnv(sandbox: Sandbox, stub: StubOptions): NodeJS.ProcessEnv {
   return {
     ...process.env,
     PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
-    STUB_FILE: file,
+    STUB_FILE: stub.file,
+    ...(stub.shouldLeaveLeftovers ? { STUB_LEFTOVERS: "1" } : {}),
     NO_COLOR: "1",
   };
 }
@@ -127,11 +150,11 @@ interface CliResult {
   output: string;
 }
 
-async function runCli(sandbox: Sandbox, args: string[], file: string): Promise<CliResult> {
+async function runCli(sandbox: Sandbox, args: string[], stub: StubOptions): Promise<CliResult> {
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
       cwd: sandbox.project,
-      env: sandboxEnv(sandbox, file),
+      env: sandboxEnv(sandbox, stub),
       maxBuffer: 64 * 1024 * 1024,
     });
     return { code: 0, output: stdout + stderr };
@@ -142,14 +165,25 @@ async function runCli(sandbox: Sandbox, args: string[], file: string): Promise<C
 }
 
 /** Scaffold `.jfdi/`, then point integration at the non-main target. */
-async function scaffold(sandbox: Sandbox): Promise<void> {
-  const result = await runCli(sandbox, ["init", "--bare"], "unused.txt");
+async function scaffold(sandbox: Sandbox, gate: Array<{ name: string; cmd: string }> = []) {
+  const result = await runCli(sandbox, ["init", "--bare"], { file: "unused.txt" });
   expect(result.code, result.output).toBe(0);
+  await configure(sandbox, gate);
+}
+
+async function configure(
+  sandbox: Sandbox,
+  gate: Array<{ name: string; cmd: string }>,
+): Promise<void> {
   const configPath = path.join(sandbox.project, ".jfdi", "config.json");
   const config = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
   config.integration = { target_branch: TARGET_BRANCH, mode: "on-approval" };
-  config.gate = [];
+  config.gate = gate;
   await fs.writeFile(configPath, JSON.stringify(config, null, 2));
+}
+
+function ticketNote(sandbox: Sandbox, ticketId: string): Promise<string> {
+  return fs.readFile(path.join(sandbox.project, ".jfdi", "tickets", `${ticketId}.md`), "utf8");
 }
 
 /** `jfdi run` prints the id it minted on its first line. */
@@ -166,21 +200,36 @@ interface Landed {
 }
 
 /**
+ * Take one ticket through the pipeline and stop at the approval, so the commit
+ * the reviews bound to is still readable — the branch is deleted once it lands.
+ */
+async function runToMergeReady(
+  sandbox: Sandbox,
+  cardText: string,
+  file: string,
+): Promise<{ ticketId: string; signedOff: string }> {
+  const run = await runCli(sandbox, ["run", cardText], { file });
+  expect(run.code, run.output).toBe(0);
+  expect(run.output).toContain("ready to merge");
+  const ticketId = ticketIdOf(run.output);
+  return { ticketId, signedOff: await git(sandbox.project, "rev-parse", `jfdi/${ticketId}`) };
+}
+
+/**
  * One ticket, all the way through: pipeline to Ready to Merge, read the commit
  * the reviews bound to while the branch still exists, then approve. Splitting
  * it at the approval is what makes the sign-off sha observable — the branch is
  * deleted once it lands.
  */
 async function landOneTicket(sandbox: Sandbox, cardText: string, file: string): Promise<Landed> {
-  const run = await runCli(sandbox, ["run", cardText], file);
-  expect(run.code, run.output).toBe(0);
-  expect(run.output).toContain("ready to merge");
-  const ticketId = ticketIdOf(run.output);
-  const signedOff = await git(sandbox.project, "rev-parse", `jfdi/${ticketId}`);
-
-  const merge = await runCli(sandbox, ["merge", ticketId], file);
+  const { ticketId, signedOff } = await runToMergeReady(sandbox, cardText, file);
+  const merge = await runCli(sandbox, ["merge", ticketId], { file });
   expect(merge.code, merge.output).toBe(0);
   expect(merge.output).toContain(`Merged into ${TARGET_BRANCH}`);
+  // Nothing was left uncommitted, so integration must not claim it swept
+  // anything — neither while it runs nor in the record the ticket note keeps.
+  expect(merge.output).not.toContain("left uncommitted");
+  expect(await ticketNote(sandbox, ticketId)).not.toContain("Uncommitted changes");
   return {
     ticketId,
     signedOff,
@@ -252,6 +301,73 @@ describe("the shape integration leaves on the target branch", () => {
       expect(await git(sandbox.project, "show", `${TARGET_BRANCH}:first.txt`)).toBe("built");
       expect(await git(sandbox.project, "show", `${TARGET_BRANCH}:second.txt`)).toBe("built");
       expect(await git(sandbox.project, "rev-parse", "main")).toBe(mainHead);
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  /**
+   * The gate runs against the working tree; the landing commit is built from a
+   * git tree. Sessions that leave work uncommitted sit in that gap — and a
+   * successful integration removes the worktree, so anything dropped there is
+   * gone for good. Both integration sessions are sloppy here: the conflict
+   * resolution leaves a stray file, and the re-QA valve leaves the very
+   * regression test it exists to produce.
+   */
+  it(
+    "lands everything the pre-land gate saw when sessions leave the worktree dirty",
+    async () => {
+      const sandbox = await makeSandbox();
+      const listingFile = path.join(sandbox.root, "gate-listing.txt");
+      await scaffold(sandbox);
+      const { ticketId, signedOff } = await runToMergeReady(sandbox, "Add a feature", "gamma.txt");
+
+      // A colliding commit on the target, so approving hits a real conflict.
+      await fs.writeFile(path.join(sandbox.project, "gamma.txt"), "target version\n");
+      await git(sandbox.project, "add", "gamma.txt");
+      await git(sandbox.project, "commit", "-m", "collide on the target");
+      const targetHead = await git(sandbox.project, "rev-parse", TARGET_BRANCH);
+      // From here the gate records the working tree it actually ran against.
+      await configure(sandbox, [{ name: "record-worktree", cmd: `ls -1 > ${listingFile}` }]);
+
+      const merge = await runCli(sandbox, ["merge", ticketId], {
+        file: "gamma.txt",
+        shouldLeaveLeftovers: true,
+      });
+
+      expect(merge.code, merge.output).toBe(0);
+      expect(merge.output).toContain(`Merged into ${TARGET_BRANCH}`);
+      // Fail loud: the sweep is reported, not done behind the operator's back.
+      expect(merge.output).toContain("left uncommitted");
+
+      const gateSaw = (await fs.readFile(listingFile, "utf8")).split("\n").filter(Boolean);
+      const landed = (await git(sandbox.project, "ls-tree", "--name-only", TARGET_BRANCH))
+        .split("\n")
+        .filter(Boolean);
+      // Both leftovers really were left, and both are in what landed.
+      expect(gateSaw).toContain("requalify-note.txt");
+      expect(gateSaw).toContain("agent-leftover.txt");
+      for (const entry of gateSaw) expect(landed).toContain(entry);
+      expect(await git(sandbox.project, "show", `${TARGET_BRANCH}:requalify-note.txt`)).toBe(
+        "re-verified",
+      );
+
+      // Sweeping leftovers must not disturb the shape or the sign-off.
+      expect(await git(sandbox.project, "rev-parse", `${TARGET_BRANCH}^1`)).toBe(targetHead);
+      expect(await git(sandbox.project, "rev-parse", `${TARGET_BRANCH}^2`)).toBe(signedOff);
+      expect(
+        await git(
+          sandbox.project,
+          "rev-list",
+          "--count",
+          "--first-parent",
+          `${targetHead}..${TARGET_BRANCH}`,
+        ),
+      ).toBe("1");
+
+      // ...and the ticket note keeps the durable record of it.
+      expect(await ticketNote(sandbox, ticketId)).toContain(
+        "Uncommitted changes a session left behind were committed",
+      );
     },
     SCENARIO_TIMEOUT_MS,
   );
