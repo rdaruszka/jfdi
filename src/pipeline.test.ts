@@ -1174,22 +1174,44 @@ describe("pipeline-owned commits", () => {
   });
 
   it("narrates every transition into the note, failed round and exhaustion included", async () => {
+    // The provider hits a usage limit inside round 1, so the "no comment for a
+    // pause" claim below is about a pause that actually happened: the exact
+    // transition list further down is what would have caught an extra entry.
+    let implementationAttempts = 0;
     const context = fixture.context(async (spec, options) => {
       const stage = sessionKindOf(spec.prompt);
-      if (stage === "implementation") {
-        await fs.writeFile(path.join(options.cwd, "impl.txt"), `${Math.random()}\n`);
-        await writeVerdict(spec.prompt, { status: "done", summary: "tried again" });
-      } else {
+      if (stage !== "implementation") {
         await writeVerdict(spec.prompt, {
           verdict: "fail",
           feedback: "RENAME_THE_HELPER; it shadows the module",
         });
+        return { ok: true, text: "" };
       }
+      implementationAttempts += 1;
+      if (implementationAttempts === 1)
+        return {
+          ok: false,
+          text: "",
+          failure: {
+            kind: "usage-limit" as const,
+            resetsAtMs: Date.now() + RESET_SOON_MS,
+            detail: "You've hit your session limit",
+          },
+        };
+      // Distinct content per attempt, so every round has something to commit.
+      await fs.writeFile(path.join(options.cwd, "impl.txt"), `attempt ${implementationAttempts}\n`);
+      await writeVerdict(spec.prompt, { status: "done", summary: "tried again" });
       return { ok: true, text: "" };
+    });
+    const pauses: JfdiEvent[] = [];
+    context.log.on((event) => {
+      if (event.type === "harness_paused" || event.type === "harness_resumed") pauses.push(event);
     });
 
     const ticket = await resolveTicket("Never good enough", fixture.ticketsDir);
     expect((await runPipeline(context, ticket)).status).toBe("blocked");
+    // The pause is real: without it the assertion at the end proves nothing.
+    expect(pauses.map((event) => event.type)).toEqual(["harness_paused", "harness_resumed"]);
 
     const note = parseTicketNote(
       await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8"),
@@ -1217,7 +1239,11 @@ describe("pipeline-owned commits", () => {
     expect(transitions[7]?.body).toContain(
       "JFDI run exhausted its 3 rounds — moving to Blocked for human review",
     );
-    // Never a comment for a pause: infrastructure is not ticket history.
-    expect(note.comments.some((comment) => comment.body.includes("paused"))).toBe(false);
+    // The pause left no mark on the trail — neither an entry of its own (the
+    // list above is exact) nor a mention inside one: infrastructure is not
+    // ticket history, and the held round is narrated as the one round it was.
+    expect(
+      note.comments.some((comment) => /pause|usage limit|session limit/i.test(comment.body)),
+    ).toBe(false);
   });
 });
