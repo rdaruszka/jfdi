@@ -7,6 +7,7 @@ import { EventLog } from "./events.js";
 import { git } from "./git.js";
 import type { FakeHandler } from "./harness/fake.js";
 import { FakeHarness } from "./harness/fake.js";
+import type { SessionKind } from "./harness/index.js";
 import { PauseController, type PauseDelays } from "./pause.js";
 import type { PipelineContext } from "./pipeline.js";
 
@@ -32,14 +33,28 @@ export interface Fixture {
   context: (
     handler: FakeHandler,
     options?: ContextOptions,
-  ) => PipelineContext & { harness: FakeHarness };
+  ) => PipelineContext & { harness: FakeHarness; scribe: FakeHarness };
   cleanup: () => Promise<void>;
 }
 
 export interface ContextOptions {
   /** Write events.jsonl/state.json, as a real run does — for cross-process tests. */
   shouldPersistEvents?: boolean;
+  /** Play the scribe. The default writes a plausible subject and body. */
+  scribeHandler?: FakeHandler;
 }
+
+/**
+ * The scribe every fixture gets unless a test installs its own: it writes the
+ * session's own summary as the subject, which is what a real scribe does with
+ * it. It stands behind its own fake, so a test's stage handler never has to
+ * know the pipeline asks for a message after each code-producing session.
+ */
+export const DEFAULT_SCRIBE_HANDLER: FakeHandler = (spec) => {
+  const summary = /## What the session said it did\n\n(.*)/.exec(spec.prompt)?.[1] ?? "";
+  const subject = summary.startsWith("(") || summary === "" ? "the session's work" : summary;
+  return Promise.resolve({ ok: true, text: `${subject}\n\nWritten by the scribe.` });
+};
 
 /** Scratch repo under the OS temp dir — never inside a parent git repo. */
 export async function makeFixture(configOverrides: Partial<JfdiConfig> = {}): Promise<Fixture> {
@@ -68,6 +83,7 @@ export async function makeFixture(configOverrides: Partial<JfdiConfig> = {}): Pr
     config,
     context: (handler, options = {}) => {
       const harness = new FakeHarness(handler);
+      const scribe = new FakeHarness(options.scribeHandler ?? DEFAULT_SCRIBE_HANDLER);
       const log = new EventLog(stateDir, options.shouldPersistEvents ?? false);
       return {
         repoRoot: repo,
@@ -75,14 +91,19 @@ export async function makeFixture(configOverrides: Partial<JfdiConfig> = {}): Pr
         stateDir,
         config,
         // One fake behind every stage, so `harness.calls` sees the whole run.
-        // Tests about per-stage routing install distinct fakes themselves.
+        // Tests about per-stage routing install distinct fakes themselves. The
+        // scribe stands apart: it runs after every code-producing session, and
+        // folding it into the stage handler would put a commit message in front
+        // of every test that only cares about stages.
         harnesses: {
           implementation: harness,
           "code-review": harness,
           qa: harness,
           integration: harness,
+          "commit-message": scribe,
         },
         harness,
+        scribe,
         log,
         pause: new PauseController(log, TEST_PAUSE_DELAYS),
       };
@@ -91,8 +112,9 @@ export async function makeFixture(configOverrides: Partial<JfdiConfig> = {}): Pr
   };
 }
 
-/** Which pipeline stage a prompt belongs to (matched on each default's task statement). */
-export function stageOf(prompt: string): "implementation" | "code-review" | "qa" | "integration" {
+/** Which `stages` entry a prompt belongs to (matched on each default's task statement). */
+export function stageOf(prompt: string): SessionKind {
+  if (prompt.includes("Write the commit message")) return "commit-message";
   if (prompt.includes("Implement the ticket below completely")) return "implementation";
   if (prompt.includes("Your implementation session is being continued")) return "implementation";
   if (prompt.includes("pure code standpoint")) return "code-review";

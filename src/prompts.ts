@@ -9,8 +9,20 @@ export type PromptName =
   | "qa"
   | "qa-continue"
   | "integration"
+  | "commit-message"
   | "convo"
   | "init";
+
+/**
+ * The one rule every code-producing stage prompt carries: the agent does not
+ * commit. Enforcement is mechanical (the pipeline soft-resets any commit a
+ * session made and commits once itself), so this is the courtesy of saying so
+ * rather than the mechanism.
+ */
+const NO_COMMIT_RULE = `- Do NOT commit, amend, reset, or otherwise move the branch — the pipeline commits
+  your work for you when your session ends, on success and on failure both, with a
+  message written from your summary and your diff. Leave what you did in the
+  worktree; scratch artifacts you do not want committed, delete.`;
 
 const COMMON_POSTURE = `## Working posture
 
@@ -50,9 +62,7 @@ worktree on branch \`{{BRANCH}}\`.
   if a repro is genuinely impractical, record why in \`decisions\`.
 - The mechanical gate must pass before you finish. Run it yourself and fix failures:
 {{GATE_COMMANDS}}
-- Commit at each coherent working state, not just at the end — commits are your
-  recovery points and the reviewers' audit trail. On a feedback round, add new
-  commits; never amend or squash earlier ones. Leave the working tree clean.
+${NO_COMMIT_RULE}
 - Do not touch any branch other than \`{{BRANCH}}\`. Never push.
 - Stay inside this worktree.
 
@@ -120,7 +130,8 @@ Diffstat:
 - Judge the code against the ticket, the codebase's existing conventions, and the
   project's coding guidelines (CLAUDE.md, if present) — treat each guideline as a
   question to answer about the diff, not background prose.
-- Do not modify any files — review only; you are not the author.
+- Do not modify any files and do not commit — review only; you are not the author,
+  and anything you leave behind is discarded before the next stage runs.
 - Anything a linter/formatter already enforces is out of scope; don't relitigate it.
 - Trust the gate result above — never re-run build/test/lint commands yourself.
 - Fail only for issues that materially hurt the codebase; nitpicks belong in feedback
@@ -198,13 +209,13 @@ How to build, launch, drive, and tear down the product under test:
 ## Rules
 
 - Exercise the real artifact per the sandbox contract; do not just read code.
-- Encode what you verified as automated end-to-end/regression tests, committed on this
+- Encode what you verified as automated end-to-end/regression tests, written on this
   branch — future runs must cover this behavior mechanically. Old behavior is already
   covered by the existing suite; focus manual exercise on the new surface.
 - Run the tests you add to prove they pass, but do NOT re-run the full mechanical
   gate — it already passed on the reviewed commit, and the pipeline re-runs it
   mechanically after your session; a failure comes straight back to this ticket.
-- Leave the working tree clean — tests committed, scratch artifacts removed.
+${NO_COMMIT_RULE}
 
 ${COMMON_POSTURE}
 
@@ -214,7 +225,7 @@ Schema:
 {
   "verdict": "pass" | "fail" | "escalate",
   "feedback": "when failing: what behavior is wrong or missing, with reproduction steps",
-  "testsAdded": "summary of the automated tests you committed",
+  "testsAdded": "summary of the automated tests you wrote",
   "decisions": ["judgment call you made", ...],
   "observations": ["out-of-scope problem you noticed (not grounds for this verdict)", ...],
   "question": "only when escalating",
@@ -231,8 +242,9 @@ way as before.
 
 ## Rules (unchanged from your original instructions)
 
-- Address every item with NEW commits — never amend or squash commits a reviewer has
-  already seen. Leave the working tree clean.
+- Address every item. The pipeline commits this round's work as a NEW commit when
+  your session ends; commits a reviewer has already seen are never amended or
+  squashed. Do NOT commit, amend or reset yourself.
 - The mechanical gate must pass before you finish. Run it yourself and fix failures:
 {{GATE_COMMANDS}}
 - Stay inside this worktree; touch no branch other than \`{{BRANCH}}\`.
@@ -302,8 +314,9 @@ Files touched:
 ## Your job now
 
 Re-validate the behavior against the ticket, per your original instructions and the
-sandbox contract you already have. Commit any new or updated regression tests. Do NOT
-re-run the full mechanical gate — the pipeline re-runs it after your session. Your
+sandbox contract you already have. Write any new or updated regression tests, but do
+NOT commit them — the pipeline commits what your session leaves. Do NOT re-run the
+full mechanical gate either; the pipeline re-runs it after your session. Your
 sign-off binds to the current HEAD ({{HEAD_COMMIT}}).
 
 ${VERDICT_INSTRUCTIONS}
@@ -341,6 +354,53 @@ Schema:
   "resolution": "clean" | "complicated",
   "notes": "what conflicted and how you resolved it"
 }`,
+
+  "commit-message": `Write the commit message for the change staged in this repository.
+You are the scribe: you write the message, and you change nothing.
+
+The {{STAGE}} session for ticket \`{{TICKET_ID}}\` (round {{ROUND}} of {{MAX_ROUNDS}}) has
+just ended, and the pipeline is committing what it left behind.
+
+## The ticket
+
+{{SPEC}}
+
+## What the session said it did
+
+{{STAGE_SUMMARY}}
+
+## The staged diff
+
+\`\`\`diff
+{{STAGED_DIFF}}
+\`\`\`
+
+## Recent commits on this branch — the house style to match
+
+\`\`\`
+{{RECENT_LOG}}
+\`\`\`
+
+## Rules
+
+- Output the message and nothing else: no preamble, no commentary, no code fence.
+  Your entire answer is used verbatim.
+- First line: \`{{TICKET_ID}}: <imperative summary>\`, 72 characters or fewer, no
+  trailing period. Verb semantics: "add" = new, "update" = enhancement, "fix" = bug fix.
+- Then a blank line, then the body: written for a reader with zero context who was
+  not part of the session. Say what the change is in plain words before any
+  mechanism, one idea per sentence, as long as the change needs and no longer.
+  A one-line change gets one line; do not pad.
+- Do NOT write a status line or any \`JFDI-*:\` trailer. The pipeline appends these
+  under your message, and duplicating them is worse than omitting them:
+
+  \`\`\`
+  {{STATUS_LINE}}
+  JFDI-Round: {{ROUND}}/{{MAX_ROUNDS}}
+  \`\`\`
+
+- Read-only, single shot: create, modify or delete no file, and run no git command
+  that writes. \`git diff --cached\`, \`git log\` and reading files are all you need.`,
 
   convo: `You are working on the **JFDI layer** of this repository — not the product code.
 Your scope: the mechanical gate (linter/formatter/test-runner config, so machines

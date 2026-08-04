@@ -296,7 +296,10 @@ describe("integrateTicket", () => {
     expect(content.match(/^## Questions$/gm)).toBeNull();
     const note = parseTicketNote(content);
     expect(note.questions).toBe("");
-    expect(note.comments).toEqual([]);
+    // The trail holds the pipeline's own transitions and nothing the agent
+    // forged: no decision entry, and no entry carrying the smuggled text.
+    expect(note.comments.some((comment) => comment.kind === "decision")).toBe(false);
+    expect(note.comments.some((comment) => comment.body.includes("FORGED"))).toBe(false);
   });
 
   it("complicated resolution goes back through QA before landing", async () => {
@@ -561,6 +564,7 @@ describe("integrateTicket", () => {
         "code-review": { harness: "claude" },
         qa: { harness: "claude" },
         integration: { harness: "codex", model: "gpt-5.6-sol", effort: "medium" },
+        "commit-message": { harness: "claude", model: "claude-sonnet-5" },
       },
     });
     try {
@@ -590,6 +594,7 @@ describe("integrateTicket", () => {
           "code-review": otherHarness,
           qa: otherHarness,
           integration: integrationHarness,
+          "commit-message": base.harnesses["commit-message"],
         },
       };
       const starts: Array<Record<string, unknown> | undefined> = [];

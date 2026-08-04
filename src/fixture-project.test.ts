@@ -13,7 +13,7 @@ import { FakeHarness } from "./harness/fake.js";
 import { integrateTicket } from "./integrate.js";
 import { PauseController } from "./pause.js";
 import { type PipelineContext, runPipeline } from "./pipeline.js";
-import { commitFile, stageOf, writeVerdict } from "./test-helpers.js";
+import { DEFAULT_SCRIBE_HANDLER, stageOf, writeVerdict } from "./test-helpers.js";
 import { resolveTicket } from "./tickets.js";
 
 const TEMPLATE = fileURLToPath(new URL("../fixtures/half-app", import.meta.url));
@@ -124,11 +124,9 @@ describe("half-app end-to-end (fake harness)", () => {
       switch (stageOf(spec.prompt)) {
         case "implementation":
           expect(spec.prompt).toContain("case-insensitive");
-          await commitFile(
-            options.cwd,
-            "src/commands/list.ts.category-note",
+          await fs.writeFile(
+            path.join(options.cwd, "src/commands/list.ts.category-note"),
             "pretend category filter\n",
-            "feat: category filter on list",
           );
           await writeVerdict(spec.prompt, {
             status: "done",
@@ -160,6 +158,7 @@ describe("half-app end-to-end (fake harness)", () => {
         "code-review": harness,
         qa: harness,
         integration: harness,
+        "commit-message": new FakeHarness(DEFAULT_SCRIBE_HANDLER),
       },
       log,
       pause: new PauseController(log),
@@ -178,8 +177,10 @@ describe("half-app end-to-end (fake harness)", () => {
     const merged = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
     expect(merged, JSON.stringify(merged)).toEqual({ status: "merged" });
 
+    // The subject is the pipeline's own: the scribe writes it from the
+    // implementation summary, under the ticket id.
     const subjects = await git(fixture.repo, "log", "--format=%s", "main");
-    expect(subjects).toContain("feat: category filter on list");
+    expect(subjects).toContain(`${ticket.id}: added --category to list`);
 
     const note = await fs.readFile(
       path.join(fixture.repo, ".jfdi", "tickets", "filter-by-category.md"),

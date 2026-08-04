@@ -35,7 +35,7 @@ describe("scaffoldJfdi", () => {
     ]);
     const stats = await fs.stat(path.join(jfdiDir, "tickets"));
     expect(stats.isDirectory()).toBe(true);
-    expect(await fs.readdir(path.join(jfdiDir, "prompts"))).toHaveLength(9);
+    expect(await fs.readdir(path.join(jfdiDir, "prompts"))).toHaveLength(10);
     expect(await fs.readFile(path.join(jfdiDir, "sandbox.md"), "utf8")).toContain(
       "Sandbox Contract",
     );

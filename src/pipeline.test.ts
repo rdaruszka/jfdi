@@ -5,9 +5,11 @@ import type { JfdiConfig } from "./config.js";
 import type { JfdiEvent, StageName } from "./events.js";
 import { createWorktree, git, isMergeInProgress, mergeTargetIntoBranch } from "./git.js";
 import { type FakeHandler, FakeHarness } from "./harness/fake.js";
+import type { SessionKind } from "./harness/index.js";
 import { type PipelineContext, runPipeline } from "./pipeline.js";
 import {
   commitFile,
+  DEFAULT_SCRIBE_HANDLER,
   type Fixture,
   makeFixture,
   stageOf,
@@ -284,8 +286,8 @@ describe("runPipeline", () => {
       const stage = stageOf(spec.prompt);
       if (stage === "implementation") {
         attempt += 1;
-        await commitFile(options.cwd, "impl.txt", `attempt ${attempt}\n`, "partial attempt");
-        await writeVerdict(spec.prompt, { status: "done" });
+        await fs.writeFile(path.join(options.cwd, "impl.txt"), `attempt ${attempt}\n`);
+        await writeVerdict(spec.prompt, { status: "done", summary: "partial attempt" });
       } else if (stage === "code-review") {
         await writeVerdict(spec.prompt, { verdict: "fail", feedback: "the parser is wrong" });
       }
@@ -415,8 +417,8 @@ describe("runPipeline", () => {
     const context = fixture.context(async (spec, options) => {
       const stage = stageOf(spec.prompt);
       if (stage === "implementation") {
-        await commitFile(options.cwd, "impl.txt", "the feature\n", "implement the feature");
-        await writeVerdict(spec.prompt, { status: "done" });
+        await fs.writeFile(path.join(options.cwd, "impl.txt"), "the feature\n");
+        await writeVerdict(spec.prompt, { status: "done", summary: "implement the feature" });
       } else {
         if (stage === "code-review") reviewPrompt = spec.prompt;
         if (stage === "qa") qaPrompt = spec.prompt;
@@ -539,9 +541,9 @@ describe("runPipeline", () => {
     const note = parseTicketNote(
       await fs.readFile(path.join(fixture.ticketsDir, "quoter.md"), "utf8"),
     );
-    expect(note.comments).toHaveLength(1);
-    expect(note.comments[0]?.kind).toBe("decision");
-    expect(note.comments[0]?.body).toBe(decision);
+    const decisions = note.comments.filter((comment) => comment.kind === "decision");
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]?.body).toBe(decision);
     // The whole decision reaches the next session — not just the half above
     // the quoted heading.
     expect(secondRunPrompt).toContain("## Decisions logged so far");
@@ -879,15 +881,17 @@ const MIXED_STAGES: JfdiConfig["stages"] = {
   "code-review": { harness: "codex", model: "gpt-5.6-sol", effort: "low" },
   qa: { harness: "claude" },
   integration: { harness: "codex", effort: "medium" },
+  "commit-message": { harness: "codex", model: "gpt-5.6-mini" },
 };
 
-/** One fake per stage, so which harness a session reached is observable. */
-function perStageHarnesses(handler: FakeHandler): Record<StageName, FakeHarness> {
+/** One fake per `stages` entry, so which harness a session reached is observable. */
+function perStageHarnesses(handler: FakeHandler): Record<SessionKind, FakeHarness> {
   return {
     implementation: new FakeHarness(handler),
     "code-review": new FakeHarness(handler),
     qa: new FakeHarness(handler),
     integration: new FakeHarness(handler),
+    "commit-message": new FakeHarness(DEFAULT_SCRIBE_HANDLER),
   };
 }
 
@@ -952,6 +956,9 @@ describe("runPipeline with per-stage harness selection", () => {
       expect(harnesses.qa.calls).toHaveLength(1);
       // Integration does not run in a pipeline; its harness stays untouched.
       expect(harnesses.integration.calls).toHaveLength(0);
+      // The scribe reaches its own entry's harness, once per committing session:
+      // the two implementation rounds. QA committed nothing, so it has no message.
+      expect(harnesses["commit-message"].calls).toHaveLength(2);
 
       // Round 2 re-enters each stage's own session — which is only meaningful
       // because the harness that minted the id is the one being asked.

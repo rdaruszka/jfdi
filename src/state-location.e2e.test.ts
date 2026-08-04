@@ -239,7 +239,7 @@ describe("run state under ~/.jfdi/projects/<project-key>", () => {
     const merge = await runCli(sandbox, ["merge", ticketId]);
     expect(merge.code).toBe(0);
     const log = await git(sandbox.project, "log", "--oneline", "main");
-    expect(log).toContain("implement");
+    expect(log).toContain(`${ticketId}:`);
   }, 120_000);
 
   it("falls back to ~/.jfdi when JFDI_HOME is unset", async () => {

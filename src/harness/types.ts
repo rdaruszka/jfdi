@@ -7,6 +7,14 @@ import type { StageName } from "../events.js";
 export type HarnessName = "claude" | "codex";
 
 /**
+ * A key of the `stages` config section: the four pipeline stages, plus the
+ * scribe. The scribe is not a stage — it has no verdict, no round and no
+ * sign-off — but it does spawn a session, so it needs a harness selection of
+ * its own, and `stages` is where selections live.
+ */
+export type SessionKind = StageName | "commit-message";
+
+/**
  * What one `stages` entry asked of a harness instance. Model and effort are
  * provider-native strings passed through verbatim — there is no neutral model
  * vocabulary — and each implementation maps them to its own CLI's spelling.
@@ -17,7 +25,7 @@ export type HarnessName = "claude" | "codex";
  * this instance, so a spawn that fails can name the entry to fix.
  */
 export interface HarnessSelection {
-  stage: StageName;
+  stage: SessionKind;
   model?: string | undefined;
   effort?: string | undefined;
 }

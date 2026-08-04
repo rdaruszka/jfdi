@@ -3,11 +3,12 @@ import * as path from "node:path";
 import type { JfdiConfig } from "./config.js";
 import type { EventLog, StageName } from "./events.js";
 import { formatGateFailure, formatGatePass, type GateResult, runGate } from "./gate.js";
-import { commitAllIfDirty, createWorktree, git, revParse, type Worktree } from "./git.js";
+import { createWorktree, git, hasStagedChanges, revParse, type Worktree } from "./git.js";
 import type {
   HarnessEvent,
   HarnessResult,
   PromptSpec,
+  SessionKind,
   SpawnOptions,
   StageHarnesses,
 } from "./harness/index.js";
@@ -23,6 +24,12 @@ import {
 } from "./resume.js";
 import { ensureJfdiGitignore } from "./scaffold.js";
 import {
+  assembleCommitMessage,
+  collectCommitContext,
+  type SessionHandoff,
+  scribeVariables,
+} from "./scribe.js";
+import {
   collectChangeContext,
   collectStageDelta,
   formatContinuationFeedback,
@@ -31,6 +38,7 @@ import {
 } from "./stage-context.js";
 import { appendComment, appendToSection, quoteAgentText } from "./ticket-note.js";
 import { ensureTicketNote, type Ticket } from "./tickets.js";
+import { BLOCKED_ROUTING, recordTransition, retryRouting, statusLine } from "./transitions.js";
 import { todayIsoDate } from "./util/dates.js";
 import { ensureDir, fileExists, readIfExists } from "./util/fsx.js";
 import { type ReviewVerdict, readImplementationVerdict, readReviewVerdict } from "./verdicts.js";
@@ -132,13 +140,18 @@ interface StageOutcome {
   resultText: string;
   verdictPath: string;
   sessionId?: string;
+  /**
+   * HEAD before the stage's first session of this round — the reset target that
+   * makes "agents never commit" true rather than hoped for.
+   */
+  preSessionHead: string;
 }
 
 /** Session progress → TUI activity line; session/result events carry no narration. */
 function narrateSessionActivity(
   context: PipelineContext,
   ticketId: string,
-  stage: StageName,
+  stage: SessionKind,
   event: HarnessEvent,
 ): void {
   if (event.type === "tool") {
@@ -160,7 +173,10 @@ function narrateSessionActivity(
  * The stage's agent selection, as the event stream records it — so `jfdi logs`
  * can answer "which model produced this" long after the run.
  */
-export function stageSelectionFields(config: JfdiConfig, stage: StageName): Record<string, string> {
+export function stageSelectionFields(
+  config: JfdiConfig,
+  stage: SessionKind,
+): Record<string, string> {
   const selection = config.stages[stage];
   return {
     harness: selection.harness,
@@ -172,7 +188,7 @@ export function stageSelectionFields(config: JfdiConfig, stage: StageName): Reco
 /** One session, start to finish, with its events narrated as they arrive. */
 async function runOneSession(
   context: PipelineContext,
-  stage: StageName,
+  stage: SessionKind,
   promptSpec: PromptSpec,
   options: SpawnOptions,
   onEvent: (event: HarnessEvent) => void,
@@ -204,7 +220,7 @@ async function runOneSession(
 export async function runHeldSession(
   context: PipelineContext,
   ticketId: string,
-  stage: StageName,
+  stage: SessionKind,
   promptSpec: PromptSpec,
   options: SpawnOptions,
   onEvent: (event: HarnessEvent) => void,
@@ -234,6 +250,7 @@ async function runStageSession(
   stage: StageName,
   prompt: string,
   roundDir: string,
+  preSessionHead: string,
   continueSessionId?: string,
 ): Promise<StageOutcome> {
   const verdictPath = path.join(roundDir, `${stage}.verdict.json`);
@@ -255,6 +272,7 @@ async function runStageSession(
     ok: result.ok,
     resultText: result.text,
     verdictPath,
+    preSessionHead,
     ...(result.sessionId ? { sessionId: result.sessionId } : {}),
   };
 }
@@ -279,6 +297,9 @@ async function runStageWithFallback(
   freshPrompt: () => Promise<string>,
   continuation: ContinuationSpec | null,
 ): Promise<StageOutcome> {
+  // One reset target for the whole stage: a fallback session inherits whatever
+  // the continuation left, and both are folded into the same handoff commit.
+  const preSessionHead = await revParse(worktree.path, "HEAD");
   if (continuation) {
     const outcome = await runStageSession(
       context,
@@ -287,6 +308,7 @@ async function runStageWithFallback(
       stage,
       continuation.prompt,
       roundDir,
+      preSessionHead,
       continuation.sessionId,
     );
     if (outcome.ok || (await fileExists(outcome.verdictPath))) return outcome;
@@ -294,7 +316,15 @@ async function runStageWithFallback(
       text: `${stage}: continuation failed; restarting fresh`,
     });
   }
-  return runStageSession(context, ticket, worktree, stage, await freshPrompt(), roundDir);
+  return runStageSession(
+    context,
+    ticket,
+    worktree,
+    stage,
+    await freshPrompt(),
+    roundDir,
+    preSessionHead,
+  );
 }
 
 async function stagePrompt(
@@ -414,6 +444,90 @@ async function recordEscalation(
   context.log.emit("escalation", ticket.id, { stage, question, recommendation });
 }
 
+/** Commit sha, abbreviated for an activity line. */
+const SHORT_SHA_CHARS = 7;
+
+interface HandoffCommitInput {
+  worktree: Worktree;
+  notePath: string;
+  roundDir: string;
+  /** What the session did and where the run went — the message's status line. */
+  handoff: SessionHandoff;
+  /** HEAD before the session ran, from its `StageOutcome`. */
+  preSessionHead: string;
+}
+
+/**
+ * The scribe's session: context in, commit message out. A message the scribe
+ * did not produce — a dead session, an empty answer — degrades to the
+ * pipeline's own wording rather than delaying the commit, and says so on the
+ * event stream.
+ */
+async function renderHandoffMessage(
+  context: PipelineContext,
+  ticket: Ticket,
+  input: HandoffCommitInput,
+): Promise<string> {
+  const commitContext = await collectCommitContext(input.worktree.path);
+  const prompt = await stagePrompt(
+    context,
+    "commit-message",
+    scribeVariables(ticket.id, ticket.spec, input.handoff, commitContext),
+  );
+  const result = await runHeldSession(
+    context,
+    ticket.id,
+    "commit-message",
+    { prompt },
+    {
+      cwd: input.worktree.path,
+      logPath: path.join(input.roundDir, `${input.handoff.stage}.commit-message.log.jsonl`),
+    },
+    (event) => narrateSessionActivity(context, ticket.id, "commit-message", event),
+  );
+  const written = result.ok ? result.text : "";
+  if (written.trim() === "")
+    context.log.emit("session_activity", ticket.id, {
+      text: "commit-message: the scribe wrote no message; committing with the pipeline's own",
+    });
+  return assembleCommitMessage(written, ticket.id, input.handoff);
+}
+
+/**
+ * The pipeline's one commit per session — the whole of "agents never commit".
+ * Anything the session committed despite the prompt is soft-reset back into the
+ * index, so the pre-session HEAD is always the base and one commit is always
+ * the result. It runs on every path a session can end on, success and failure
+ * alike: partial work that lives in a commit is work a resume can continue.
+ *
+ * A session that changed nothing produces no commit and returns null; its
+ * outcome reaches the ticket note as a comment instead.
+ */
+async function commitSessionHandoff(
+  context: PipelineContext,
+  ticket: Ticket,
+  input: HandoffCommitInput,
+): Promise<string | null> {
+  const { worktree, preSessionHead, handoff } = input;
+  if ((await revParse(worktree.path, "HEAD")) !== preSessionHead) {
+    await git(worktree.path, "reset", "--soft", preSessionHead);
+    context.log.emit("session_activity", ticket.id, {
+      text: `${handoff.stage}: session committed; folding its commits into the pipeline's`,
+    });
+  }
+  await git(worktree.path, "add", "-A");
+  if (!(await hasStagedChanges(worktree.path))) return null;
+  const message = await renderHandoffMessage(context, ticket, input);
+  await git(worktree.path, "commit", "-m", message);
+  const sha = await revParse(worktree.path, "HEAD");
+  // One rendering, two surfaces: the commit and the note carry identical text.
+  await recordTransition(input.notePath, handoff.stage, handoff.round, message);
+  context.log.emit("session_activity", ticket.id, {
+    text: `${handoff.stage}: committed ${sha.slice(0, SHORT_SHA_CHARS)}`,
+  });
+  return sha;
+}
+
 export interface QaStageOptions {
   /** Rendered into the prompt's gate slot; empty means "say nothing about the gate". */
   gateSummary?: string | undefined;
@@ -514,7 +628,11 @@ async function runImplementationStage(
   ticket: Ticket,
   worktree: Worktree,
   input: ImplementationStageInput,
-): Promise<{ step: ImplementationStep; sessionId: string | undefined }> {
+): Promise<{
+  step: ImplementationStep;
+  sessionId: string | undefined;
+  preSessionHead: string;
+}> {
   const { roundDir, notePath, round, history, resume } = input;
   const verdictPath = path.join(roundDir, "implementation.verdict.json");
   const vars = commonVars(context, ticket, worktree, verdictPath);
@@ -548,43 +666,38 @@ async function runImplementationStage(
     freshPrompt,
     continuation,
   );
-  const sessionId = outcome.sessionId;
+  const staged = (step: ImplementationStep) => ({
+    step,
+    sessionId: outcome.sessionId,
+    preSessionHead: outcome.preSessionHead,
+  });
   const verdict = await readImplementationVerdict(outcome.verdictPath);
   context.log.emit("stage_end", ticket.id, {
     stage: "implementation",
     verdict: verdict?.status ?? (outcome.ok ? "invalid-verdict" : "session-failed"),
   });
   if (!verdict) {
-    return {
-      sessionId,
-      step: {
-        kind: "retry",
-        feedback: outcome.ok
-          ? "The previous implementation session ended without writing a valid verdict file. Re-verify the work is complete, committed, and gate-passing, then write the verdict file as instructed."
-          : `The previous implementation session failed: ${outcome.resultText.slice(0, MAX_SESSION_ERROR_CHARS)}`,
-      },
-    };
+    return staged({
+      kind: "retry",
+      feedback: outcome.ok
+        ? "The previous implementation session ended without writing a valid verdict file. Re-verify the work is complete and gate-passing, then write the verdict file as instructed."
+        : `The previous implementation session failed: ${outcome.resultText.slice(0, MAX_SESSION_ERROR_CHARS)}`,
+    });
   }
   const decisions = await recordDecisions(notePath, "implementation", round, verdict.decisions);
   if (verdict.status === "escalate") {
-    return {
-      sessionId,
-      step: {
-        kind: "escalate",
-        question: verdict.question ?? "Escalated without a stated question.",
-        recommendation: verdict.recommendation ?? "(no recommendation given)",
-      },
-    };
+    return staged({
+      kind: "escalate",
+      question: verdict.question ?? "Escalated without a stated question.",
+      recommendation: verdict.recommendation ?? "(no recommendation given)",
+    });
   }
-  return {
-    sessionId,
-    step: {
-      kind: "done",
-      summary: verdict.summary,
-      decisions,
-      observations: verdict.observations ?? [],
-    },
-  };
+  return staged({
+    kind: "done",
+    summary: verdict.summary,
+    decisions,
+    observations: verdict.observations ?? [],
+  });
 }
 
 type CodeReviewStep =
@@ -649,25 +762,26 @@ async function runCodeReviewStage(
     freshPrompt,
     continuation,
   );
-  // Reviewers are read-only; discard any stray modifications.
-  await git(worktree.path, "checkout", "--", ".");
+  // Reviewers are read-only: discard stray modifications, and any commit the
+  // session made despite the prompt — a reviewer never moves the branch.
+  await git(worktree.path, "reset", "--hard", outcome.preSessionHead);
   const verdict = await readReviewVerdict(outcome.verdictPath, { isEscalateAllowed: false });
   context.log.emit("stage_end", ticket.id, {
     stage: "code-review",
     verdict: verdict?.verdict ?? (outcome.ok ? "invalid-verdict" : "session-failed"),
   });
   if (!verdict || verdict.verdict === "fail") {
-    return {
-      sessionId: outcome.sessionId,
-      step: {
-        kind: "retry",
-        feedback:
-          verdict?.feedback ??
-          (verdict
-            ? "Code review failed without specific feedback."
-            : `Code review session did not produce a valid verdict${outcome.ok ? "" : `: ${outcome.resultText.slice(0, MAX_VERDICT_ERROR_CHARS)}`}.`),
-      },
-    };
+    const feedback =
+      verdict?.feedback ??
+      (verdict
+        ? "Code review failed without specific feedback."
+        : `Code review session did not produce a valid verdict${outcome.ok ? "" : `: ${outcome.resultText.slice(0, MAX_VERDICT_ERROR_CHARS)}`}.`);
+    await recordReviewTransition(input.notePath, "code-review", input.round, {
+      outcome: "FAILED",
+      routing: retryRouting(input.round, context.config.pipeline.max_rounds),
+      detail: feedback,
+    });
+    return { sessionId: outcome.sessionId, step: { kind: "retry", feedback } };
   }
   const decisions = await recordDecisions(
     input.notePath,
@@ -675,10 +789,31 @@ async function runCodeReviewStage(
     input.round,
     verdict.decisions,
   );
+  await recordReviewTransition(input.notePath, "code-review", input.round, {
+    outcome: "PASSED",
+    routing: "moving to QA",
+    detail: verdict.feedback ?? "",
+  });
   return {
     sessionId: outcome.sessionId,
     step: { kind: "pass", decisions, observations: verdict.observations ?? [] },
   };
+}
+
+/**
+ * A review verdict as the ticket note records it: the status line, then the
+ * handback text exactly as the implementer received it — a comment that
+ * reworded the feedback would be a second, competing version of it.
+ */
+function recordReviewTransition(
+  notePath: string,
+  stage: StageName,
+  round: number,
+  verdict: { outcome: string; routing: string; detail: string },
+): Promise<void> {
+  const line = statusLine(stage, verdict.outcome, verdict.routing);
+  const detail = verdict.detail.trim();
+  return recordTransition(notePath, stage, round, detail === "" ? line : `${line}\n\n${detail}`);
 }
 
 type RoundStep =
@@ -736,6 +871,7 @@ async function runRound(
   input: RoundInput,
 ): Promise<RoundResult> {
   const { roundDir, notePath, round, history, resume } = input;
+  const maxRounds = context.config.pipeline.max_rounds;
   const memory: SessionMemory = { ...input.memory };
   const previousFailure = history.at(-1);
   const decisions: string[] = [];
@@ -758,6 +894,16 @@ async function runRound(
     previousSession: memory.implementation,
   });
   memory.implementation = { sessionId: implementation.sessionId };
+  // Before any branching: whatever the session left becomes one commit, on the
+  // way out of every exit below. Partial work in a commit is work a re-dispatch
+  // can continue; uncommitted, sanitization would throw it away.
+  const handoffCommit = await commitSessionHandoff(context, ticket, {
+    worktree,
+    notePath,
+    roundDir,
+    handoff: implementationHandoff(implementation.step, round, maxRounds),
+    preSessionHead: implementation.preSessionHead,
+  });
   if (implementation.step.kind === "retry") {
     const { feedback } = implementation.step;
     return {
@@ -777,7 +923,6 @@ async function runRound(
   decisions.push(...implementation.step.decisions);
   observations.push(...implementation.step.observations);
   const summary = implementation.step.summary;
-  await commitAllIfDirty(worktree.path, `jfdi(${ticket.id}): checkpoint uncommitted work`);
 
   const gate = await runGateStage(context, ticket, worktree);
   if (!gate.ok)
@@ -789,7 +934,9 @@ async function runRound(
       step: { kind: "retry", source: "gate", feedback: formatGateFailure(gate) },
     };
 
-  const headCommit = await revParse(worktree.path, "HEAD");
+  // The sign-offs bind to the pipeline's own handoff commit; only a round that
+  // committed nothing (an unchanged tree) reviews the branch as it stood.
+  const headCommit = handoffCommit ?? (await revParse(worktree.path, "HEAD"));
   const review = await runCodeReviewStage(context, ticket, worktree, {
     roundDir,
     notePath,
@@ -813,40 +960,179 @@ async function runRound(
   decisions.push(...review.step.decisions);
   observations.push(...review.step.observations);
 
-  const qa = await runQaStage(context, ticket, worktree, roundDir, notePath, round, {
+  const qa = await runQaPhase(context, ticket, worktree, {
+    roundDir,
+    notePath,
+    round,
     gateSummary: formatGatePass(gate),
+    headCommit,
     previousSession: memory.qa,
     previousFailure,
   });
-  const qaSeenCommit = await revParse(worktree.path, "HEAD");
-  memory.qa = { sessionId: qa.outcome.sessionId, lastSeenCommit: qaSeenCommit };
-  const qaStep = await judgeQa(context, ticket, notePath, qa);
-  if (qaStep.kind !== "passed") return { decisions, observations, summary, memory, step: qaStep };
+  memory.qa = qa.memory;
+  decisions.push(...qa.decisions);
+  observations.push(...qa.observations);
+  return { decisions, observations, summary, memory, step: qa.step };
+}
 
-  decisions.push(...(qa.verdict?.decisions ?? []));
-  observations.push(...(qa.verdict?.observations ?? []));
-  await commitAllIfDirty(worktree.path, `jfdi(${ticket.id}): QA artifacts`);
-  // QA's committed tests are code the reviewed gate never saw. Re-running the
-  // gate here is the pipeline's job, not QA's — a session re-running a suite
-  // the machine can run for free is wasted context.
-  const qaHead = await revParse(worktree.path, "HEAD");
-  if (qaHead !== headCommit) {
-    memory.qa = { sessionId: qa.outcome.sessionId, lastSeenCommit: qaHead };
-    const postQaGate = await runGateStage(context, ticket, worktree);
-    if (!postQaGate.ok)
+interface QaPhaseInput {
+  roundDir: string;
+  notePath: string;
+  round: number;
+  gateSummary: string;
+  /** The commit Code Review signed off on — what QA's own commit is measured against. */
+  headCommit: string;
+  previousSession: StageSessionMemory | undefined;
+  previousFailure: FeedbackItem | undefined;
+}
+
+interface QaPhaseResult {
+  step: RoundStep;
+  decisions: string[];
+  observations: string[];
+  memory: StageSessionMemory;
+}
+
+/**
+ * QA, its verdict, its commit, and the gate over what it committed. QA's tests
+ * are code the reviewed gate never saw, so re-running the gate here is the
+ * pipeline's job, not QA's — a session re-running a suite the machine can run
+ * for free is wasted context.
+ */
+async function runQaPhase(
+  context: PipelineContext,
+  ticket: Ticket,
+  worktree: Worktree,
+  input: QaPhaseInput,
+): Promise<QaPhaseResult> {
+  const { notePath, round } = input;
+  const maxRounds = context.config.pipeline.max_rounds;
+  const qa = await runQaStage(context, ticket, worktree, input.roundDir, notePath, round, {
+    gateSummary: input.gateSummary,
+    previousSession: input.previousSession,
+    previousFailure: input.previousFailure,
+  });
+  const step = await judgeQa(context, ticket, notePath, qa);
+  const handoff = qaHandoff(step, qa.verdict, round, maxRounds);
+  const qaCommit = await commitSessionHandoff(context, ticket, {
+    worktree,
+    notePath,
+    roundDir: input.roundDir,
+    handoff,
+    preSessionHead: qa.outcome.preSessionHead,
+  });
+  await recordReviewTransition(notePath, "qa", round, {
+    outcome: handoff.outcome,
+    routing: handoff.routing,
+    detail: qa.verdict?.feedback ?? "",
+  });
+  const memory = {
+    sessionId: qa.outcome.sessionId,
+    lastSeenCommit: qaCommit ?? input.headCommit,
+  };
+  if (step.kind !== "passed") return { step, decisions: [], observations: [], memory };
+
+  const collected = {
+    decisions: qa.verdict?.decisions ?? [],
+    observations: qa.verdict?.observations ?? [],
+  };
+  if (qaCommit === null) return { step, ...collected, memory };
+  const postQaGate = await runGateStage(context, ticket, worktree);
+  if (postQaGate.ok) return { step, ...collected, memory };
+  return {
+    ...collected,
+    memory,
+    step: {
+      kind: "retry",
+      source: "gate",
+      feedback: `The mechanical gate failed after QA committed its tests.\n\n${formatGateFailure(postQaGate)}`,
+    },
+  };
+}
+
+/** Longest excerpt of a failure reason carried on a status line. */
+const MAX_OUTCOME_REASON_CHARS = 100;
+
+function firstLine(text: string): string {
+  return (text.split("\n")[0] ?? "").slice(0, MAX_OUTCOME_REASON_CHARS);
+}
+
+/** What the Implementation session's commit says happened, and where the run went. */
+function implementationHandoff(
+  step: ImplementationStep,
+  round: number,
+  maxRounds: number,
+): SessionHandoff {
+  const base = { stage: "implementation" as const, round, maxRounds };
+  switch (step.kind) {
+    case "done":
       return {
-        decisions,
-        observations,
-        summary,
-        memory,
-        step: {
-          kind: "retry",
-          source: "gate",
-          feedback: `The mechanical gate failed after QA committed its tests.\n\n${formatGateFailure(postQaGate)}`,
-        },
+        ...base,
+        outcome: "complete",
+        routing: "moving to the mechanical gate",
+        summary: step.summary ?? "",
+        isInterrupted: false,
+      };
+    case "retry":
+      return {
+        ...base,
+        outcome: `interrupted: ${firstLine(step.feedback)}`,
+        routing: retryRouting(round, maxRounds),
+        summary: step.feedback,
+        isInterrupted: true,
+      };
+    case "escalate":
+      return {
+        ...base,
+        outcome: "escalated",
+        routing: BLOCKED_ROUTING,
+        summary: step.question,
+        isInterrupted: true,
       };
   }
-  return { decisions, observations, summary, memory, step: qaStep };
+}
+
+/** The same, for QA — which commits when it wrote acceptance tests, and only then. */
+function qaHandoff(
+  step: RoundStep,
+  verdict: ReviewVerdict | null,
+  round: number,
+  maxRounds: number,
+): SessionHandoff {
+  const base = { stage: "qa" as const, round, maxRounds };
+  if (step.kind === "passed")
+    return {
+      ...base,
+      outcome: "PASSED",
+      routing: "re-running the mechanical gate over the tests it wrote",
+      summary: verdict?.testsAdded ?? "",
+      isInterrupted: false,
+    };
+  if (step.kind === "blocked")
+    return {
+      ...base,
+      outcome: "escalated",
+      routing: BLOCKED_ROUTING,
+      summary: step.reason,
+      isInterrupted: true,
+    };
+  // A QA session that produced no verdict did not finish; one that failed the
+  // work did, and its tests are complete even though the round is not.
+  return verdict === null
+    ? {
+        ...base,
+        outcome: `interrupted: ${firstLine(step.feedback)}`,
+        routing: retryRouting(round, maxRounds),
+        summary: step.feedback,
+        isInterrupted: true,
+      }
+    : {
+        ...base,
+        outcome: "FAILED",
+        routing: retryRouting(round, maxRounds),
+        summary: step.feedback,
+        isInterrupted: false,
+      };
 }
 
 /** Turn a QA outcome into the round's verdict, recording an escalation if that's what it is. */
@@ -902,6 +1188,12 @@ export async function runPipeline(
   );
   const runDirs = await nextRunDir(context.stateDir, ticket.id);
   context.log.emit("dispatch", ticket.id, { title: ticket.cardText, branch: worktree.branch });
+  await recordTransition(
+    notePath,
+    "dispatch",
+    1,
+    `JFDI run started — round 1, branch \`${worktree.branch}\``,
+  );
   reportUnresolvedLinks(context, ticket);
 
   // A re-dispatched ticket may carry partial work and a half-finished git
@@ -994,6 +1286,12 @@ async function recordRoundsExhausted(
   const historyMarkdown = history
     .map((h) => `- **round ${h.round} (${h.source}):** ${h.feedback.split("\n")[0]}`)
     .join("\n");
+  await recordTransition(
+    notePath,
+    "pipeline",
+    maxRounds,
+    `JFDI run exhausted its ${maxRounds} rounds — ${BLOCKED_ROUTING}\n\n${historyMarkdown}`,
+  );
   await appendToSection(
     notePath,
     "Questions",
