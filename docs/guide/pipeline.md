@@ -39,6 +39,10 @@ Three properties are worth internalizing:
   to the same Implementation session as feedback, up to 10 fix sessions per
   round. Rounds mean moving on to other agents, not iterating with the machine;
   only a gate that is still red after those fixes consumes the round.
+- **A spec-invalid verdict also stays inside the round.** The pipeline returns
+  the concrete parse or field error and the verdict path to that stage's own
+  session. The agent gets two correction attempts; a verdict still invalid after
+  both blocks the ticket as a malfunction instead of spending a feedback round.
 - **Every agent failure re-enters at Implementation.** There is no partial
   re-entry: a Code Review fail or a QA fail starts the next round at the top.
   Both review sign-offs bind to a specific commit, so any code change invalidates
@@ -63,7 +67,7 @@ edit — see [Prompts & Customization](prompts-and-customization.md).
 | Stage | Job | Can escalate? |
 |---|---|---|
 | **Implementation** | Does the work, writes unit tests alongside the code. It does not run the gate — the pipeline runs it after the session and returns any failure as feedback. | Yes |
-| **Code Review** | Judges the diff on structure, clarity, conventions, and maintainability — *not* functionality. | No — an attempted escalation is treated as an invalid verdict and costs a round |
+| **Code Review** | Judges the diff on structure, clarity, conventions, and maintainability — *not* functionality. | No — an attempted escalation is a spec-invalid verdict and enters the two-attempt correction path |
 | **QA** | Exercises the built artifact per the [sandbox contract](prompts-and-customization.md#the-sandbox-contract), validates behavior against the *ticket* (not the diff), and writes what it verified as automated regression tests. | Yes |
 
 Integration is the fourth agent, but it is owned by the coordinator, not the ticket
@@ -116,10 +120,17 @@ outcomes *only* from the collected file:
   "question": "…", "recommendation": "…" }
 ```
 
-A missing or malformed verdict file is not fatal: the stage is treated as "did not
-produce a valid verdict" and the round retries with that as feedback (a markdown
-code fence around the JSON is tolerated). Two of the fields matter beyond
-pass/fail:
+A missing verdict file keeps the existing session-failure behavior: the stage is
+treated as "did not produce a valid verdict" and the round retries with that as
+feedback. An existing file that does not meet spec is different: JSON parse
+failures, a missing required discriminator, and a discriminator outside its
+allowed enum are returned immediately to the same stage session with the concrete
+error and agent-facing verdict path. The agent gets two correction attempts in
+the same round. A forgotten session falls back once to a fresh spawn carrying the
+same correction message; it does not enlarge the cap. If the second correction is
+still invalid, the run blocks and the ticket comment quotes the final error and
+path. A markdown code fence around otherwise valid JSON remains tolerated. Two of
+the fields matter beyond pass/fail:
 
 - **`decisions`** — autonomous choices the agent made, each appended to the
   ticket note's `## Comments` trail as a
@@ -289,11 +300,15 @@ When rounds are exhausted, the card moves to **Blocked** and the round history i
 written into the ticket note's `## Questions` section with instructions for
 retrying.
 
-The post-Implementation gate is the exception: its failure feeds back into the
+The post-Implementation gate is one exception: its failure feeds back into the
 same Implementation session *within* the round, and the gate reruns — up to 10
 fix sessions per round. A round is spent when the work moves to other agents (or
 when the gate is still red after those fixes), so a hard-to-green gate cannot
 silently eat the whole round budget one compile error at a time.
+
+A spec-invalid verdict is the other exception. It returns to the stage that wrote
+it for up to two corrections in the same round. Persistent invalid output blocks
+the ticket directly; it never becomes feedback for another round.
 
 Every gate attempt writes its complete combined output to a numbered `gate-*.log`
 file in the run directory before JFDI excerpts it for prompt context. Failure

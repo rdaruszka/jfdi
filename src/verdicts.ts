@@ -71,28 +71,70 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-async function readVerdictFile(path: string): Promise<Record<string, unknown> | null> {
-  const content = await readIfExists(path);
-  if (content === null) return null;
+export type VerdictReadResult<Verdict> =
+  | { status: "valid"; verdict: Verdict }
+  | { status: "missing" }
+  | { status: "invalid"; error: string };
+
+interface VerdictReadOptions {
+  /** The agent-facing path to name in errors when the collected file lives elsewhere. */
+  reportedPath?: string;
+}
+
+type VerdictFileReadResult = VerdictReadResult<Record<string, unknown>>;
+
+async function readVerdictFile(
+  verdictPath: string,
+  options: VerdictReadOptions,
+): Promise<VerdictFileReadResult> {
+  const content = await readIfExists(verdictPath);
+  if (content === null) return { status: "missing" };
+  const reportedPath = options.reportedPath ?? verdictPath;
   try {
     // Tolerate agents wrapping the JSON in a fenced block despite instructions.
     const stripped = content.replace(/^```(?:json)?\s*\n?|\n?```\s*$/g, "").trim();
     const parsed = JSON.parse(stripped) as unknown;
-    return isRecord(parsed) ? parsed : null;
-  } catch {
-    // A verdict we cannot parse is a verdict the stage did not produce: the
-    // caller re-runs or fails the round rather than guessing at intent.
-    return null;
+    if (!isRecord(parsed)) {
+      const received = Array.isArray(parsed) ? "array" : parsed === null ? "null" : typeof parsed;
+      return {
+        status: "invalid",
+        error: `Top-level JSON value must be an object; received ${received}. Verdict file: ${reportedPath}`,
+      };
+    }
+    return { status: "valid", verdict: parsed };
+  } catch (error) {
+    return {
+      status: "invalid",
+      error: `JSON parse failed: ${(error as Error).message}. Verdict file: ${reportedPath}`,
+    };
   }
 }
 
+function enumError(
+  raw: Record<string, unknown>,
+  field: string,
+  allowedValues: readonly string[],
+  reportedPath: string,
+): string {
+  const allowed = allowedValues.map((value) => JSON.stringify(value)).join(", ");
+  if (!(field in raw))
+    return `required field ${JSON.stringify(field)} is missing; allowed values: ${allowed}. Verdict file: ${reportedPath}`;
+  return `field ${JSON.stringify(field)} has value ${JSON.stringify(raw[field])}; allowed values: ${allowed}. Verdict file: ${reportedPath}`;
+}
+
 export async function readImplementationVerdict(
-  path: string,
-): Promise<ImplementationVerdict | null> {
-  const raw = await readVerdictFile(path);
-  if (!raw) return null;
+  verdictPath: string,
+  options: VerdictReadOptions = {},
+): Promise<VerdictReadResult<ImplementationVerdict>> {
+  const file = await readVerdictFile(verdictPath, options);
+  if (file.status !== "valid") return file;
+  const raw = file.verdict;
   const status = raw.status;
-  if (status !== "done" && status !== "escalate") return null;
+  if (status !== "done" && status !== "escalate")
+    return {
+      status: "invalid",
+      error: enumError(raw, "status", ["done", "escalate"], options.reportedPath ?? verdictPath),
+    };
   const decisions = stringArray(raw.decisions);
   const result: ImplementationVerdict = { status };
   const summary = optionalString(raw.summary);
@@ -104,18 +146,28 @@ export async function readImplementationVerdict(
   if (question) result.question = question;
   const recommendation = optionalString(raw.recommendation);
   if (recommendation) result.recommendation = recommendation;
-  return result;
+  return { status: "valid", verdict: result };
 }
 
 export async function readReviewVerdict(
-  path: string,
-  options: { isEscalateAllowed: boolean },
-): Promise<ReviewVerdict | null> {
-  const raw = await readVerdictFile(path);
-  if (!raw) return null;
+  verdictPath: string,
+  options: { isEscalateAllowed: boolean } & VerdictReadOptions,
+): Promise<VerdictReadResult<ReviewVerdict>> {
+  const file = await readVerdictFile(verdictPath, options);
+  if (file.status !== "valid") return file;
+  const raw = file.verdict;
   const verdict = raw.verdict;
-  if (verdict !== "pass" && verdict !== "fail" && verdict !== "escalate") return null;
-  if (verdict === "escalate" && !options.isEscalateAllowed) return null;
+  const allowedValues = options.isEscalateAllowed
+    ? (["pass", "fail", "escalate"] as const)
+    : (["pass", "fail"] as const);
+  if (
+    (verdict !== "pass" && verdict !== "fail" && verdict !== "escalate") ||
+    (verdict === "escalate" && !options.isEscalateAllowed)
+  )
+    return {
+      status: "invalid",
+      error: enumError(raw, "verdict", allowedValues, options.reportedPath ?? verdictPath),
+    };
   const result: ReviewVerdict = { verdict };
   const feedback = optionalString(raw.feedback);
   if (feedback) result.feedback = feedback;
@@ -129,16 +181,29 @@ export async function readReviewVerdict(
   if (question) result.question = question;
   const recommendation = optionalString(raw.recommendation);
   if (recommendation) result.recommendation = recommendation;
-  return result;
+  return { status: "valid", verdict: result };
 }
 
-export async function readIntegrationVerdict(path: string): Promise<IntegrationVerdict | null> {
-  const raw = await readVerdictFile(path);
-  if (!raw) return null;
+export async function readIntegrationVerdict(
+  verdictPath: string,
+  options: VerdictReadOptions = {},
+): Promise<VerdictReadResult<IntegrationVerdict>> {
+  const file = await readVerdictFile(verdictPath, options);
+  if (file.status !== "valid") return file;
+  const raw = file.verdict;
   const resolution = raw.resolution;
-  if (resolution !== "clean" && resolution !== "complicated") return null;
+  if (resolution !== "clean" && resolution !== "complicated")
+    return {
+      status: "invalid",
+      error: enumError(
+        raw,
+        "resolution",
+        ["clean", "complicated"],
+        options.reportedPath ?? verdictPath,
+      ),
+    };
   const result: IntegrationVerdict = { resolution };
   const notes = optionalString(raw.notes);
   if (notes) result.notes = notes;
-  return result;
+  return { status: "valid", verdict: result };
 }

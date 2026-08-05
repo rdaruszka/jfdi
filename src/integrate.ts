@@ -96,7 +96,8 @@ async function runIntegrationAgent(
   // The agent wrote its verdict inside the worktree (the only place sandboxed
   // permission modes allow); collect it before reading.
   await collectVerdict(agentVerdictPath(worktree.path, stage), verdictPath);
-  const verdict = await readIntegrationVerdict(verdictPath);
+  const verdictResult = await readIntegrationVerdict(verdictPath);
+  const verdict = verdictResult.status === "valid" ? verdictResult.verdict : null;
   // Only this session's own numbers: integration runs may be a separate process
   // whose ledger holds no pipeline stages, so it must not overwrite the run
   // total the pipeline's own stage_end events already set. Its cost still reaches

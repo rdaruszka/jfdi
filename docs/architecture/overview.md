@@ -81,7 +81,9 @@ flowchart TB
   Implementation → gate → Code Review → QA, with session continuation between
   rounds. The gate is pipeline-run and its failures stay inside the round —
   they return to the Implementation session as feedback, up to 10 fix sessions,
-  before a still-red gate may consume the round. It also owns the branch: agents never commit, and each session ends
+  before a still-red gate may consume the round. Spec-invalid verdicts likewise
+  return to their authoring stage inside the round for up to two corrections,
+  then block as an agent malfunction. It also owns the branch: agents never commit, and each session ends
   with one pipeline commit whose message the **scribe**
   ([src/scribe.ts](../../src/scribe.ts)) writes and whose text is appended to
   the ticket note as a transition comment ([src/transitions.ts](../../src/transitions.ts)).
@@ -145,6 +147,7 @@ sequenceDiagram
         end
         P->>A: Code Review (gates QA)
         P->>A: QA (sandbox + regression tests)
+        Note over P,A: invalid verdict → same stage (≤2 corrections, same round)
     end
     P-->>C: outcome (observations from every valid verdict)
     C->>H: observations → Inbox cards
@@ -214,9 +217,10 @@ Data crossing these boundaries is validated, not trusted:
   defensively, and every write assumes the file may have changed underneath.
 - **Harness stream events** — provider JSON lines; a malformed line is simply
   not an event.
-- **Verdict files** — written by agents; missing/malformed verdicts are a
-  handled outcome (a retried round), not a crash. Field values are coerced and
-  re-checked.
+- **Verdict files** — written by agents. A missing file is a handled session
+  outcome; malformed JSON and invalid required discriminators return to the
+  authoring stage with the concrete error and path for up to two in-round
+  corrections, then block. Optional narrative fields are type-checked before use.
 - **`events.jsonl`** — shared by multiple processes; the tail-follower skips
   unparseable lines (with an `error` event), and each line's `origin` id keeps a
   process from folding its own events back in twice.
