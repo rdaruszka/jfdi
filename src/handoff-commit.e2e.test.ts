@@ -11,11 +11,10 @@
  * repository, so these tests drive the built CLI in a scratch repo and then
  * ask git, never the source.
  *
- * They also push the scribe's answer past every bound the shipped contract
- * sets — control characters, an overlong first line, an answer that is nothing
- * but the metadata the pipeline owns — because a message only has to survive
- * `git commit` once to be permanent, and a NUL byte makes `git commit -m` fail
- * outright.
+ * They also exercise hostile or unguided scribe answers — control characters,
+ * an overlong first line, an answer that is nothing but the metadata the
+ * pipeline owns — because a message only has to survive `git commit` once to
+ * be permanent, and a NUL byte makes `git commit -m` fail outright.
  *
  * `JFDI_HOME`/`HOME` always point inside the scratch tree — nothing here can
  * reach the real `~/.jfdi`.
@@ -365,13 +364,13 @@ describe("handoff commit messages, as git reads them", () => {
           },
         },
         {
-          // Past the bound the shipped template states, the first line is prose
-          // that landed in the subject's place: kept as body, never truncated.
+          // The suggested length is not an enforcement threshold: git accepts
+          // the first line as the subject without truncation or demotion.
           name: "overlong-first-line",
           answer: `${"x".repeat(200)}\n\nthe prose account`,
-          subject: (id) => `${id}: Implementation round 1`,
+          subject: (id) => `${id}: ${"x".repeat(200)}`,
           body: (message) => {
-            expect(message).toContain("x".repeat(200));
+            expect(message).not.toContain(`\n\n${"x".repeat(200)}`);
             expect(message).toContain("the prose account");
           },
         },
@@ -442,6 +441,52 @@ describe("handoff commit messages, as git reads them", () => {
         const dispatchEntries = note.match(/^### \S+ — dispatch round 1$/gm) ?? [];
         expect(dispatchEntries, testCase.name).toHaveLength(1);
       }
+    },
+    PIPELINE_TIMEOUT_MS,
+  );
+
+  it(
+    "lands a scribe first line past 72 characters verbatim as the commit subject",
+    async () => {
+      const sandbox = await makeSandbox();
+      await initProject(sandbox);
+
+      // A realistic first line just over git's conventional length — not a
+      // degenerate run of one character — with a real body under it. Nothing in
+      // the sink (git) needs it shorter; the 72-char figure is a steer, so the
+      // subject position is where it belongs, uncut.
+      const firstLine =
+        "Rework the object-name resolution so every callsite shares one canonical path";
+      expect(firstLine.length).toBeGreaterThan(72);
+      const body = "The old duplicate lookups drifted out of sync; this collapses them.";
+      const promptDump = path.join(sandbox.root, "scribe-prompt.txt");
+      const scribeFile = await scribeAnswer(sandbox, "overlong", `${firstLine}\n\n${body}`);
+
+      const run = await runCli(sandbox, ["run", "Collapse object-name lookups"], {
+        scribeFile,
+        scribePromptDump: promptDump,
+      });
+      expect(run.code, run.stderr).toBe(0);
+      const ticketId = ticketIdOf(run);
+      const branch = `jfdi/${ticketId}`;
+
+      // git itself reports the whole first line as the subject — no truncation,
+      // no padding, and no demotion to a pipeline-authored subject.
+      const subject = await git(sandbox.project, "log", "-1", "--format=%s", branch);
+      expect(subject).toBe(`${ticketId}: ${firstLine}`);
+      expect(subject).not.toContain("Implementation round");
+
+      // The first line is the subject, not a body paragraph, and the real body
+      // still follows it.
+      const message = await git(sandbox.project, "log", "-1", "--format=%B", branch);
+      expect(message).not.toContain(`\n\n${firstLine}`);
+      expect(message).toContain(body);
+      expect(await trailerValue(sandbox.project, branch, "JFDI-Round")).toBe("1/3");
+
+      // The 72-char figure survives only where the ticket allows it: as guidance
+      // in the scribe's prompt, never as a threshold the code enforces.
+      const prompt = await fs.readFile(promptDump, "utf8");
+      expect(prompt).toContain("72 characters or fewer");
     },
     PIPELINE_TIMEOUT_MS,
   );
