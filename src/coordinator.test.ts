@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { findColumn, moveCard, parseBoard } from "./board.js";
 import { Coordinator } from "./coordinator.js";
 import { EventLog, type JfdiEvent, loadState } from "./events.js";
-import { branchExists, deleteBranch, git, revParse } from "./git.js";
+import { branchExists, deleteBranch, git, isAncestor, revParse } from "./git.js";
+import { integrateTicket } from "./integrate.js";
 import { worktreesDir } from "./pipeline.js";
 import { loadReport, saveReport } from "./report.js";
 import {
@@ -14,6 +15,7 @@ import {
   sessionKindOf,
   writeVerdict,
 } from "./test-helpers.js";
+import { resolveTicket } from "./tickets.js";
 import { ticketIdFromCard } from "./util/ids.js";
 
 let fixture: Fixture;
@@ -113,6 +115,38 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
     resolve = settle;
   });
   return { promise, resolve: () => resolve() };
+}
+
+/**
+ * A real EventLog whose disk writes happen only when the caller flushes. This
+ * makes the cross-process ordering deterministic: its in-memory state advances
+ * normally, while another EventLog sees only the events made durable so far.
+ */
+class FlushControlledEventLog extends EventLog {
+  private readonly diskLog: EventLog;
+  private pendingEvents: JfdiEvent[] = [];
+
+  constructor(stateDir: string) {
+    super(stateDir, false);
+    this.diskLog = new EventLog(stateDir);
+  }
+
+  override emit(...args: Parameters<EventLog["emit"]>): JfdiEvent {
+    const event = super.emit(...args);
+    this.pendingEvents.push(event);
+    return event;
+  }
+
+  override async flush(): Promise<void> {
+    const events = this.pendingEvents;
+    this.pendingEvents = [];
+    for (const event of events) this.diskLog.emit(event.type, event.ticketId, event.data);
+    await this.diskLog.flush();
+  }
+
+  pendingTypes(): JfdiEvent["type"][] {
+    return this.pendingEvents.map((event) => event.type);
+  }
 }
 
 /** Poll a condition to a fixed attempt cap — never an unbounded wait. */
@@ -444,6 +478,43 @@ describe("Coordinator", () => {
     ]);
     expect(findColumn(board, "Ready to Merge")?.cards).toHaveLength(0);
     expect(context.log.snapshot().tickets[alphaId]?.status).toBe("done");
+    expect(await recordedMergedEvents(alphaId)).toHaveLength(1);
+  });
+
+  it("flushes merge_start before git can expose a merge to another process", async () => {
+    const stages: string[] = [];
+    const pipelineCoordinator = await runToMergeReady(stages);
+    pipelineCoordinator.stop();
+
+    const alphaId = ticketIdFromCard(ALPHA_TEXT);
+    const ticket = await resolveTicket(ALPHA_TEXT, fixture.ticketsDir);
+    const report = await loadReport(fixture.stateDir, alphaId);
+    if (!report) throw new Error("pipeline should save a report before integration");
+
+    const integrationContext = fixture.context(autoHandler());
+    const integrationLog = new FlushControlledEventLog(fixture.stateDir);
+    integrationContext.log = integrationLog;
+    const outcome = await integrateTicket(integrationContext, ticket, {
+      path: path.join(worktreesDir(fixture.jfdiDir), alphaId),
+      branch: `jfdi/${alphaId}`,
+    });
+    expect(outcome.status).toBe("merged");
+    expect(await isAncestor(fixture.repo, report.commit, "main")).toBe(true);
+    expect(integrationLog.pendingTypes()).toContain("merged");
+
+    // The merge command has landed and deleted the branch. A coordinator scan
+    // must still see the flushed in-flight record and leave narration to it.
+    const sweepContext = fixture.context(autoHandler(), { shouldPersistEvents: true });
+    const coordinator = new Coordinator(sweepContext, { pollMs: 60_000 });
+    await coordinator.start();
+    await sweepContext.log.flush();
+
+    await integrationLog.flush();
+    await coordinator.settleScan();
+    coordinator.stop();
+    await sweepContext.log.flush();
+
+    expect(findColumn(await readBoard(), "Ready to Merge")?.cards).toHaveLength(0);
     expect(await recordedMergedEvents(alphaId)).toHaveLength(1);
   });
 

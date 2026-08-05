@@ -405,7 +405,7 @@ export class EventLog {
     return event;
   }
 
-  /** Wait for pending disk writes (tests, shutdown). */
+  /** Wait for pending disk writes, including durability barriers before cross-process effects. */
   async flush(): Promise<void> {
     await this.writeChain;
   }

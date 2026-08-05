@@ -243,6 +243,10 @@ export async function integrateTicket(
   const stale = await clearStaleMerge(worktree);
   if (stale.status === "blocked") return blocked(context, ticket, notePath, stale.reason);
   context.log.emit("merge_start", ticket.id, stale.note ? { note: stale.note } : undefined);
+  // A coordinator in another process reads integration records from disk. Make
+  // the in-flight record durable before git can expose a landed branch, or its
+  // sweep can mistake this integration for a hand-merge and narrate it twice.
+  await context.log.flush();
 
   // Human may have merged by hand (on-approval mode) — never double-merge.
   if (await isAncestor(context.repoRoot, worktree.branch, target)) {
