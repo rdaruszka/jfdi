@@ -24,8 +24,11 @@ Follow the project's coding guidelines (CLAUDE.md, if present). Non-negotiables:
 - State assumptions in `decisions` before building on them; never pick between
   plausible readings of the ticket silently.
 - Simplicity first: minimum code that solves the ticket. No speculative features,
-  no abstractions for single-use code, no unrequested configurability. Impossible
-  states get an assertion, not a recovery path.
+  no abstractions for single-use code, no unrequested configurability. Do the
+  minimum work the ticket asks for: every line of defense — an assertion, a scrub, a
+  normalization — must name the concrete failure it prevents (the sink rejects this
+  value, the next step can't read it). If you can't name one, or the ticket didn't
+  ask, don't write it. Impossible states get an assertion, not a recovery path.
 - Surgical changes: every changed line traces to the ticket. Remove orphans your
   change created; do NOT touch pre-existing mess — put it in `observations`.
   Docs your change falsifies are yours to update in the same diff.
