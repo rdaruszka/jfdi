@@ -1046,6 +1046,25 @@ function recordGateFixTransition(
   );
 }
 
+/** What one Implementation step contributes to the run-level collection. */
+function implementationStepContributions(
+  step: ImplementationStep,
+  previousSummary: string | undefined,
+): Pick<ImplementationCycleCollected, "decisions" | "observations" | "summary"> {
+  switch (step.kind) {
+    case "done":
+      return {
+        decisions: step.decisions,
+        observations: step.observations,
+        summary: step.summary ?? previousSummary,
+      };
+    case "escalate":
+      return { decisions: [], observations: step.observations, summary: previousSummary };
+    case "retry":
+      return { decisions: [], observations: [], summary: previousSummary };
+  }
+}
+
 /**
  * The Implementation-gate cycle: sessions until the gate is green. A gate
  * failure stays inside the round — it returns to the same Implementation
@@ -1098,13 +1117,10 @@ async function runImplementationGateCycle(
         handoff: implementationHandoff(implementation.step, round, maxRounds, implementation.usage),
         preSessionHead: implementation.preSessionHead,
       })) ?? lastHandoffCommit;
-    if (implementation.step.kind === "done") {
-      decisions.push(...implementation.step.decisions);
-      observations.push(...implementation.step.observations);
-      summary = implementation.step.summary ?? summary;
-    } else if (implementation.step.kind === "escalate") {
-      observations.push(...implementation.step.observations);
-    }
+    const contributions = implementationStepContributions(implementation.step, summary);
+    decisions.push(...contributions.decisions);
+    observations.push(...contributions.observations);
+    summary = contributions.summary;
     const exitStep = await implementationExitStep(context, ticket, notePath, implementation.step);
     if (exitStep) return { kind: "exit", ...collected(), step: exitStep };
     if (implementation.step.kind !== "done")

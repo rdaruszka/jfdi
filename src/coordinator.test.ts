@@ -234,6 +234,21 @@ function autoHandler() {
   };
 }
 
+/** The feature suffix carried in the fixture ticket's prompt. */
+function featureName(prompt: string): string {
+  return /feature (\w+)/.exec(prompt)?.[1] ?? "unknown";
+}
+
+/** Fail the first review with an observation, then approve the fix round. */
+function observedReviewVerdict(implementationAttempt: number | undefined): Record<string, unknown> {
+  if (implementationAttempt !== 1) return { verdict: "pass" };
+  return {
+    verdict: "fail",
+    feedback: "fix the ticket code",
+    observations: ["Security headers are missing from the legacy server"],
+  };
+}
+
 /** One card left mid-flight by a coordinator that died, and nothing else. */
 const ORPHANED_BOARD = `---
 
@@ -806,20 +821,14 @@ describe("Coordinator", () => {
     const implementationAttempts = new Map<string, number>();
     const context = fixture.context(async (spec, options) => {
       const stage = sessionKindOf(spec.prompt);
-      const name = /feature (\w+)/.exec(spec.prompt)?.[1] ?? "unknown";
+      const name = featureName(spec.prompt);
       if (stage === "implementation") {
         const attempt = (implementationAttempts.get(name) ?? 0) + 1;
         implementationAttempts.set(name, attempt);
         await commitFile(options.cwd, `${name}.txt`, `${attempt}\n`, `implement ${name}`);
         await writeVerdict(spec.prompt, { status: "done", summary: `built ${name}` });
       } else if (stage === "code-review") {
-        const observation = "Security headers are missing from the legacy server";
-        await writeVerdict(
-          spec.prompt,
-          implementationAttempts.get(name) === 1
-            ? { verdict: "fail", feedback: "fix the ticket code", observations: [observation] }
-            : { verdict: "pass" },
-        );
+        await writeVerdict(spec.prompt, observedReviewVerdict(implementationAttempts.get(name)));
       } else if (stage === "integration") {
         await writeVerdict(spec.prompt, { resolution: "clean" });
       } else {
@@ -843,7 +852,7 @@ describe("Coordinator", () => {
     const context = fixture.context(async (spec, options) => {
       const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
-        const name = /feature (\w+)/.exec(spec.prompt)?.[1] ?? "unknown";
+        const name = featureName(spec.prompt);
         await commitFile(options.cwd, `${name}.txt`, `${name}\n`, `implement ${name}`);
         await writeVerdict(spec.prompt, {
           status: "done",
