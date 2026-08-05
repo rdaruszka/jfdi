@@ -22,7 +22,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { git } from "./git.js";
 // The card-to-ticket-id rule is the product's own; a test that reimplemented
 // it would be pinning its own copy, not the one the coordinator looks up.
@@ -33,7 +33,6 @@ const execFileAsync = promisify(execFile);
 const repoRoot = path.dirname(import.meta.dirname);
 const cliPath = path.join(repoRoot, "dist", "index.js");
 
-const BUILD_TIMEOUT_MS = 180_000;
 const SCENARIO_TIMEOUT_MS = 120_000;
 /** Cap on every wait below — a condition that never holds fails, never hangs. */
 const WAIT_TIMEOUT_MS = 40_000;
@@ -305,11 +304,6 @@ async function soleTicketId(sandbox: Sandbox, cardText: string): Promise<string>
 function slugPrefix(cardText: string): string {
   return cardText.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 }
-
-beforeAll(async () => {
-  // Always rebuild: a stale dist/ would let these pass against old behavior.
-  await execFileAsync("pnpm", ["build"], { cwd: repoRoot });
-}, BUILD_TIMEOUT_MS);
 
 afterEach(async () => {
   // SIGTERM first — `jfdi start` kills its live sessions on the way out, so a

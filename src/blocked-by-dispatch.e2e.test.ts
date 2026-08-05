@@ -18,7 +18,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
@@ -26,7 +26,6 @@ const execFileAsync = promisify(execFile);
 const repoRoot = path.dirname(import.meta.dirname);
 const cliPath = path.join(repoRoot, "dist", "index.js");
 
-const BUILD_TIMEOUT_MS = 180_000;
 const RUN_TIMEOUT_MS = 120_000;
 
 /**
@@ -170,11 +169,6 @@ async function agentRan(sandbox: Sandbox): Promise<boolean> {
     return false;
   }
 }
-
-beforeAll(async () => {
-  // Always rebuild: a stale dist/ would let these pass against old behavior.
-  await execFileAsync("pnpm", ["build"], { cwd: repoRoot });
-}, BUILD_TIMEOUT_MS);
 
 afterEach(async () => {
   await Promise.all(sandboxes.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));

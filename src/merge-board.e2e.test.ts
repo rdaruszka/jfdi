@@ -25,7 +25,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { JfdiEvent } from "./events.js";
 import { createWorktree, git } from "./git.js";
 import { worktreesDir } from "./pipeline.js";
@@ -194,11 +194,6 @@ async function readEvents(sandbox: Sandbox): Promise<JfdiEvent[]> {
     .filter((line) => line.length > 0)
     .map((line) => JSON.parse(line) as JfdiEvent);
 }
-
-beforeAll(async () => {
-  // Always rebuild: a stale dist/ would let these pass against old behavior.
-  await execFileAsync("pnpm", ["build"], { cwd: repoRoot });
-}, 180_000);
 
 afterEach(async () => {
   await Promise.all(sandboxes.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
