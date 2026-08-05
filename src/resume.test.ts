@@ -191,12 +191,21 @@ describe("feedback history", () => {
     await fs.mkdir(fixture.stateDir, { recursive: true });
 
     await fs.writeFile(historyFile, "{ truncated");
-    expect(await loadFeedbackHistory(fixture.stateDir)).toEqual([]);
+    await expect(loadFeedbackHistory(fixture.stateDir)).rejects.toThrow(
+      `malformed feedback history at ${historyFile}: JSON parse failed`,
+    );
 
-    await fs.writeFile(historyFile, JSON.stringify([{ run: 1, round: 1, source: "toString" }]));
-    expect(await loadFeedbackHistory(fixture.stateDir)).toEqual([]);
+    const malformedItem = { run: 1, round: 1, source: "toString" };
+    await fs.writeFile(historyFile, JSON.stringify([items[0], malformedItem]));
+    await expect(loadFeedbackHistory(fixture.stateDir)).rejects.toMatchObject({
+      filePath: historyFile,
+      failure: "entry at index 1 is not a feedback item or dropped-feedback marker",
+      offendingContent: JSON.stringify(malformedItem, null, 2),
+    });
 
     await fs.writeFile(historyFile, JSON.stringify({ round: 1 }));
-    expect(await loadFeedbackHistory(fixture.stateDir)).toEqual([]);
+    await expect(loadFeedbackHistory(fixture.stateDir)).rejects.toThrow(
+      "top-level value is not an array",
+    );
   });
 });

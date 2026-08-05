@@ -562,6 +562,73 @@ describe("runPipeline", () => {
     expect(prompt).toContain("Run 1, round 3 — code review");
   });
 
+  it("blocks malformed prior feedback history with an actionable warning and error event", async () => {
+    const ticket = await resolveTicket("Malformed history", fixture.ticketsDir);
+    const priorRunDir = path.join(fixture.stateDir, "runs", ticket.id, "run-1");
+    const historyFile = path.join(priorRunDir, "history.json");
+    const malformedItem = { run: 1, round: 1, source: "qa", feedback: 17 };
+    await fs.mkdir(priorRunDir, { recursive: true });
+    await fs.writeFile(historyFile, JSON.stringify([malformedItem]));
+
+    const context = fixture.context(() => {
+      throw new Error("no agent session should be dispatched");
+    });
+    const events: JfdiEvent[] = [];
+    context.log.on((event) => events.push(event));
+
+    const outcome = await runPipeline(context, ticket);
+
+    expect(outcome).toMatchObject({ status: "blocked" });
+    expect(context.harness.calls).toHaveLength(0);
+    expect(events.map((event) => event.type)).not.toContain("dispatch");
+    expect(events.map((event) => event.type)).toContain("error");
+    expect(events.map((event) => event.type)).toContain("blocked");
+    expect(events.find((event) => event.type === "error")?.data?.message).toContain(historyFile);
+    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
+    expect(note).toContain(`Malformed feedback history at ${historyFile}`);
+    expect(note).toContain('"feedback": 17');
+    expect(note).toContain("Fix the file to resume with its feedback intact");
+    expect(note).toContain("delete it to deliberately resume without history");
+    await expect(
+      fs.access(path.join(fixture.stateDir, "runs", ticket.id, "run-2")),
+    ).rejects.toThrow();
+  });
+
+  it("resumes with the full feedback history after the operator fixes the malformed file", async () => {
+    const ticket = await resolveTicket("Repair history", fixture.ticketsDir);
+    const priorRunDir = path.join(fixture.stateDir, "runs", ticket.id, "run-1");
+    const historyFile = path.join(priorRunDir, "history.json");
+    await fs.mkdir(priorRunDir, { recursive: true });
+    await fs.writeFile(historyFile, '[{"feedback":17}]');
+
+    const blocked = fixture.context(() => {
+      throw new Error("no agent session should be dispatched");
+    });
+    expect((await runPipeline(blocked, ticket)).status).toBe("blocked");
+
+    const repairedHistory = [
+      { run: 1, round: 1, source: "code-review", feedback: "keep the public API" },
+      { run: 1, round: 2, source: "qa", feedback: "cover the interrupted path" },
+    ];
+    await fs.writeFile(historyFile, JSON.stringify(repairedHistory));
+    let implementationPrompt = "";
+    const resumed = fixture.context(async (spec, options) => {
+      const stage = sessionKindOf(spec.prompt);
+      if (stage === "implementation") {
+        implementationPrompt = spec.prompt;
+        await commitFile(options.cwd, "impl.txt", "repaired\n", "implement after repair");
+        await writeVerdict(spec.prompt, { status: "done", summary: "done" });
+      } else {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    });
+
+    expect((await runPipeline(resumed, ticket)).status).toBe("passed");
+    expect(implementationPrompt).toContain("keep the public API");
+    expect(implementationPrompt).toContain("cover the interrupted path");
+  });
+
   it("carries unanswered feedback across a run that ends in an escalation", async () => {
     // Run 1: code review never approves → retries exhausted, its feedback on disk.
     let attempt = 0;
