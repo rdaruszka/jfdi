@@ -2,7 +2,13 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { unresolvedBlockers } from "./blocking.js";
+import type { Board, Card } from "./board.js";
 import { ensureTicketNote, resolveTicket } from "./tickets.js";
+
+function readyCard(text: string): Card {
+  return { raw: `- [ ] ${text}`, text, checked: false };
+}
 
 let dir: string;
 let ticketsDir: string;
@@ -155,6 +161,21 @@ describe("resolveTicket", () => {
     );
     const ticket = await resolveTicket("[[escaper]]", ticketsDir);
     expect(ticket.links).toEqual([{ kind: "blocked-by", target: "../outside", notePath: null }]);
+  });
+
+  // Regression: the natural hand-written `blocked-by: [[foo]]` (unquoted, inline)
+  // once hit a flow-list branch that mangled it to "[foo]", so extractWikilink
+  // dropped it and the blocked ticket dispatched anyway. Prove the blocker
+  // survives all the way to the dispatch-gating decision, not just the parse.
+  it("gates dispatch on an unquoted inline blocked-by wikilink", async () => {
+    await fs.writeFile(
+      path.join(ticketsDir, "alpha.md"),
+      "---\nblocked-by: [[foo]]\n---\n\n# alpha\n\nWork.\n",
+    );
+    const ticket = await resolveTicket("[[alpha]]", ticketsDir);
+    expect(ticket.links).toEqual([{ kind: "blocked-by", target: "foo", notePath: null }]);
+    const board: Board = { columns: [{ name: "Ready", cards: [readyCard("foo [[foo]]")] }] };
+    expect(unresolvedBlockers(ticket.links, board, "Done").ids).toEqual(["foo"]);
   });
 });
 
