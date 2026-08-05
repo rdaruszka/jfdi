@@ -219,6 +219,37 @@ describe("merge and land", () => {
   });
 
   /**
+   * The abort restores the branch ref and the pre-merge committed tree, but it
+   * is *not* lossless for the integration agent's own work: a half-done conflict
+   * resolution the agent left in the working tree (staged, mid-merge, never
+   * committed) is discarded — the exact loss clearStaleMerge's comment names.
+   * The existing "losslessly" case above only exercises the restored half; this
+   * pins the discarded half so a future change that started preserving that work
+   * would have to update the comment that says it does not.
+   */
+  it("discards a half-done conflict resolution the agent left in the working tree", async () => {
+    const worktree = await createWorktree(repo, worktreesDir, "half-resolved", "main");
+    await write(worktree.path, "README.md", "branch version\n");
+    await commit(worktree.path, "branch edit");
+    await write(repo, "README.md", "main version\n");
+    await commit(repo, "main edit");
+    expect((await mergeTargetIntoBranch(worktree.path, "main")).hasConflict).toBe(true);
+    // The integration agent resolves the conflict and stages it, but the session
+    // dies before the merge is concluded — the resolution lives only in the tree.
+    await write(worktree.path, "README.md", "agent's half-done resolution\n");
+    await git(worktree.path, "add", "README.md");
+
+    await abortMerge(worktree.path);
+
+    expect(await isMergeInProgress(worktree.path)).toBe(false);
+    // The agent's staged resolution is gone: the tree is back at the pre-merge
+    // committed content, not what the agent wrote.
+    expect(await fs.readFile(path.join(worktree.path, "README.md"), "utf8")).toBe(
+      "branch version\n",
+    );
+  });
+
+  /**
    * The abort is a sanitation step callers build on, so a git that refuses has
    * to be an error and not a shrug. A stale `index.lock` is how it happens in
    * the field: a git process that crashed mid-write leaves one behind.
