@@ -844,4 +844,56 @@ describe("trust boundaries", () => {
     },
     PIPELINE_TIMEOUT_MS,
   );
+
+  it(
+    "refuses `jfdi run` on a corrupt report — no dispatch, evidence intact, pass restorable",
+    async () => {
+      const sandbox = await makeSandbox();
+      await initProject(sandbox);
+      const first = await runCli(sandbox, ["run", "Add a greeting"]);
+      expect(first.code).toBe(0);
+      const ticketId = ticketIdOf(first);
+      // The successful run is our baseline for "an agent CLI was spawned": every
+      // further refusal must add nothing to this log.
+      const spawnCount = async (): Promise<number> =>
+        (await fs.readFile(sandbox.argvLog, "utf8")).split("\n").filter((line) => line.trim())
+          .length;
+      const spawnsAfterPass = await spawnCount();
+      expect(spawnsAfterPass).toBeGreaterThan(0);
+
+      const reportPath = path.join(sandbox.stateDir, "runs", ticketId, "report.json");
+      const validReport = await fs.readFile(reportPath, "utf8");
+      // A truncated write is the parse-failure shape; the shape-invalid case is
+      // pinned by the merge test above. Re-running must not re-dispatch over it.
+      const corruptContent = '{"summary":';
+      await fs.writeFile(reportPath, corruptContent);
+
+      const rerun = await runCli(sandbox, ["run", "Add a greeting"]);
+      expect(rerun.code).toBe(2);
+      expect(rerun.stderr).toContain(reportPath);
+      expect(rerun.stderr).toContain("could not parse JSON");
+      expect(rerun.stderr).toContain("fix or restore");
+      expect(rerun.stderr).toContain("delete the file");
+      // The refusal spawned no agent session, and left the corrupt file and the
+      // signed-off branch exactly as they were — the evidence and the tripwire.
+      expect(await spawnCount()).toBe(spawnsAfterPass);
+      expect(await fs.readFile(reportPath, "utf8")).toBe(corruptContent);
+      expect(await git(sandbox.project, "branch", "--list", `jfdi/${ticketId}`)).toContain(
+        `jfdi/${ticketId}`,
+      );
+      expect(await readTicketNote(sandbox, ticketId)).toContain("fix or restore");
+
+      // Restore the report (fix/restore branch of the recipe): the existing pass
+      // lands with no fresh pipeline, proving the refusal cost no signed-off work.
+      await fs.writeFile(reportPath, validReport);
+      const merge = await runCli(sandbox, ["merge", ticketId]);
+      expect(merge.code).toBe(0);
+      expect(merge.stdout).toContain("Merged into main.");
+      expect(await spawnCount()).toBe(spawnsAfterPass);
+      expect(await git(sandbox.project, "log", "--oneline", "main")).toContain(
+        "stub-scribed subject",
+      );
+    },
+    PIPELINE_TIMEOUT_MS,
+  );
 });
