@@ -14,7 +14,10 @@ to be `main`.
 ```mermaid
 flowchart TD
     START([merge_start]) --> AM{Branch already<br/>contained in target?}
-    AM -->|yes| CLOSE([Close card — already merged])
+    AM -->|yes| DIRTY{Worktree dirty?}
+    DIRTY -->|no| CLOSE([Close card — already merged])
+    DIRTY -->|yes| CHECKPOINT[Checkpoint leftovers<br/>on the ticket branch]
+    CHECKPOINT --> MERGE
     AM -->|no| MERGE[git merge target<br/>in the worktree]
     MERGE -->|clean| GATE1{Gate}
     MERGE -->|conflicts| AGENT[Integration agent<br/>resolves conflicts]
@@ -33,7 +36,10 @@ flowchart TD
 In detail:
 
 1. **Already-merged short-circuit.** If the branch is already contained in the
-   target (you merged it by hand), the card is closed without touching git.
+   target (you merged it by hand) and its worktree is clean, the card is closed
+   without another merge. If the worktree is dirty, Integration checkpoints the
+   changes on the ticket branch and sends that new commit through the normal
+   merge path, where the landing commit keeps it reachable as its second parent.
 2. **Merge the target into the ticket branch**, in the ticket's worktree — so
    the merged state is built and tested where the run already lives. A stale
    in-progress merge left by a crash is aborted first (a conflicted merge has

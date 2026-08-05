@@ -253,18 +253,33 @@ export async function integrateTicket(
   // sweep can mistake this integration for a hand-merge and narrate it twice.
   await context.log.flush();
 
-  // Human may have merged by hand (on-approval mode) — never double-merge.
+  // Human may have merged by hand (on-approval mode) — never double-merge a
+  // clean branch. Dirty work advances the branch when checkpointed, so it must
+  // fall through and land through the normal merge path instead of being lost.
+  let leftoverNote = "";
   if (await isAncestor(context.repoRoot, worktree.branch, target)) {
-    context.log.emit("merged", ticket.id, { note: "already contained in target" });
-    await recordTransition(
-      notePath,
-      "integration",
-      INTEGRATION_ROUND,
-      `Branch already contained in \`${target}\` — closed without re-merging.`,
-    );
-    context.usage.finish(ticket.id);
-    await cleanup(context, worktree);
-    return { status: "already-merged" };
+    try {
+      leftoverNote = await captureLeftovers(context, ticket, worktree);
+    } catch (error) {
+      return blocked(
+        context,
+        ticket,
+        notePath,
+        `checkpointing uncommitted changes before cleanup failed: ${(error as Error).message}`,
+      );
+    }
+    if (!leftoverNote) {
+      context.log.emit("merged", ticket.id, { note: "already contained in target" });
+      await recordTransition(
+        notePath,
+        "integration",
+        INTEGRATION_ROUND,
+        `Branch already contained in \`${target}\` — closed without re-merging.`,
+      );
+      context.usage.finish(ticket.id);
+      await cleanup(context, worktree);
+      return { status: "already-merged" };
+    }
   }
 
   // Both parents of the landing commit, read before the merge moves either.
@@ -300,10 +315,10 @@ export async function integrateTicket(
 
   // 5. Land it: the tree the gate just ran against, under a merge commit that
   //    keeps the target's line first and the signed-off commit reachable.
-  let leftoverNote = "";
   let landingCommit = "";
   try {
-    leftoverNote = await captureLeftovers(context, ticket, worktree);
+    const latestLeftoverNote = await captureLeftovers(context, ticket, worktree);
+    if (latestLeftoverNote) leftoverNote = latestLeftoverNote;
     landingCommit = await commitMerge(
       worktree.path,
       { firstParent: targetHead, secondParent: signedOffCommit },
