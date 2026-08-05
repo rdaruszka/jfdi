@@ -376,6 +376,20 @@ describe("handoff commit messages, as git reads them", () => {
           },
         },
         {
+          // The body cap is gone: a scribe body well past the old 8,000-char
+          // bound lands in the commit verbatim, with no truncation marker —
+          // git, the sink, accepts a message of any length.
+          name: "long-body",
+          answer: `Rework the parser\n\n${"the account of the change. ".repeat(500).trimEnd()}`,
+          subject: (id) => `${id}: Rework the parser`,
+          body: (message) => {
+            const longBody = "the account of the change. ".repeat(500).trimEnd();
+            expect(longBody.length).toBeGreaterThan(8_000);
+            expect(message).toContain(longBody);
+            expect(message).not.toContain("[commit message truncated by JFDI]");
+          },
+        },
+        {
           // Nothing but the metadata the pipeline owns: the scribe contributed
           // no message at all, so the stage's own summary stands in for it.
           name: "metadata-only",

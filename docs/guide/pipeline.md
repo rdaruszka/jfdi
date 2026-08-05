@@ -192,14 +192,14 @@ no price is known — never shown beside a dollar figure.
 What comes back is subprocess output on its way into permanent history, so the
 pipeline enforces the rest of the shape rather than trusting it. A first line
 longer than 72 characters is not a subject: it is kept as body text under a
-plain subject the pipeline writes itself. A body long enough to be an echo of
-the diff is cut with a visible marker. Control characters git or a terminal
-would choke on are stripped from the assembled message — not just from the
-scribe's answer, since the stage's summary and an interrupted session's quoted
-reason are agent and subprocess text too — and anything that has to stay on one
-line, the status line included, is flattened to one. A scribe that dies or
-answers with nothing degrades to the stage's own summary — the commit is never
-delayed for prose — and says so on the event stream.
+plain subject the pipeline writes itself. The body has no length bound. Control
+characters git or a terminal would choke on are stripped from the assembled
+message — not just from the scribe's answer, since the stage's summary and an
+interrupted session's quoted reason are agent and subprocess text too — and
+anything that has to stay on one line, the status line included, is flattened
+to one. A scribe that dies or answers with nothing degrades to the stage's own
+summary — the commit is never delayed for prose — and says so on the event
+stream.
 
 ### The comment trail
 
