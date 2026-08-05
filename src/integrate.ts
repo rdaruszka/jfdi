@@ -16,13 +16,7 @@ import {
   type Worktree,
 } from "./git.js";
 import type { PipelineContext } from "./pipeline.js";
-import {
-  runHeldSession,
-  runQaStage,
-  runsDir,
-  sessionSelectionFields,
-  worktreesDir,
-} from "./pipeline.js";
+import { runHeldSession, runQaStage, runsDir, sessionSelectionFields } from "./pipeline.js";
 import { formatGateCommands, loadPrompt, renderPrompt } from "./prompts.js";
 import { loadReport } from "./report.js";
 import { appendToSection, quoteAgentText } from "./ticket-note.js";
@@ -500,5 +494,3 @@ export class IntegrationQueue {
     await this.chain;
   }
 }
-
-export { worktreesDir };

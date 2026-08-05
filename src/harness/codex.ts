@@ -294,8 +294,6 @@ function closeFailure(text: string, hasStartedThread: boolean): HarnessFailure |
 
 /** Harness implementation running `codex exec --json` in the ticket worktree. */
 export class CodexHarness implements Harness {
-  readonly name = "codex";
-
   constructor(
     private readonly selection: HarnessSelection,
     private readonly permissionMode: PermissionMode,

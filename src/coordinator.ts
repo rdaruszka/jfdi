@@ -117,7 +117,7 @@ export class Coordinator {
     for (const session of this.sessions) session.kill();
   }
 
-  /** Wait for all active pipelines and queued integrations (tests, graceful drain). */
+  /** Wait for all active pipelines and queued integrations (test seam). */
   async drain(): Promise<void> {
     while (this.active.size > 0) {
       await Promise.allSettled([...this.active.values()]);

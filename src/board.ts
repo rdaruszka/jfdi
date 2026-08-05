@@ -56,16 +56,6 @@ export function columnOfTicket(board: Board, ticketId: string): string | null {
   return null;
 }
 
-/** Locate the card whose text matches (exact raw line or trimmed text). */
-export function findCard(board: Board, cardRef: string): { column: Column; card: Card } | null {
-  for (const column of board.columns) {
-    for (const card of column.cards) {
-      if (card.raw === cardRef || card.text === cardRef.trim()) return { column, card };
-    }
-  }
-  return null;
-}
-
 export class BoardEditError extends Error {
   constructor(message: string) {
     super(message);

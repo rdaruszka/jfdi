@@ -26,7 +26,6 @@ export type FakeHandler = (
  * effects (writing files, committing, dropping verdict files) directly.
  */
 export class FakeHarness implements Harness {
-  readonly name = "fake";
   readonly calls: Array<{ promptSpec: PromptSpec; options: SpawnOptions }> = [];
 
   constructor(private readonly handler: FakeHandler) {}

@@ -255,8 +255,6 @@ function summarizeInput(input: unknown): string | undefined {
  * spawned in the ticket's worktree.
  */
 export class ClaudeHarness implements Harness {
-  readonly name = "claude";
-
   constructor(
     private readonly selection: HarnessSelection,
     private readonly permissionMode: PermissionMode,

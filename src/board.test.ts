@@ -7,7 +7,6 @@ import {
   BoardEditError,
   createBoardIfMissing,
   ensureColumns,
-  findCard,
   findColumn,
   moveCard,
   parseBoard,
@@ -61,12 +60,6 @@ describe("parseBoard", () => {
   it("ignores non-card lines", () => {
     const board = parseBoard("## Col\n\nsome prose\n- [ ] real card\n- not a card\n");
     expect(findColumn(board, "Col")?.cards.map((c) => c.text)).toEqual(["real card"]);
-  });
-
-  it("finds cards by text", () => {
-    const board = parseBoard(SAMPLE);
-    const hit = findCard(board, "Add a --help flag");
-    expect(hit?.column.name).toBe("Ready");
   });
 });
 
