@@ -16,6 +16,7 @@ import {
   steppingClock,
   TEST_PAUSE_DELAYS,
   usageFor,
+  verdictPathOf,
   writeVerdict,
 } from "./test-helpers.js";
 import { parseTicketNote } from "./ticket-note.js";
@@ -900,6 +901,153 @@ describe("runPipeline", () => {
       { stage: "code-review", continueSessionId: "review-session-1" },
       { stage: "qa", continueSessionId: undefined },
     ]);
+  });
+
+  it("returns a wrong-enum verdict to the same reviewer without consuming a round", async () => {
+    const reviewSpawns: Array<{ prompt: string; continueSessionId: string | undefined }> = [];
+    const context = fixture.context(async (spec, options) => {
+      const stage = sessionKindOf(spec.prompt);
+      if (stage === "implementation") {
+        await commitFile(options.cwd, "impl.txt", "done\n", "implement");
+        await writeVerdict(spec.prompt, { status: "done" });
+        return { ok: true, text: "", sessionId: "implementation-session" };
+      }
+      if (stage === "code-review") {
+        reviewSpawns.push({ prompt: spec.prompt, continueSessionId: options.continueSessionId });
+        if (reviewSpawns.length === 1) {
+          await writeVerdict(spec.prompt, { verdict: "approve", feedback: "looks good" });
+        } else {
+          expect(options.continueSessionId).toBe("review-session");
+          expect(spec.prompt).toContain('field "verdict" has value "approve"');
+          expect(spec.prompt).toContain('allowed values: "pass", "fail"');
+          expect(spec.prompt).toContain("code-review.verdict.json");
+          expect(spec.prompt).not.toContain("did not produce a valid verdict");
+          await writeVerdict(spec.prompt, { verdict: "pass" });
+        }
+        return { ok: true, text: "", sessionId: "review-session" };
+      }
+      await writeVerdict(spec.prompt, { verdict: "pass" });
+      return { ok: true, text: "", sessionId: "qa-session" };
+    });
+
+    const ticket = await resolveTicket("Correct review verdict", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+
+    expect(outcome.status).toBe("passed");
+    if (outcome.status === "passed") expect(outcome.report.rounds).toBe(1);
+    expect(reviewSpawns.map(({ continueSessionId }) => continueSessionId)).toEqual([
+      undefined,
+      "review-session",
+    ]);
+  });
+
+  it("falls back fresh with the same correction when the verdict session was forgotten", async () => {
+    const implementationSpawns: Array<{
+      prompt: string;
+      continueSessionId: string | undefined;
+    }> = [];
+    const context = fixture.context(async (spec, options) => {
+      const stage = sessionKindOf(spec.prompt);
+      if (stage !== "implementation") {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+        return { ok: true, text: "" };
+      }
+      implementationSpawns.push({
+        prompt: spec.prompt,
+        continueSessionId: options.continueSessionId,
+      });
+      if (implementationSpawns.length === 1) {
+        await commitFile(options.cwd, "impl.txt", "done\n", "implement");
+        await writeVerdict(spec.prompt, { summary: "forgot the required status" });
+        return { ok: true, text: "", sessionId: "implementation-session" };
+      }
+      if (options.continueSessionId) {
+        expect(spec.prompt).toContain('required field "status" is missing');
+        expect(spec.prompt).toContain('allowed values: "done", "escalate"');
+        return { ok: false, text: "no conversation found with session id" };
+      }
+      expect(spec.prompt).toBe(implementationSpawns[1]?.prompt);
+      await writeVerdict(spec.prompt, { status: "done" });
+      return { ok: true, text: "", sessionId: "replacement-session" };
+    });
+
+    const ticket = await resolveTicket("Forgot verdict session", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+
+    expect(outcome.status).toBe("passed");
+    if (outcome.status === "passed") expect(outcome.report.rounds).toBe(1);
+    expect(implementationSpawns.map(({ continueSessionId }) => continueSessionId)).toEqual([
+      undefined,
+      "implementation-session",
+      undefined,
+    ]);
+  });
+
+  it("blocks after two corrections still contain unparseable verdict JSON", async () => {
+    const implementationSpawns: Array<{
+      prompt: string;
+      continueSessionId: string | undefined;
+    }> = [];
+    const context = fixture.context(async (spec, options) => {
+      implementationSpawns.push({
+        prompt: spec.prompt,
+        continueSessionId: options.continueSessionId,
+      });
+      if (implementationSpawns.length === 1)
+        await commitFile(options.cwd, "impl.txt", "done\n", "implement");
+      await fs.writeFile(verdictPathOf(spec.prompt), "{still garbage");
+      return { ok: true, text: "", sessionId: "implementation-session" };
+    });
+
+    const ticket = await resolveTicket("Persistent invalid verdict", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+
+    expect(outcome.status).toBe("blocked");
+    expect(implementationSpawns).toHaveLength(3);
+    expect(implementationSpawns.map(({ continueSessionId }) => continueSessionId)).toEqual([
+      undefined,
+      "implementation-session",
+      "implementation-session",
+    ]);
+    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
+    expect(note).toContain("implementation agent failed to function properly");
+    expect(note).toContain("after 2 verdict correction attempts");
+    expect(note).toContain("JSON parse failed");
+    expect(note).toContain("implementation.verdict.json");
+    expect(note).not.toContain("run exhausted");
+  });
+
+  it("returns unparseable JSON to QA with the parse error and verdict path", async () => {
+    let qaCalls = 0;
+    const context = fixture.context(async (spec, options) => {
+      const stage = sessionKindOf(spec.prompt);
+      if (stage === "implementation") {
+        await commitFile(options.cwd, "impl.txt", "done\n", "implement");
+        await writeVerdict(spec.prompt, { status: "done" });
+        return { ok: true, text: "" };
+      }
+      if (stage === "code-review") {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+        return { ok: true, text: "" };
+      }
+      qaCalls++;
+      if (qaCalls === 1) {
+        await fs.writeFile(verdictPathOf(spec.prompt), "not json");
+      } else {
+        expect(options.continueSessionId).toBe("qa-session");
+        expect(spec.prompt).toContain("Output does not meet spec: JSON parse failed:");
+        expect(spec.prompt).toContain("qa.verdict.json");
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "", sessionId: "qa-session" };
+    });
+
+    const ticket = await resolveTicket("Correct QA JSON", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+
+    expect(outcome.status).toBe("passed");
+    if (outcome.status === "passed") expect(outcome.report.rounds).toBe(1);
+    expect(qaCalls).toBe(2);
   });
 
   it("a continued reviewer that passed last round is told the change was QA-driven", async () => {

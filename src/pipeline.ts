@@ -55,6 +55,7 @@ import {
   type ReviewVerdict,
   readImplementationVerdict,
   readReviewVerdict,
+  type VerdictReadResult,
 } from "./verdicts.js";
 
 export interface PipelineContext {
@@ -433,6 +434,115 @@ async function runStageWithFallback(
   );
 }
 
+interface StageVerdictResult<Verdict> {
+  verdict: Verdict | null;
+  outcome: StageOutcome;
+  /** Present only when an existing verdict stayed invalid through both corrections. */
+  invalidVerdictFailure?: string;
+}
+
+type StageVerdictReader<Verdict> = (
+  verdictPath: string,
+  reportedPath: string,
+) => Promise<VerdictReadResult<Verdict>>;
+
+/** One correction attempt, with a forgotten continuation falling back inside the attempt. */
+async function runVerdictCorrectionAttempt(
+  context: PipelineContext,
+  ticket: Ticket,
+  worktree: Worktree,
+  stage: StageName,
+  attemptDir: string,
+  prompt: string,
+  preSessionHead: string,
+  sessionId: string | undefined,
+): Promise<StageOutcome> {
+  await ensureDir(attemptDir);
+  if (sessionId) {
+    const outcome = await runStageSession(
+      context,
+      ticket,
+      worktree,
+      stage,
+      prompt,
+      attemptDir,
+      preSessionHead,
+      sessionId,
+    );
+    if (outcome.ok || (await fileExists(outcome.verdictPath))) return outcome;
+    context.log.emit("session_activity", ticket.id, {
+      text: `${stage}: verdict correction continuation failed; restarting fresh`,
+    });
+  }
+  return runStageSession(context, ticket, worktree, stage, prompt, attemptDir, preSessionHead);
+}
+
+function verdictCorrectionPrompt(error: string, verdictPath: string): string {
+  return [
+    `Output does not meet spec: ${error}`,
+    "",
+    `Correct the verdict file at ${verdictPath}. Write only the required JSON object there; do not redo the stage's work.`,
+  ].join("\n");
+}
+
+/**
+ * Read a stage verdict, returning an existing invalid file to its author twice
+ * inside the current round. An absent original file remains the caller's
+ * session-failure path; only output that reached the sink but missed spec uses
+ * this correction mechanism.
+ */
+async function readStageVerdictWithCorrections<Verdict>(
+  context: PipelineContext,
+  ticket: Ticket,
+  worktree: Worktree,
+  stage: StageName,
+  roundDir: string,
+  notePath: string,
+  round: number,
+  initialOutcome: StageOutcome,
+  readVerdict: StageVerdictReader<Verdict>,
+): Promise<StageVerdictResult<Verdict>> {
+  const reportedPath = agentVerdictPath(worktree.path, stage);
+  let outcome = initialOutcome;
+  let result = await readVerdict(outcome.verdictPath, reportedPath);
+  if (result.status === "valid") return { verdict: result.verdict, outcome };
+  if (result.status === "missing") return { verdict: null, outcome };
+
+  let error = result.error;
+  let sessionId = outcome.sessionId;
+  // Termination: correctionAttempt increases toward the fixed two-attempt cap.
+  for (
+    let correctionAttempt = 1;
+    correctionAttempt <= MAX_VERDICT_CORRECTION_ATTEMPTS;
+    correctionAttempt++
+  ) {
+    outcome = await runVerdictCorrectionAttempt(
+      context,
+      ticket,
+      worktree,
+      stage,
+      path.join(roundDir, `verdict-fix-${correctionAttempt}`),
+      verdictCorrectionPrompt(error, reportedPath),
+      initialOutcome.preSessionHead,
+      sessionId,
+    );
+    sessionId = outcome.sessionId ?? sessionId;
+    result = await readVerdict(outcome.verdictPath, reportedPath);
+    if (result.status === "valid") return { verdict: result.verdict, outcome };
+    error =
+      result.status === "invalid"
+        ? result.error
+        : `required corrected verdict file is missing. Verdict file: ${reportedPath}`;
+  }
+
+  const failure = `${stage} agent failed to function properly after ${MAX_VERDICT_CORRECTION_ATTEMPTS} verdict correction attempts: ${error}`;
+  await recordTransition(notePath, stage, round, `${failure}\n\n${BLOCKED_ROUTING}`);
+  context.log.emit("blocked", ticket.id, {
+    reason: failure.slice(0, MAX_REASON_CHARS),
+  });
+  return { verdict: null, outcome, invalidVerdictFailure: failure };
+}
+
 async function stagePrompt(
   context: PipelineContext,
   name: PromptName,
@@ -649,7 +759,7 @@ export async function runQaStage(
   notePath: string,
   round: number,
   options: QaStageOptions = {},
-): Promise<{ verdict: ReviewVerdict | null; outcome: StageOutcome }> {
+): Promise<StageVerdictResult<ReviewVerdict>> {
   const target = context.config.integration.target_branch;
   const vars = {
     ...commonVars(context, ticket, worktree, agentVerdictPath(worktree.path, "qa")),
@@ -669,7 +779,7 @@ export async function runQaStage(
       DIFF_STAT: change.diffStat,
     });
   };
-  const outcome = await runStageWithFallback(
+  const initialOutcome = await runStageWithFallback(
     context,
     ticket,
     worktree,
@@ -678,14 +788,26 @@ export async function runQaStage(
     freshPrompt,
     continuation,
   );
-  const verdict = await readReviewVerdict(outcome.verdictPath, { isEscalateAllowed: true });
+  const result = await readStageVerdictWithCorrections(
+    context,
+    ticket,
+    worktree,
+    "qa",
+    roundDir,
+    notePath,
+    round,
+    initialOutcome,
+    (verdictPath, reportedPath) =>
+      readReviewVerdict(verdictPath, { isEscalateAllowed: true, reportedPath }),
+  );
+  const { verdict, outcome } = result;
   if (verdict) await recordDecisions(notePath, "qa", round, verdict.decisions);
   context.log.emit("stage_end", ticket.id, {
     stage: "qa",
     verdict: verdict?.verdict ?? (outcome.ok ? "invalid-verdict" : "session-failed"),
     ...stageUsageFields(context, ticket.id, outcome.usage),
   });
-  return { verdict, outcome };
+  return result;
 }
 
 async function buildQaContinuation(
@@ -715,6 +837,7 @@ async function buildQaContinuation(
 type ImplementationStep =
   | { kind: "done"; summary: string | undefined; decisions: string[]; observations: string[] }
   | { kind: "retry"; feedback: string }
+  | { kind: "blocked"; reason: string }
   | { kind: "escalate"; question: string; recommendation: string; observations: string[] };
 
 interface ImplementationStageInput {
@@ -765,7 +888,7 @@ async function runImplementationStage(
       ),
       FEEDBACK_SECTION: formatFeedbackSection(history, ticket.mode),
     });
-  const outcome = await runStageWithFallback(
+  const initialOutcome = await runStageWithFallback(
     context,
     ticket,
     worktree,
@@ -774,18 +897,31 @@ async function runImplementationStage(
     freshPrompt,
     continuation,
   );
+  const result = await readStageVerdictWithCorrections(
+    context,
+    ticket,
+    worktree,
+    "implementation",
+    roundDir,
+    notePath,
+    round,
+    initialOutcome,
+    (verdictPath, reportedPath) => readImplementationVerdict(verdictPath, { reportedPath }),
+  );
+  const { verdict, outcome } = result;
   const staged = (step: ImplementationStep) => ({
     step,
     sessionId: outcome.sessionId,
     preSessionHead: outcome.preSessionHead,
     usage: outcome.usage,
   });
-  const verdict = await readImplementationVerdict(outcome.verdictPath);
   context.log.emit("stage_end", ticket.id, {
     stage: "implementation",
     verdict: verdict?.status ?? (outcome.ok ? "invalid-verdict" : "session-failed"),
     ...stageUsageFields(context, ticket.id, outcome.usage),
   });
+  if (result.invalidVerdictFailure)
+    return staged({ kind: "blocked", reason: result.invalidVerdictFailure });
   if (!verdict) {
     return staged({
       kind: "retry",
@@ -813,7 +949,8 @@ async function runImplementationStage(
 
 type CodeReviewStep =
   | { kind: "pass"; decisions: string[]; observations: string[] }
-  | { kind: "retry"; feedback: string; observations: string[] };
+  | { kind: "retry"; feedback: string; observations: string[] }
+  | { kind: "blocked"; reason: string; observations: string[] };
 
 interface CodeReviewStageInput {
   roundDir: string;
@@ -824,6 +961,12 @@ interface CodeReviewStageInput {
   headCommit: string;
   previousSession: StageSessionMemory | undefined;
   previousFailure: FeedbackItem | undefined;
+}
+
+function codeReviewFailureFeedback(verdict: ReviewVerdict | null, outcome: StageOutcome): string {
+  if (verdict?.feedback) return verdict.feedback;
+  if (verdict) return "Code review failed without specific feedback.";
+  return `Code review session did not produce a valid verdict${outcome.ok ? "" : `: ${outcome.resultText}`}.`;
 }
 
 async function runCodeReviewStage(
@@ -863,7 +1006,7 @@ async function runCodeReviewStage(
       DIFF_SECTION: change.diffSection,
     });
   };
-  const outcome = await runStageWithFallback(
+  const initialOutcome = await runStageWithFallback(
     context,
     ticket,
     worktree,
@@ -872,21 +1015,34 @@ async function runCodeReviewStage(
     freshPrompt,
     continuation,
   );
+  const result = await readStageVerdictWithCorrections(
+    context,
+    ticket,
+    worktree,
+    "code-review",
+    input.roundDir,
+    input.notePath,
+    input.round,
+    initialOutcome,
+    (verdictPath, reportedPath) =>
+      readReviewVerdict(verdictPath, { isEscalateAllowed: false, reportedPath }),
+  );
+  const { verdict, outcome } = result;
   // Reviewers are read-only: discard stray modifications, and any commit the
   // session made despite the prompt — a reviewer never moves the branch.
   await git(worktree.path, "reset", "--hard", outcome.preSessionHead);
-  const verdict = await readReviewVerdict(outcome.verdictPath, { isEscalateAllowed: false });
   context.log.emit("stage_end", ticket.id, {
     stage: "code-review",
     verdict: verdict?.verdict ?? (outcome.ok ? "invalid-verdict" : "session-failed"),
     ...stageUsageFields(context, ticket.id, outcome.usage),
   });
+  if (result.invalidVerdictFailure)
+    return {
+      sessionId: outcome.sessionId,
+      step: { kind: "blocked", reason: result.invalidVerdictFailure, observations: [] },
+    };
   if (!verdict || verdict.verdict === "fail") {
-    const feedback =
-      verdict?.feedback ??
-      (verdict
-        ? "Code review failed without specific feedback."
-        : `Code review session did not produce a valid verdict${outcome.ok ? "" : `: ${outcome.resultText}`}.`);
+    const feedback = codeReviewFailureFeedback(verdict, outcome);
     await recordReviewTransition(input.notePath, "code-review", input.round, {
       outcome: "FAILED",
       routing: retryRouting(input.round, context.config.pipeline.max_rounds),
@@ -981,6 +1137,9 @@ interface RoundInput {
  */
 const MAX_GATE_FIX_SESSIONS_PER_ROUND = 10;
 
+/** Spec-invalid verdict corrections stay inside their current round. */
+const MAX_VERDICT_CORRECTION_ATTEMPTS = 2;
+
 /** What the Implementation-gate cycle collected before it ended, either way. */
 interface ImplementationCycleCollected {
   decisions: string[];
@@ -1007,6 +1166,7 @@ async function implementationExitStep(
 ): Promise<RoundStep | null> {
   if (step.kind === "retry")
     return { kind: "retry", source: "implementation", feedback: step.feedback };
+  if (step.kind === "blocked") return { kind: "blocked", reason: step.reason };
   if (step.kind !== "escalate") return null;
   await recordEscalation(
     context,
@@ -1062,6 +1222,8 @@ function implementationStepContributions(
     case "escalate":
       return { decisions: [], observations: step.observations, summary: previousSummary };
     case "retry":
+      return { decisions: [], observations: [], summary: previousSummary };
+    case "blocked":
       return { decisions: [], observations: [], summary: previousSummary };
   }
 }
@@ -1183,6 +1345,14 @@ async function runRound(
   });
   memory["code-review"] = { sessionId: review.sessionId, lastSeenCommit: headCommit };
   observations.push(...review.step.observations);
+  if (review.step.kind === "blocked")
+    return {
+      decisions,
+      observations,
+      summary,
+      memory,
+      step: { kind: "blocked", reason: review.step.reason },
+    };
   if (review.step.kind === "retry") {
     const { feedback } = review.step;
     return {
@@ -1322,6 +1492,14 @@ function implementationHandoff(
         summary: step.feedback,
         isInterrupted: true,
       };
+    case "blocked":
+      return {
+        ...base,
+        outcome: "invalid verdict",
+        routing: BLOCKED_ROUTING,
+        summary: step.reason,
+        isInterrupted: true,
+      };
     case "escalate":
       return {
         ...base,
@@ -1382,8 +1560,9 @@ async function judgeQa(
   context: PipelineContext,
   ticket: Ticket,
   notePath: string,
-  qa: { verdict: ReviewVerdict | null; outcome: StageOutcome },
+  qa: StageVerdictResult<ReviewVerdict>,
 ): Promise<RoundStep> {
+  if (qa.invalidVerdictFailure) return { kind: "blocked", reason: qa.invalidVerdictFailure };
   if (qa.verdict?.verdict === "escalate") {
     const question = qa.verdict.question ?? "QA escalated without a stated question.";
     const recommendation = qa.verdict.recommendation ?? "(no recommendation given)";

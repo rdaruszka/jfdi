@@ -178,6 +178,11 @@ export function usageFor(
 
 /** Which `stages` entry a prompt belongs to (matched on each default's task statement). */
 export function sessionKindOf(prompt: string): SessionKind {
+  if (prompt.startsWith("Output does not meet spec:")) {
+    if (prompt.includes("/implementation.verdict.json")) return "implementation";
+    if (prompt.includes("/code-review.verdict.json")) return "code-review";
+    if (prompt.includes("/qa.verdict.json")) return "qa";
+  }
   if (prompt.includes("Write the commit message")) return "commit-message";
   if (prompt.includes("Implement the ticket below completely")) return "implementation";
   if (prompt.includes("Your implementation session is being continued")) return "implementation";
