@@ -552,10 +552,15 @@ describe("pipeline behavior", () => {
       expect(shapes.filter((shape) => shape === "round_start")).toHaveLength(3);
       expect(shapes.filter((shape) => shape === "gate_start")).toHaveLength(3);
       expect(shapes.filter((shape) => shape.startsWith("stage_start:qa"))).toHaveLength(0);
-      expect(shapes.at(-1)).toBe("blocked");
+      // The pipeline records the blocked transition, then its caller flushes
+      // this run's deduplicated observations. Observation events are
+      // state-neutral, so the ticket remains blocked after this tail.
+      expect(shapes.slice(-2)).toEqual(["blocked", "observation"]);
 
       const blocked = events.find((event) => event.type === "blocked");
       expect(blocked?.data?.reason).toBe("retries exhausted after 3 rounds");
+      const board = await fs.readFile(path.join(sandbox.project, ".jfdi", "board.md"), "utf8");
+      expect(board).toContain(`stray TODO in foo.ts *(from ${ticketIdOf(run)})*`);
 
       // Nothing reached the target branch.
       expect(await git(sandbox.project, "log", "--oneline", "main")).not.toContain("implement");
