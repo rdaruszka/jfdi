@@ -1,9 +1,22 @@
 import { watch } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { type Board, type Card, ensureColumns, findColumn, parseBoard } from "./board.js";
+import {
+  type BlockingNode,
+  blockedByCycles,
+  type UnresolvedBlockers,
+  unresolvedBlockers,
+} from "./blocking.js";
+import {
+  type Board,
+  type Card,
+  columnOfTicket,
+  ensureColumns,
+  findColumn,
+  parseBoard,
+} from "./board.js";
 import { boardPath, moveCardSafe } from "./cards.js";
-import { mergedTicketIds } from "./events.js";
+import { type IntegrationRecord, integrationRecords } from "./events.js";
 import { branchExists, isAncestor, revParse, ticketBranch } from "./git.js";
 import { IntegrationQueue, integrateTicket } from "./integrate.js";
 import type { PipelineContext, RunReport } from "./pipeline.js";
@@ -13,16 +26,6 @@ import { ensureJfdiGitignore } from "./scaffold.js";
 import { resolveTicket, type Ticket } from "./tickets.js";
 import { fileExists, readIfExists } from "./util/fsx.js";
 import { ticketIdFromCard } from "./util/ids.js";
-
-/** Name of the column holding this ticket's card, or null if the board has none. */
-function columnOfTicket(board: Board, ticketId: string): string | null {
-  for (const column of board.columns) {
-    for (const card of column.cards) {
-      if (ticketIdFromCard(card.text) === ticketId) return column.name;
-    }
-  }
-  return null;
-}
 
 export interface CoordinatorOptions {
   /** Polling fallback interval for board changes (ms). */
@@ -39,6 +42,18 @@ const DEFAULT_POLL_INTERVAL_MS = 2_000;
  */
 export class Coordinator {
   private readonly active = new Map<string, Promise<void>>();
+  /**
+   * Begin-column tickets currently held back for unresolved blockers, so a skip
+   * announces once per episode rather than once per scan. Bounded to the begin
+   * column: pruned each scan as cards unblock or move away.
+   */
+  private readonly blockedByEpisodes = new Set<string>();
+  /**
+   * Signatures of blocked-by cycles already reported, so each deadlock errors
+   * once. Pruned each scan to the cycles the board still holds, so an untied and
+   * re-formed cycle reports again.
+   */
+  private readonly reportedCycles = new Set<string>();
   private readonly integrations = new IntegrationQueue();
   private readonly pollMs: number;
   private isStopped = false;
@@ -108,6 +123,20 @@ export class Coordinator {
       await Promise.allSettled([...this.active.values()]);
     }
     await this.integrations.idle();
+  }
+
+  /**
+   * Request a scan and resolve once it — and any rescan it chains — has fully
+   * run. The deterministic seam tests drive dispatch through, in place of racing
+   * a fire-and-forget `requestScan` against a sleep. Production wakes scans
+   * through `requestScan` and never needs to await one. Terminates because every
+   * scan clears `isScanning` in its `finally`, and each pass yields the loop.
+   */
+  async settleScan(): Promise<void> {
+    this.requestScan();
+    while (this.isScanning) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
   }
 
   activeCount(): number {
@@ -182,7 +211,7 @@ export class Coordinator {
     this.acknowledgeApprovals(board);
     // Paused means the provider under the harness is down: a new dispatch
     // would spawn straight into the same wall. The resume triggers a rescan.
-    if (!this.context.pause.isPaused()) this.dispatchReadyCards(board);
+    if (!this.context.pause.isPaused()) await this.dispatchReadyCards(board);
   }
 
   /**
@@ -193,26 +222,45 @@ export class Coordinator {
    * strands the card forever. Three shapes are accepted, in cost order:
    * the branch still exists and is contained in the target; a `merged` event
    * is on record; or the commit the reviews signed off on is in the target.
+   * A ticket whose stream shows an integration still in flight is skipped —
+   * the merging process closes its own card, and only the sweep's restraint
+   * keeps the shared stream from carrying two `merged` lines for one merge.
    */
   private async closeMergedCards(board: Board): Promise<void> {
     const columns = this.context.config.board.columns;
     const cards = findColumn(board, columns.readyToMerge)?.cards ?? [];
-    // Read the event stream at most once per scan, and only if a branch is missing.
-    let mergedIds: Set<string> | null = null;
+    // Read the event stream at most once per scan, and only once a card needs it.
+    let records: Map<string, IntegrationRecord> | null = null;
     for (const card of cards) {
       const id = ticketIdFromCard(card.text);
       if (this.active.has(id)) continue;
+      if (records === null) records = await integrationRecords(this.context.stateDir);
+      const record = records.get(id);
+      // Mid-integration in another process (`jfdi merge` in a second
+      // terminal): between its landing commit and its own card move, git
+      // evidence says merged while the card still sits here. That process
+      // finishes its own story; sweeping now would tell it twice.
+      if (record?.phase === "in-flight") continue;
       const branch = ticketBranch(id);
       let hasMerged: boolean;
       if (await branchExists(this.context.repoRoot, branch)) {
+        // A live branch answers for itself: a recorded merge may be an earlier
+        // run's, and a re-dispatched ticket's fresh branch must not close on it.
         hasMerged = await this.isInTarget(branch);
       } else {
-        if (mergedIds === null) mergedIds = await mergedTicketIds(this.context.stateDir);
-        hasMerged = mergedIds.has(id) || (await this.isSignedOffCommitInTarget(id));
+        hasMerged = record?.phase === "merged" || (await this.isSignedOffCommitInTarget(id));
       }
       if (!hasMerged) continue;
+      // A merge already narrated on the stream is folded into this instance's
+      // state, not re-emitted; only a merge nothing recorded — a human's hand
+      // merge — gets the sweep's own `merged` line. Status first, then the
+      // card move, so the move's persisted snapshot already reads done.
+      if (record?.phase === "merged") {
+        this.context.log.foldRecorded(record.event);
+      } else {
+        this.context.log.emit("merged", id, { note: "merged outside the pipeline — card closed" });
+      }
       await moveCardSafe(this.context, card, columns.readyToMerge, columns.done, true);
-      this.context.log.emit("merged", id, { note: "merged outside the pipeline — card closed" });
     }
   }
 
@@ -277,12 +325,12 @@ export class Coordinator {
    * done — a coordinator died, or one was stopped mid-run — and continuing it
    * is what the resume machinery is for. Begin-column cards follow.
    */
-  private dispatchReadyCards(board: Board): void {
+  private async dispatchReadyCards(board: Board): Promise<void> {
     const columns = this.context.config.board.columns;
     const stranded = (findColumn(board, columns.inProgress)?.cards ?? [])
       .filter((card) => !this.hasRunHere(ticketIdFromCard(card.text)))
       .map((card) => ({ card, isAlreadyInProgress: true }));
-    const ready = (findColumn(board, columns.begin)?.cards ?? []).map((card) => ({
+    const ready = (await this.dispatchableBeginCards(board)).map((card) => ({
       card,
       isAlreadyInProgress: false,
     }));
@@ -299,15 +347,93 @@ export class Coordinator {
   }
 
   /**
+   * The begin-column cards clear to dispatch: those whose ticket has no
+   * unresolved blocked-by link. A card blocked by a ticket not yet in the done
+   * column is left exactly where the human put it — skipping is not an
+   * escalation and moves no card — and is re-checked every scan; it dispatches
+   * on the first scan after the last blocker's card reaches done. The skip, the
+   * unblock, and any deadlock each announce once per episode, not per scan.
+   */
+  private async dispatchableBeginCards(board: Board): Promise<Card[]> {
+    const columns = this.context.config.board.columns;
+    const ticketsDir = path.join(this.context.repoRoot, this.context.config.ticketsDir);
+    // One shared policy for the whole gate: `unresolvedBlockers` deduplicates
+    // links and computes the missing set, so dispatch, the event payload, and
+    // the cycle nodes all read the same answer as `jfdi run`.
+    const nodes: Array<{ card: Card; id: string; blockers: UnresolvedBlockers }> = [];
+    for (const card of findColumn(board, columns.begin)?.cards ?? []) {
+      const ticket = await resolveTicket(card.text, ticketsDir);
+      nodes.push({
+        card,
+        id: ticketIdFromCard(card.text),
+        blockers: unresolvedBlockers(ticket.links, board, columns.done),
+      });
+    }
+    this.reportBlockedByCycles(
+      nodes.map((node) => ({ id: node.id, blockedBy: node.blockers.ids })),
+    );
+
+    const dispatchable: Card[] = [];
+    const blockedNow = new Set<string>();
+    for (const node of nodes) {
+      if (node.blockers.ids.length === 0) {
+        if (this.blockedByEpisodes.delete(node.id)) this.context.log.emit("unblocked", node.id);
+        dispatchable.push(node.card);
+        continue;
+      }
+      blockedNow.add(node.id);
+      if (!this.blockedByEpisodes.has(node.id)) {
+        this.blockedByEpisodes.add(node.id);
+        this.context.log.emit("blocked_by", node.id, {
+          blockers: node.blockers.ids,
+          missing: node.blockers.missing,
+        });
+      }
+    }
+    // A card that left the begin column while blocked ends its episode silently:
+    // the human moved it, it did not unblock. This also keeps the set bounded to
+    // the begin column.
+    for (const id of [...this.blockedByEpisodes])
+      if (!blockedNow.has(id)) this.blockedByEpisodes.delete(id);
+    return dispatchable;
+  }
+
+  /**
+   * A blocked-by cycle among begin-column cards is a deadlock: every member
+   * waits on another that will never reach done, so none dispatch. The tool
+   * does not untie it — it names it once, as an error for the human, and forgets
+   * a cycle the board no longer holds so a re-formed one reports again.
+   */
+  private reportBlockedByCycles(nodes: BlockingNode[]): void {
+    const live = new Set<string>();
+    for (const cycle of blockedByCycles(nodes)) {
+      const signature = cycle.join(",");
+      live.add(signature);
+      if (this.reportedCycles.has(signature)) continue;
+      this.reportedCycles.add(signature);
+      this.context.log.emit("error", undefined, {
+        message: `blocked-by cycle among begin-column tickets: ${cycle.join(", ")} — none will dispatch until it is untied`,
+        cycle,
+      });
+    }
+    for (const signature of [...this.reportedCycles])
+      if (!live.has(signature)) this.reportedCycles.delete(signature);
+  }
+
+  /**
    * Whether this process has already run this ticket. A scan decides from a
    * board it read before awaiting git, so a run that finished in the meantime
    * can still appear in the in-progress column with `active` already cleared —
    * and dispatching from that stale line would run the ticket twice. Nothing
    * this coordinator dispatched ever needs dispatching again: a stranded card
    * is by definition one an earlier process left, and this log starts empty.
+   * A `waiting` ticket is the exception the log alone would get wrong — a
+   * blocked-by skip records ticket state without ever running the ticket — so a
+   * stranded card carrying that id is still a genuine resume.
    */
   private hasRunHere(ticketId: string): boolean {
-    return this.context.log.snapshot().tickets[ticketId] !== undefined;
+    const ticket = this.context.log.snapshot().tickets[ticketId];
+    return ticket !== undefined && ticket.status !== "waiting";
   }
 
   private async dispatch(card: Card, id: string, isAlreadyInProgress: boolean): Promise<void> {

@@ -1,5 +1,6 @@
 import * as path from "node:path";
-import { ensureColumns } from "../board.js";
+import { describeBlockers, unresolvedBlockers } from "../blocking.js";
+import { type Board, ensureColumns, parseBoard } from "../board.js";
 import { boardPath, findTicketCard, moveCardSafe } from "../cards.js";
 import { integrateTicket } from "../integrate.js";
 import type { PipelineContext } from "../pipeline.js";
@@ -7,7 +8,13 @@ import { runPipeline } from "../pipeline.js";
 import { recordMergeReady, recordObservations } from "../report.js";
 import { resolveTicket } from "../tickets.js";
 import { EXIT_SIGINT } from "../util/exit-codes.js";
+import { readIfExists } from "../util/fsx.js";
 import { attachInlinePrinter, attachRetryKey, buildContext } from "./context.js";
+
+/** Options for a single-ticket run; `isForced` runs a blocked-by ticket anyway. */
+export interface RunOptions {
+  isForced?: boolean;
+}
 
 /**
  * `jfdi run <ticket>` — single-ticket mode: the full pipeline inline. <ticket>
@@ -15,7 +22,7 @@ import { attachInlinePrinter, attachRetryKey, buildContext } from "./context.js"
  * required; when one exists and holds a matching card, the run keeps that card
  * in step exactly as the coordinator would.
  */
-export async function runCommand(ticketRef: string): Promise<number> {
+export async function runCommand(ticketRef: string, options: RunOptions = {}): Promise<number> {
   const context = await buildContext();
   const detach = attachInlinePrinter(context.log);
   /** Release what the run acquired: the pause's timers, then the pending writes. */
@@ -35,7 +42,7 @@ export async function runCommand(ticketRef: string): Promise<number> {
       .then(() => process.exit(EXIT_SIGINT));
   });
   try {
-    return await runTicketInline(context, ticketRef);
+    return await runTicketInline(context, ticketRef, options);
   } finally {
     detachRetryKey();
     detach();
@@ -47,12 +54,29 @@ export async function runCommand(ticketRef: string): Promise<number> {
 export async function runTicketInline(
   context: PipelineContext,
   ticketRef: string,
+  options: RunOptions = {},
 ): Promise<number> {
   const ticketsDir = path.join(context.repoRoot, context.config.ticketsDir);
   const ticket = await resolveTicket(ticketRef, ticketsDir);
   console.log(`ticket: ${ticket.id}`);
 
   const columns = context.config.board.columns;
+
+  // Blocking means blocked on every path: a direct run refuses a ticket whose
+  // blocked-by tickets are not done, and only --force spells out the override.
+  // The board is the truth for a blocker's done-ness; a boardless run has no
+  // card for any blocker, so every listed blocker reads as unresolved.
+  const blockers = unresolvedBlockers(ticket.links, await readBoardOrEmpty(context), columns.done);
+  if (blockers.ids.length > 0) {
+    const detail = describeBlockers(blockers);
+    if (!options.isForced) {
+      console.error(`\nBlocked: ${ticket.id} is blocked by ${detail}.`);
+      console.error("Those tickets are not done. Re-run with --force to override.");
+      return 2;
+    }
+    console.warn(`Forcing past unresolved blockers: ${detail}`);
+  }
+
   const located = await findTicketCard(context, ticket.id, columns.inbox);
   if (located) {
     // Unlike the coordinator, a run has no startup phase to prepare the board —
@@ -112,4 +136,10 @@ export async function runTicketInline(
     });
     throw error;
   }
+}
+
+/** The board a run should read blocker done-ness from; empty when none exists. */
+async function readBoardOrEmpty(context: PipelineContext): Promise<Board> {
+  const content = await readIfExists(boardPath(context));
+  return content === null ? { columns: [] } : parseBoard(content);
 }

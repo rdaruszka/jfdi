@@ -17,6 +17,10 @@ export type EventType =
   | "escalation"
   /** A ticket note's `blocks`/`blocked-by` link names no note in ticketsDir. */
   | "unresolved_link"
+  /** A begin-column card is held back: its ticket's blocked-by tickets are not yet done. */
+  | "blocked_by"
+  /** A held-back card's blockers all reached done; it is free to dispatch. */
+  | "unblocked"
   | "blocked"
   | "merge_queued"
   | "merge_start"
@@ -48,6 +52,8 @@ export interface JfdiEvent {
 
 export type TicketStatus =
   | "running"
+  /** Held at dispatch for unresolved blocked-by tickets; never ran this run. */
+  | "waiting"
   | "blocked"
   | "merge-queued"
   | "merging"
@@ -112,6 +118,13 @@ function numberField(data: Record<string, unknown> | undefined, key: string): nu
   return typeof value === "number" ? value : undefined;
 }
 
+function stringArrayField(data: Record<string, unknown> | undefined, key: string): string[] {
+  const value = data?.[key];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
 function stageField(data: Record<string, unknown> | undefined): StageName | undefined {
   const value = data?.stage;
   // `hasOwn`, not `in`: `in` walks the prototype chain, so a corrupt event
@@ -164,6 +177,8 @@ function narrate(event: JfdiEvent, ticket: TicketState): string {
     // getting a wording decision. With no `default`, tsc (TS2366) agrees.
     case "dispatch":
     case "round_start":
+    case "blocked_by":
+    case "unblocked":
     case "blocked":
     case "merge_queued":
     case "merge_start":
@@ -216,6 +231,17 @@ function applyTicketEvent(
     case "escalation":
     case "unresolved_link":
       ticket.lastActivity = narrate(event, ticket);
+      break;
+    case "blocked_by": {
+      ticket.status = "waiting";
+      ticket.stage = null;
+      const blockers = stringArrayField(event.data, "blockers");
+      ticket.lastActivity =
+        blockers.length > 0 ? `waiting on ${blockers.join(", ")}` : "waiting on blockers";
+      break;
+    }
+    case "unblocked":
+      ticket.lastActivity = "blockers resolved";
       break;
     case "blocked":
       ticket.status = "blocked";
@@ -360,6 +386,20 @@ export class EventLog {
   }
 
   /**
+   * Fold one event that is already on disk into this instance's state and
+   * notify listeners, without appending: re-emitting it would tell the same
+   * story twice on the shared stream. `followFromEnd` deliberately skips
+   * history; this is the targeted exception for a recorded fact a scan is
+   * acting on — a ticket whose merge is on record but whose card is still
+   * open. Reducing is idempotent, so folding an event the state already
+   * carries changes nothing.
+   */
+  foldRecorded(event: JfdiEvent): void {
+    this.state = reduceEvent(this.state, event);
+    this.emitter.emit("event", event, this.state);
+  }
+
+  /**
    * Fold in the events another process appended since the last pull and
    * notify listeners, so a running renderer converges on work done elsewhere
    * (a `jfdi merge` in a second terminal). Lines we wrote ourselves are
@@ -405,25 +445,40 @@ export class EventLog {
 }
 
 /**
- * Ticket ids with a `merged` event on record. This is the evidence of a merge
- * that outlives the branch: `jfdi merge` deletes the branch as its last step,
- * and a human tidying up after a hand-merge does the same, so branch absence
- * says nothing about whether the work landed.
+ * A ticket's integration story as the shared stream last told it: `merged`
+ * carries the recorded event — evidence of a merge that outlives the branch,
+ * since `jfdi merge` deletes the branch as its last step and a human tidying
+ * up after a hand-merge does the same. `in-flight` means a `merge_start` has
+ * no `merged` or `blocked` after it: some process is mid-integration (or died
+ * there, in which case rerunning `jfdi merge` finishes the story).
+ */
+export type IntegrationRecord = { phase: "in-flight" } | { phase: "merged"; event: JfdiEvent };
+
+/**
+ * Each ticket's integration record, last event wins. This is how the
+ * coordinator's sweep distinguishes a merge finished long ago from one another
+ * process is performing right now — the stream is the only ordering the two
+ * processes share.
  *
  * A line this cannot read is skipped, not fatal — it is answered during the
  * coordinator's board scan, where refusing the whole stream would stop
  * dispatch too. Rebuilding the snapshot stays strict; see `rebuild`.
  */
-export async function mergedTicketIds(stateDir: string): Promise<Set<string>> {
+export async function integrationRecords(
+  stateDir: string,
+): Promise<Map<string, IntegrationRecord>> {
   const content = await readIfExists(path.join(stateDir, "events.jsonl"));
-  const ids = new Set<string>();
-  if (content === null) return ids;
+  const records = new Map<string, IntegrationRecord>();
+  if (content === null) return records;
   for (const line of content.split("\n")) {
     if (!line.trim()) continue;
     const event = parseEventLine(line);
-    if (event?.type === "merged" && event.ticketId) ids.add(event.ticketId);
+    if (!event?.ticketId) continue;
+    if (event.type === "merge_start") records.set(event.ticketId, { phase: "in-flight" });
+    else if (event.type === "merged") records.set(event.ticketId, { phase: "merged", event });
+    else if (event.type === "blocked") records.delete(event.ticketId);
   }
-  return ids;
+  return records;
 }
 
 /**

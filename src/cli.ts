@@ -2,7 +2,8 @@ const USAGE = `jfdi — Just F'ing Do It
 
 Usage:
   jfdi run <ticket>     Run one ticket through the full pipeline (card text,
-                        [[wikilink]], or an inline description)
+                        [[wikilink]], or an inline description). Add --force to
+                        run a ticket whose blocked-by tickets are not yet done.
   jfdi start            Watch the board and run pipelines continuously (live TUI)
   jfdi status [--json]  Snapshot of coordinator state
   jfdi logs <ticket>    Dump a ticket's raw session logs
@@ -16,10 +17,14 @@ export async function main(argv: string[]): Promise<number> {
   try {
     switch (command) {
       case "run": {
-        const ref = rest.join(" ").trim();
+        const isForced = rest.includes("--force");
+        const ref = rest
+          .filter((arg) => arg !== "--force")
+          .join(" ")
+          .trim();
         if (!ref) return usageError("jfdi run <ticket> — a ticket reference is required");
         const { runCommand } = await import("./commands/run.js");
-        return await runCommand(ref);
+        return await runCommand(ref, { isForced });
       }
       case "start": {
         const { startCommand } = await import("./commands/start.js");

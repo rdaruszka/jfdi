@@ -61,6 +61,36 @@ board with all six columns; a running coordinator ensures Blocked, Ready to Merg
 and Inbox exist. The begin column is never auto-created — if you rename columns in
 config, rename them on the board too.
 
+### Blocked-by gating
+
+A ticket note's [`blocked-by` frontmatter](#ticket-notes) gates dispatch. A
+begin-column card whose ticket lists a `blocked-by` ticket that is **not yet in
+the done column** is not dispatched, however long it sits there. A blocker is
+resolved only when its own card reaches Done (cards land there on merge), so the
+board stays the single visible truth of what is finished.
+
+- **The coordinator skips; it does not move.** A blocked card is left exactly
+  where you put it — Blocked stays the escalation column, and this is not an
+  escalation. Each scan re-checks, and the card dispatches on the first scan
+  after the last blocker reaches Done. The skip is announced once (a `blocked_by`
+  event naming the blockers, and a `waiting on <ids>` status line), and the
+  unblock once (`unblocked`) — never once per scan.
+- **A dangling blocker still blocks.** A `blocked-by` link whose target has no
+  card anywhere on the board counts as unresolved, and the missing id is named in
+  the skip event — a broken link is loud, not a silent pass.
+- **Cycles are reported, not solved.** If begin-column cards block one another in
+  a loop (A `blocked-by` B, B `blocked-by` A), none can ever reach Done, so none
+  dispatch. The coordinator emits one `error` event naming the members so you can
+  untie it; it never picks a winner.
+- **`blocks` does not gate.** Only `blocked-by`, read from the blocked ticket's
+  own note, gates its dispatch. `blocks` is the human-facing inverse — mirror it
+  as a `blocked-by` on the other ticket to enforce it.
+
+`jfdi run <ticket>` applies the same rule directly: it exits non-zero naming the
+unresolved blockers, and `jfdi run --force <ticket>` prints them and runs anyway
+(see [the CLI reference](cli.md#jfdi-run-ticket)). Blocking means blocked on
+every path; an override has to be spelled out.
+
 ## Cards, wikilinks, and ticket ids
 
 A card is a *pointer* to work. Two shapes:
@@ -127,9 +157,11 @@ The anatomy, part by part. Every part is optional; an absent one is simply empty
   recommendation over guessing), and `blocks` / `blocked-by` are lists of
   wikilinks to other tickets. Like card wikilinks they resolve **only** against
   the tickets directory; one that names no note there is reported on the event
-  stream (`unresolved_link`) rather than silently ignored. They are a human
-  aid — JFDI does not order dispatch by them. Any other key is yours, and is
-  left alone.
+  stream (`unresolved_link`) rather than silently ignored. `blocked-by` **gates
+  dispatch** (see [Blocked-by gating](#blocked-by-gating)); `blocks` is the
+  human-facing inverse and does not itself gate — mirror it as a `blocked-by` on
+  the other ticket if you want it enforced. Any other key is yours, and is left
+  alone.
 - **The H1** — the canonical title.
 - **The description** — everything from the H1 down to the first section JFDI
   owns. Write the spec here: acceptance criteria, constraints, context. Your own

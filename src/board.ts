@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import { atomicWrite, readModifyWrite } from "./util/fsx.js";
+import { ticketIdFromCard } from "./util/ids.js";
 
 export interface Card {
   /** The raw line as it appears in the file, e.g. "- [ ] Fix the thing [[fix-thing]]". */
@@ -43,6 +44,16 @@ export function parseBoard(content: string): Board {
 
 export function findColumn(board: Board, name: string): Column | undefined {
   return board.columns.find((c) => c.name === name);
+}
+
+/** Name of the column holding this ticket's card, or null if the board has none. */
+export function columnOfTicket(board: Board, ticketId: string): string | null {
+  for (const column of board.columns) {
+    for (const card of column.cards) {
+      if (ticketIdFromCard(card.text) === ticketId) return column.name;
+    }
+  }
+  return null;
 }
 
 /** Locate the card whose text matches (exact raw line or trimmed text). */

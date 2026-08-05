@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { EventLog, loadState, mergedTicketIds } from "./events.js";
+import { EventLog, integrationRecords, type JfdiEvent, loadState } from "./events.js";
 
 let dir: string;
 
@@ -68,6 +68,34 @@ describe("EventLog", () => {
     log.emit("blocked", "x", { reason: "escalated: which db?" });
     expect(log.snapshot().integrationQueue).toEqual([]);
     expect(log.snapshot().tickets.x?.status).toBe("blocked");
+  });
+
+  it("blocked_by parks a held card in a waiting state naming its blockers", () => {
+    const log = new EventLog(dir, false);
+    log.emit("blocked_by", "held", { blockers: ["dep-a", "dep-b"], missing: ["dep-b"] });
+    const ticket = log.snapshot().tickets.held;
+    expect(ticket?.status).toBe("waiting");
+    expect(ticket?.stage).toBeNull();
+    expect(ticket?.lastActivity).toBe("waiting on dep-a, dep-b");
+  });
+
+  it("blocked_by tolerates a malformed blocker payload", () => {
+    const log = new EventLog(dir, false);
+    // The payload is untyped and re-parsed from disk: a non-array must not throw.
+    log.emit("blocked_by", "held", { blockers: "not-an-array" });
+    const ticket = log.snapshot().tickets.held;
+    expect(ticket?.status).toBe("waiting");
+    expect(ticket?.lastActivity).toBe("waiting on blockers");
+  });
+
+  it("unblocked narrates without unwinding the waiting status before dispatch", () => {
+    const log = new EventLog(dir, false);
+    log.emit("blocked_by", "held", { blockers: ["dep-a"] });
+    log.emit("unblocked", "held");
+    const ticket = log.snapshot().tickets.held;
+    // Dispatch flips it to running next; until then it reads as freed, still waiting for a slot.
+    expect(ticket?.status).toBe("waiting");
+    expect(ticket?.lastActivity).toBe("blockers resolved");
   });
 
   it("notifies in-process listeners (renderer contract)", () => {
@@ -152,16 +180,45 @@ describe("EventLog", () => {
     expect(rest.map((event) => event.type)).toEqual(["merged"]);
   });
 
-  it("mergedTicketIds reports every ticket with a merge on record", async () => {
+  it("integrationRecords tells a recorded merge from one still in flight", async () => {
     const log = new EventLog(dir);
     log.emit("dispatch", "a");
+    log.emit("merge_start", "a");
     log.emit("merged", "a");
-    log.emit("merge_ready", "b");
+    log.emit("merge_start", "b");
+    log.emit("merge_start", "c");
+    log.emit("blocked", "c", { reason: "gate failed" });
+    log.emit("merge_ready", "d");
+    // A rerun of `jfdi merge` on a merged ticket opens the story again.
+    log.emit("merged", "e");
+    log.emit("merge_start", "e");
     await log.flush();
     // A corrupt line costs its own evidence, not the whole answer — the
     // coordinator's scan asks this question and cannot afford to abort.
     await fs.appendFile(path.join(dir, "events.jsonl"), "{ half a line\n", "utf8");
-    expect([...(await mergedTicketIds(dir))]).toEqual(["a"]);
+    const records = await integrationRecords(dir);
+    expect(records.get("a")?.phase).toBe("merged");
+    expect(records.get("b")?.phase).toBe("in-flight");
+    expect(records.has("c")).toBe(false);
+    expect(records.has("d")).toBe(false);
+    expect(records.get("e")?.phase).toBe("in-flight");
+  });
+
+  it("foldRecorded updates state and listeners without appending", async () => {
+    const log = new EventLog(dir);
+    log.emit("dispatch", "a", { title: "A" });
+    await log.flush();
+    const eventsPath = path.join(dir, "events.jsonl");
+    const sizeBefore = (await fs.stat(eventsPath)).size;
+
+    const seen: JfdiEvent[] = [];
+    log.on((event) => seen.push(event));
+    log.foldRecorded({ ts: "2020-01-01T00:00:00.000Z", type: "merged", ticketId: "a" });
+
+    expect(log.snapshot().tickets.a?.status).toBe("done");
+    expect(seen.map((event) => event.type)).toEqual(["merged"]);
+    await log.flush();
+    expect((await fs.stat(eventsPath)).size).toBe(sizeBefore);
   });
 
   it("loadState falls back to rebuild when state.json is missing", async () => {

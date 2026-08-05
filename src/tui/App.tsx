@@ -13,6 +13,7 @@ const ISO_TIME_END = 19;
 
 const STATUS_COLOR: Record<TicketState["status"], string> = {
   running: "cyan",
+  waiting: "gray",
   blocked: "red",
   "merge-queued": "yellow",
   merging: "magenta",
@@ -112,7 +113,11 @@ export function App({ log, boardName, targetBranch, onQuit, onRetry }: AppProps)
   const tickets = Object.values(state.tickets);
   const active = tickets.filter((t) => t.status === "running" || t.status === "merging");
   const waiting = tickets.filter(
-    (t) => t.status === "merge-ready" || t.status === "merge-queued" || t.status === "blocked",
+    (t) =>
+      t.status === "merge-ready" ||
+      t.status === "merge-queued" ||
+      t.status === "blocked" ||
+      t.status === "waiting",
   );
   const settled = tickets.filter((t) => t.status === "done" || t.status === "failed");
 

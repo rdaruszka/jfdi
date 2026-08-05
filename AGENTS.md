@@ -151,7 +151,7 @@ The generic rules with rationale and check questions live in [docs/coding-guidel
 
 ## Explicitly out of scope
 
-No PO/orchestrator agent, no PRD building or auto-decomposition, no pre-implementation ticket review, no standalone question queue, no multi-project support, no web UI, no ticket dependency graph. Don't build toward these; just don't preclude the extension seams (ticket sources, merge targets, harnesses, renderers — see [docs/architecture/overview.md](docs/architecture/overview.md)).
+No PO/orchestrator agent, no PRD building or auto-decomposition, no pre-implementation ticket review, no standalone question queue, no multi-project support, no web UI. Ticket dependency handling is limited to **pairwise `blocked-by` gating at dispatch**: a card whose ticket lists a `blocked-by` ticket that is not yet in the done column is not dispatched (and a `blocked-by` cycle among begin-column cards is reported as an error, never auto-resolved). Still out of scope — transitive scheduling, critical paths, graph visualization, and auto-ordering. Don't build toward these; just don't preclude the extension seams (ticket sources, merge targets, harnesses, renderers — see [docs/architecture/overview.md](docs/architecture/overview.md)).
 
 ## Build sequence
 
