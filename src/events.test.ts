@@ -214,6 +214,76 @@ describe("EventLog", () => {
     expect(log.snapshot().tickets.t1?.status).toBe("done");
   });
 
+  it("steps past an oversized line written outside JFDI", async () => {
+    const log = new EventLog(dir, false);
+    await log.followFromEnd();
+    const oversizedLine = "x".repeat(1_048_576);
+    const event = JSON.stringify({
+      ts: "2020-01-01T00:00:00.000Z",
+      type: "dispatch",
+      ticketId: "t1",
+    });
+    await fs.writeFile(path.join(dir, "events.jsonl"), `${oversizedLine}\n${event}\n`, "utf8");
+
+    expect(await log.pullForeignEvents()).toEqual([]);
+    expect((await log.pullForeignEvents()).map((foreignEvent) => foreignEvent.type)).toEqual([
+      "dispatch",
+    ]);
+  });
+
+  it("terminates on a line spanning several chunks and surfaces its remainder", async () => {
+    const log = new EventLog(dir, false);
+    await log.followFromEnd();
+    const errors: string[] = [];
+    log.on((event) => {
+      if (event.type === "error") errors.push("error");
+    });
+    // Longer than one 1 MiB read chunk: the step-over must fire once per full
+    // chunk until the newline is finally in range, then the remainder of the
+    // bad line surfaces as an unreadable line before the valid event reads.
+    const oversizedLine = "x".repeat(1_048_576 + 4096);
+    const event = JSON.stringify({
+      ts: "2020-01-01T00:00:00.000Z",
+      type: "dispatch",
+      ticketId: "t1",
+    });
+    await fs.writeFile(path.join(dir, "events.jsonl"), `${oversizedLine}\n${event}\n`, "utf8");
+
+    // First pull steps over a full chunk with no newline: nothing yet.
+    expect(await log.pullForeignEvents()).toEqual([]);
+    // Second pull reaches the newline: the bad remainder is reported as an
+    // unreadable line, and the valid event that follows it is still read.
+    expect((await log.pullForeignEvents()).map((foreignEvent) => foreignEvent.type)).toEqual([
+      "dispatch",
+    ]);
+    expect(errors).toEqual(["error"]);
+    expect(log.snapshot().tickets.t1?.status).toBe("running");
+  });
+
+  it("does not step over a long line still shorter than a full chunk", async () => {
+    const log = new EventLog(dir, false);
+    await log.followFromEnd();
+    // A large but sub-chunk line with no newline yet is a mid-append partial,
+    // not an oversized line: it must be left for the next pull, never skipped.
+    const event = JSON.stringify({
+      ts: "2020-01-01T00:00:00.000Z",
+      type: "dispatch",
+      ticketId: "t1",
+      title: "a".repeat(700_000),
+    });
+    expect(Buffer.byteLength(event, "utf8")).toBeLessThan(1_048_576);
+    const eventsPath = path.join(dir, "events.jsonl");
+    await fs.writeFile(eventsPath, event, "utf8");
+    // No trailing newline: the partial line is withheld, not stepped over.
+    expect(await log.pullForeignEvents()).toEqual([]);
+
+    await fs.appendFile(eventsPath, "\n", "utf8");
+    // The newline arrives: the same bytes are read as one valid event.
+    expect((await log.pullForeignEvents()).map((foreignEvent) => foreignEvent.type)).toEqual([
+      "dispatch",
+    ]);
+  });
+
   it("leaves a half-written trailing line for the next pull", async () => {
     const log = new EventLog(dir, false);
     await log.followFromEnd();
