@@ -98,7 +98,10 @@ Three routes, all equivalent:
    landed and closes the card itself: the branch now contained in the target; a
    merge already on record in the event stream; or the signed-off commit
    contained in the target (what a plain `git merge` of a since-deleted branch
-   leaves behind). A card you drag *out* of Ready to Merge is acknowledged too —
+   leaves behind). A merge another JFDI process is still performing — a
+   `merge_start` on the stream with no outcome yet — is left to that process
+   to finish and narrate; the coordinator's own `merged` line is reserved for
+   merges nothing recorded, so one merge is never told twice. A card you drag *out* of Ready to Merge is acknowledged too —
    to Done or Blocked depending on where you put it — so derived state never
    keeps advertising an approval question the board has already answered.
 

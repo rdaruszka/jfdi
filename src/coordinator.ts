@@ -16,7 +16,7 @@ import {
   parseBoard,
 } from "./board.js";
 import { boardPath, moveCardSafe } from "./cards.js";
-import { mergedTicketIds } from "./events.js";
+import { type IntegrationRecord, integrationRecords } from "./events.js";
 import { branchExists, isAncestor, revParse, ticketBranch } from "./git.js";
 import { IntegrationQueue, integrateTicket } from "./integrate.js";
 import type { PipelineContext, RunReport } from "./pipeline.js";
@@ -222,26 +222,45 @@ export class Coordinator {
    * strands the card forever. Three shapes are accepted, in cost order:
    * the branch still exists and is contained in the target; a `merged` event
    * is on record; or the commit the reviews signed off on is in the target.
+   * A ticket whose stream shows an integration still in flight is skipped —
+   * the merging process closes its own card, and only the sweep's restraint
+   * keeps the shared stream from carrying two `merged` lines for one merge.
    */
   private async closeMergedCards(board: Board): Promise<void> {
     const columns = this.context.config.board.columns;
     const cards = findColumn(board, columns.readyToMerge)?.cards ?? [];
-    // Read the event stream at most once per scan, and only if a branch is missing.
-    let mergedIds: Set<string> | null = null;
+    // Read the event stream at most once per scan, and only once a card needs it.
+    let records: Map<string, IntegrationRecord> | null = null;
     for (const card of cards) {
       const id = ticketIdFromCard(card.text);
       if (this.active.has(id)) continue;
+      if (records === null) records = await integrationRecords(this.context.stateDir);
+      const record = records.get(id);
+      // Mid-integration in another process (`jfdi merge` in a second
+      // terminal): between its landing commit and its own card move, git
+      // evidence says merged while the card still sits here. That process
+      // finishes its own story; sweeping now would tell it twice.
+      if (record?.phase === "in-flight") continue;
       const branch = ticketBranch(id);
       let hasMerged: boolean;
       if (await branchExists(this.context.repoRoot, branch)) {
+        // A live branch answers for itself: a recorded merge may be an earlier
+        // run's, and a re-dispatched ticket's fresh branch must not close on it.
         hasMerged = await this.isInTarget(branch);
       } else {
-        if (mergedIds === null) mergedIds = await mergedTicketIds(this.context.stateDir);
-        hasMerged = mergedIds.has(id) || (await this.isSignedOffCommitInTarget(id));
+        hasMerged = record?.phase === "merged" || (await this.isSignedOffCommitInTarget(id));
       }
       if (!hasMerged) continue;
+      // A merge already narrated on the stream is folded into this instance's
+      // state, not re-emitted; only a merge nothing recorded — a human's hand
+      // merge — gets the sweep's own `merged` line. Status first, then the
+      // card move, so the move's persisted snapshot already reads done.
+      if (record?.phase === "merged") {
+        this.context.log.foldRecorded(record.event);
+      } else {
+        this.context.log.emit("merged", id, { note: "merged outside the pipeline — card closed" });
+      }
       await moveCardSafe(this.context, card, columns.readyToMerge, columns.done, true);
-      this.context.log.emit("merged", id, { note: "merged outside the pipeline — card closed" });
     }
   }
 

@@ -152,6 +152,16 @@ async function landAndDeleteBranch(ticketId: string): Promise<string> {
   return tip;
 }
 
+/** Every `merged` line the shared stream carries for one ticket. */
+async function recordedMergedEvents(ticketId: string): Promise<JfdiEvent[]> {
+  const content = await fs.readFile(path.join(fixture.stateDir, "events.jsonl"), "utf8");
+  return content
+    .split("\n")
+    .filter((line) => line.trim())
+    .map((line) => JSON.parse(line) as JfdiEvent)
+    .filter((event) => event.type === "merged" && event.ticketId === ticketId);
+}
+
 /** A report.json for a ticket, naming the commit its reviews signed off on. */
 async function recordSignOff(ticketId: string, commit: string): Promise<void> {
   await saveReport(fixture.stateDir, ticketId, {
@@ -371,13 +381,15 @@ describe("Coordinator", () => {
     const alphaId = await strandCard();
     await landAndDeleteBranch(alphaId);
     const merger = new EventLog(fixture.stateDir);
+    merger.emit("merge_start", alphaId);
     merger.emit("merged", alphaId);
     await merger.flush();
 
-    const context = fixture.context(autoHandler());
+    const context = fixture.context(autoHandler(), { shouldPersistEvents: true });
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
     await coordinator.start();
     coordinator.stop();
+    await context.log.flush();
 
     const board = await readBoard();
     expect(findColumn(board, "Done")?.cards.map((c) => [c.text, c.checked])).toEqual([
@@ -385,6 +397,52 @@ describe("Coordinator", () => {
     ]);
     expect(findColumn(board, "Ready to Merge")?.cards).toHaveLength(0);
     expect(context.log.snapshot().tickets[alphaId]?.status).toBe("done");
+    // The merger already narrated this merge; the sweep folds the recorded
+    // event into its own state instead of telling the story twice.
+    expect(await recordedMergedEvents(alphaId)).toHaveLength(1);
+  });
+
+  it("waits out another process's in-flight merge instead of narrating it twice", async () => {
+    // The window `jfdi merge` occupies between landing its merge commit and
+    // moving the card itself: git already answers "merged" while the stream
+    // still says the story is mid-telling. The sweep must hold back — closing
+    // here is what doubled the `merged` line under merge-detection's
+    // convergence test.
+    const alphaId = await strandCard();
+    const branch = `jfdi/${alphaId}`;
+    await git(fixture.repo, "checkout", "-b", branch);
+    await commitFile(fixture.repo, `${alphaId}.txt`, "work\n", `implement ${alphaId}`);
+    await git(fixture.repo, "checkout", "main");
+    await git(fixture.repo, "merge", "--no-ff", "-m", `merge ${branch}`, branch);
+    // The branch stays: the merging process has not reached its cleanup yet.
+
+    const merger = new EventLog(fixture.stateDir);
+    merger.emit("merge_start", alphaId);
+    await merger.flush();
+
+    const context = fixture.context(autoHandler(), { shouldPersistEvents: true });
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+    await coordinator.start();
+
+    expect(findColumn(await readBoard(), "Ready to Merge")?.cards).toHaveLength(1);
+    expect(await recordedMergedEvents(alphaId)).toHaveLength(0);
+
+    // The merger finishes its story on the stream but dies before its own
+    // card move; the next sweep folds the recorded merge and closes the card
+    // without adding a second line.
+    merger.emit("merged", alphaId);
+    await merger.flush();
+    await coordinator.settleScan();
+    coordinator.stop();
+    await context.log.flush();
+
+    const board = await readBoard();
+    expect(findColumn(board, "Done")?.cards.map((c) => [c.text, c.checked])).toEqual([
+      ["Add feature alpha", true],
+    ]);
+    expect(findColumn(board, "Ready to Merge")?.cards).toHaveLength(0);
+    expect(context.log.snapshot().tickets[alphaId]?.status).toBe("done");
+    expect(await recordedMergedEvents(alphaId)).toHaveLength(1);
   });
 
   it("closes a Ready-to-Merge card the human merged by hand and tidied up", async () => {

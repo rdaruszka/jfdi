@@ -386,6 +386,20 @@ export class EventLog {
   }
 
   /**
+   * Fold one event that is already on disk into this instance's state and
+   * notify listeners, without appending: re-emitting it would tell the same
+   * story twice on the shared stream. `followFromEnd` deliberately skips
+   * history; this is the targeted exception for a recorded fact a scan is
+   * acting on — a ticket whose merge is on record but whose card is still
+   * open. Reducing is idempotent, so folding an event the state already
+   * carries changes nothing.
+   */
+  foldRecorded(event: JfdiEvent): void {
+    this.state = reduceEvent(this.state, event);
+    this.emitter.emit("event", event, this.state);
+  }
+
+  /**
    * Fold in the events another process appended since the last pull and
    * notify listeners, so a running renderer converges on work done elsewhere
    * (a `jfdi merge` in a second terminal). Lines we wrote ourselves are
@@ -431,25 +445,40 @@ export class EventLog {
 }
 
 /**
- * Ticket ids with a `merged` event on record. This is the evidence of a merge
- * that outlives the branch: `jfdi merge` deletes the branch as its last step,
- * and a human tidying up after a hand-merge does the same, so branch absence
- * says nothing about whether the work landed.
+ * A ticket's integration story as the shared stream last told it: `merged`
+ * carries the recorded event — evidence of a merge that outlives the branch,
+ * since `jfdi merge` deletes the branch as its last step and a human tidying
+ * up after a hand-merge does the same. `in-flight` means a `merge_start` has
+ * no `merged` or `blocked` after it: some process is mid-integration (or died
+ * there, in which case rerunning `jfdi merge` finishes the story).
+ */
+export type IntegrationRecord = { phase: "in-flight" } | { phase: "merged"; event: JfdiEvent };
+
+/**
+ * Each ticket's integration record, last event wins. This is how the
+ * coordinator's sweep distinguishes a merge finished long ago from one another
+ * process is performing right now — the stream is the only ordering the two
+ * processes share.
  *
  * A line this cannot read is skipped, not fatal — it is answered during the
  * coordinator's board scan, where refusing the whole stream would stop
  * dispatch too. Rebuilding the snapshot stays strict; see `rebuild`.
  */
-export async function mergedTicketIds(stateDir: string): Promise<Set<string>> {
+export async function integrationRecords(
+  stateDir: string,
+): Promise<Map<string, IntegrationRecord>> {
   const content = await readIfExists(path.join(stateDir, "events.jsonl"));
-  const ids = new Set<string>();
-  if (content === null) return ids;
+  const records = new Map<string, IntegrationRecord>();
+  if (content === null) return records;
   for (const line of content.split("\n")) {
     if (!line.trim()) continue;
     const event = parseEventLine(line);
-    if (event?.type === "merged" && event.ticketId) ids.add(event.ticketId);
+    if (!event?.ticketId) continue;
+    if (event.type === "merge_start") records.set(event.ticketId, { phase: "in-flight" });
+    else if (event.type === "merged") records.set(event.ticketId, { phase: "merged", event });
+    else if (event.type === "blocked") records.delete(event.ticketId);
   }
-  return ids;
+  return records;
 }
 
 /**
