@@ -23,6 +23,39 @@ export const TEST_PAUSE_DELAYS: PauseDelays = {
   maxWaitMs: 60_000,
 };
 
+export interface WaitForOptions {
+  timeoutMs: number;
+  intervalMs: number;
+  describe: () => string | Promise<string>;
+}
+
+/**
+ * Poll when a test is waiting for a condition to become true. A bounded settle
+ * is still correct when proving a non-event, such as a process staying alive or
+ * a card staying put, because there is no positive condition to end that wait.
+ */
+export async function waitFor(
+  condition: () => boolean | Promise<boolean>,
+  { timeoutMs, intervalMs, describe }: WaitForOptions,
+): Promise<void> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+    throw new Error(`cannot wait with timeoutMs ${timeoutMs}; use a finite non-negative duration`);
+  }
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+    throw new Error(`cannot wait with intervalMs ${intervalMs}; use a finite positive duration`);
+  }
+
+  const attemptLimit = Math.ceil(timeoutMs / intervalMs) + 1;
+  const deadlineMs = Date.now() + timeoutMs;
+  for (let attempt = 0; attempt < attemptLimit; attempt += 1) {
+    if (await condition()) return;
+    const remainingMs = deadlineMs - Date.now();
+    if (remainingMs <= 0) break;
+    await new Promise<void>((resolve) => setTimeout(resolve, Math.min(intervalMs, remainingMs)));
+  }
+  throw new Error(`waited ${timeoutMs}ms for ${await describe()}`);
+}
+
 export interface Fixture {
   root: string;
   repo: string;

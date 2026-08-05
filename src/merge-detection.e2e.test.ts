@@ -24,6 +24,7 @@ import * as path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { git } from "./git.js";
+import { waitFor } from "./test-helpers.js";
 // The card-to-ticket-id rule is the product's own; a test that reimplemented
 // it would be pinning its own copy, not the one the coordinator looks up.
 import { ticketIdFromCard } from "./util/ids.js";
@@ -200,10 +201,11 @@ async function startCoordinator(sandbox: Sandbox): Promise<Coordinator> {
     isAlive: () => child.exitCode === null && child.signalCode === null,
     output: () => output,
   };
-  await waitFor(
-    () => output.includes("watching the board"),
-    () => `start never began watching: ${output}`,
-  );
+  await waitFor(() => output.includes("watching the board"), {
+    timeoutMs: WAIT_TIMEOUT_MS,
+    intervalMs: WAIT_STEP_MS,
+    describe: () => `start never began watching: ${output}`,
+  });
   return coordinator;
 }
 
@@ -213,19 +215,6 @@ function stopCoordinator(coordinator: Coordinator): void {
 
 function sleep(durationMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, durationMs));
-}
-
-/** Poll a condition to a hard time cap; the message describes what never held. */
-async function waitFor(
-  isSatisfied: () => boolean | Promise<boolean>,
-  describeFailure: () => string | Promise<string>,
-): Promise<void> {
-  const deadline = Date.now() + WAIT_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    if (await isSatisfied()) return;
-    await sleep(WAIT_STEP_MS);
-  }
-  throw new Error(`waited ${WAIT_TIMEOUT_MS}ms: ${await describeFailure()}`);
 }
 
 interface RecordedEvent {
@@ -326,7 +315,11 @@ describe("a running coordinator and merges it did not perform", () => {
       const coordinator = await startCoordinator(sandbox);
       await waitFor(
         async () => (await columnCards(sandbox, "Ready to Merge")).some((c) => c.includes("alpha")),
-        () => "alpha never reached Ready to Merge",
+        {
+          timeoutMs: WAIT_TIMEOUT_MS,
+          intervalMs: WAIT_STEP_MS,
+          describe: () => "alpha never reached Ready to Merge",
+        },
       );
       const alphaId = await soleTicketId(sandbox, "Add feature alpha");
 
@@ -341,7 +334,11 @@ describe("a running coordinator and merges it did not perform", () => {
       // perform — must converge on the same board without duplicating anything.
       await waitFor(
         async () => (await columnCards(sandbox, "Done")).some((c) => c.includes("alpha")),
-        async () => `alpha never reached Done; board:\n${await readBoard(sandbox)}`,
+        {
+          timeoutMs: WAIT_TIMEOUT_MS,
+          intervalMs: WAIT_STEP_MS,
+          describe: async () => `alpha never reached Done; board:\n${await readBoard(sandbox)}`,
+        },
       );
       expect(coordinator.isAlive()).toBe(true);
 
@@ -372,7 +369,11 @@ describe("a running coordinator and merges it did not perform", () => {
       const coordinator = await startCoordinator(sandbox);
       await waitFor(
         async () => (await columnCards(sandbox, "Ready to Merge")).some((c) => c.includes("beta")),
-        () => "beta never reached Ready to Merge",
+        {
+          timeoutMs: WAIT_TIMEOUT_MS,
+          intervalMs: WAIT_STEP_MS,
+          describe: () => "beta never reached Ready to Merge",
+        },
       );
       const betaId = await soleTicketId(sandbox, "Add feature beta");
       expect((await statusTickets(sandbox))[betaId]?.status).toBe("merge-ready");
@@ -386,10 +387,11 @@ describe("a running coordinator and merges it did not perform", () => {
         board.replace(card, "").replace("## Done\n", `## Done\n${card}`),
       );
 
-      await waitFor(
-        async () => (await statusTickets(sandbox))[betaId]?.status === "done",
-        async () => `beta still ${(await statusTickets(sandbox))[betaId]?.status}`,
-      );
+      await waitFor(async () => (await statusTickets(sandbox))[betaId]?.status === "done", {
+        timeoutMs: WAIT_TIMEOUT_MS,
+        intervalMs: WAIT_STEP_MS,
+        describe: async () => `beta still ${(await statusTickets(sandbox))[betaId]?.status}`,
+      });
       expect(coordinator.isAlive()).toBe(true);
 
       const closing = (await readEvents(sandbox)).filter(
@@ -417,7 +419,11 @@ describe("a running coordinator and merges it did not perform", () => {
       await waitFor(
         async () =>
           (await columnCards(sandbox, "Ready to Merge")).some((c) => c.includes("epsilon")),
-        () => "epsilon never reached Ready to Merge",
+        {
+          timeoutMs: WAIT_TIMEOUT_MS,
+          intervalMs: WAIT_STEP_MS,
+          describe: () => "epsilon never reached Ready to Merge",
+        },
       );
       const epsilonId = await soleTicketId(sandbox, "Add feature epsilon");
 
@@ -434,7 +440,11 @@ describe("a running coordinator and merges it did not perform", () => {
 
       await waitFor(
         async () => (await columnCards(sandbox, "Done")).some((c) => c.includes("epsilon")),
-        async () => `epsilon never reached Done; board:\n${await readBoard(sandbox)}`,
+        {
+          timeoutMs: WAIT_TIMEOUT_MS,
+          intervalMs: WAIT_STEP_MS,
+          describe: async () => `epsilon never reached Done; board:\n${await readBoard(sandbox)}`,
+        },
       );
       expect(coordinator.isAlive()).toBe(true);
 
@@ -515,7 +525,11 @@ describe("a running coordinator and merges it did not perform", () => {
       // unanswerable question must not take the rest of the scan down with it.
       await waitFor(
         async () => (await columnCards(sandbox, "Ready to Merge")).some((c) => c.includes("zulu")),
-        async () => `zulu never ran; board:\n${await readBoard(sandbox)}`,
+        {
+          timeoutMs: WAIT_TIMEOUT_MS,
+          intervalMs: WAIT_STEP_MS,
+          describe: async () => `zulu never ran; board:\n${await readBoard(sandbox)}`,
+        },
       );
 
       expect(await columnCards(sandbox, "Ready to Merge")).toEqual(
