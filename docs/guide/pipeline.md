@@ -195,13 +195,13 @@ What comes back is subprocess output on its way into permanent history, so the
 pipeline enforces the rest of the shape rather than trusting it. A first line
 longer than 72 characters is not a subject: it is kept as body text under a
 plain subject the pipeline writes itself. The body has no length bound. Control
-characters git or a terminal would choke on are stripped from the assembled
-message — not just from the scribe's answer, since the stage's summary and an
-interrupted session's quoted reason are agent and subprocess text too — and
-anything that has to stay on one line, the status line included, is flattened
-to one. A scribe that dies or answers with nothing degrades to the stage's own
-summary — the commit is never delayed for prose — and says so on the event
-stream.
+characters git or a terminal would choke on are stripped once from the
+assembled message, covering both the scribe's answer and the stage's summary at
+the history boundary. The pipeline produces the status line's outcome and
+routing as single-line values; commit-message assembly asserts that invariant
+instead of coercing their content. A scribe that dies or answers with nothing
+degrades to the stage's own summary — the commit is never delayed for prose —
+and says so on the event stream.
 
 ### The comment trail
 
