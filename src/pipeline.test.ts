@@ -270,10 +270,12 @@ describe("runPipeline", () => {
   });
 
   it("exhausted rounds block with accumulated history in the note", async () => {
+    let implementationAttempt = 0;
     const context = fixture.context(async (spec, options) => {
       const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
-        await commitFile(options.cwd, "impl.txt", `${Math.random()}\n`, "try");
+        implementationAttempt += 1;
+        await commitFile(options.cwd, "impl.txt", `attempt ${implementationAttempt}\n`, "try");
         await writeVerdict(spec.prompt, { status: "done" });
       } else if (stage === "code-review") {
         await writeVerdict(spec.prompt, { verdict: "fail", feedback: "still not good enough" });
@@ -659,6 +661,7 @@ describe("runPipeline", () => {
   });
 
   it("a continued reviewer that passed last round is told the change was QA-driven", async () => {
+    let implementationAttempt = 0;
     let reviewCalls = 0;
     let qaCalls = 0;
     let secondReviewPrompt = "";
@@ -667,7 +670,13 @@ describe("runPipeline", () => {
       const stage = sessionKindOf(spec.prompt);
       switch (stage) {
         case "implementation":
-          await commitFile(options.cwd, "impl.txt", `${Math.random()}\n`, "implement");
+          implementationAttempt += 1;
+          await commitFile(
+            options.cwd,
+            "impl.txt",
+            `attempt ${implementationAttempt}\n`,
+            "implement",
+          );
           await writeVerdict(spec.prompt, { status: "done" });
           return { ok: true, text: "", sessionId: "impl-1" };
         case "code-review":

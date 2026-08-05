@@ -51,6 +51,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  fsxSeam.editBeforeWrite = null;
   await fs.rm(dir, { recursive: true, force: true });
 });
 

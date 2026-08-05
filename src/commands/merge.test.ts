@@ -44,8 +44,10 @@ function silence(): void {
 }
 
 let fixture: Fixture;
-let originalCwd: string;
-let originalJfdiHome: string | undefined;
+
+function runMerge(): Promise<number> {
+  return mergeCommand(TICKET_ID, { cwd: fixture.repo, stateDir: fixture.stateDir });
+}
 
 async function writeBoard(content: string): Promise<void> {
   await fs.writeFile(path.join(fixture.jfdiDir, "board.md"), content);
@@ -72,20 +74,12 @@ async function makeTicketBranch(): Promise<void> {
 
 beforeEach(async () => {
   fixture = await makeFixture();
-  originalCwd = process.cwd();
-  originalJfdiHome = process.env.JFDI_HOME;
-  // Run state stays inside the fixture, not the shared test home.
-  process.env.JFDI_HOME = path.join(fixture.root, "jfdi-home");
-  process.chdir(fixture.repo);
   vi.spyOn(console, "log").mockImplementation(silence);
   vi.spyOn(console, "error").mockImplementation(silence);
 });
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  process.chdir(originalCwd);
-  if (originalJfdiHome === undefined) delete process.env.JFDI_HOME;
-  else process.env.JFDI_HOME = originalJfdiHome;
   await fixture.cleanup();
 });
 
@@ -94,7 +88,7 @@ describe("mergeCommand board bookkeeping", () => {
     await writeBoard(board([CARD]));
     await makeTicketBranch();
 
-    expect(await mergeCommand(TICKET_ID)).toBe(0);
+    expect(await runMerge()).toBe(0);
 
     expect(await git(fixture.repo, "log", "--oneline", "main")).toContain("implement the thing");
     const columns = await readColumns();
@@ -106,7 +100,7 @@ describe("mergeCommand board bookkeeping", () => {
     await writeBoard(board([], [CARD]));
     await makeTicketBranch();
 
-    expect(await mergeCommand(TICKET_ID)).toBe(0);
+    expect(await runMerge()).toBe(0);
 
     const columns = await readColumns();
     expect(cardsIn(columns, "In Progress")).toEqual([]);
@@ -124,7 +118,7 @@ describe("mergeCommand board bookkeeping", () => {
     await writeBoard(board([CARD]));
     await makeTicketBranch();
 
-    expect(await mergeCommand(TICKET_ID)).toBe(2);
+    expect(await runMerge()).toBe(2);
 
     expect(await git(fixture.repo, "log", "--oneline", "main")).not.toContain(
       "implement the thing",
@@ -139,7 +133,7 @@ describe("mergeCommand board bookkeeping", () => {
     await writeBoard(unrelated);
     await makeTicketBranch();
 
-    expect(await mergeCommand(TICKET_ID)).toBe(0);
+    expect(await runMerge()).toBe(0);
 
     expect(await git(fixture.repo, "log", "--oneline", "main")).toContain("implement the thing");
     expect(await fs.readFile(path.join(fixture.jfdiDir, "board.md"), "utf8")).toBe(unrelated);
@@ -148,7 +142,7 @@ describe("mergeCommand board bookkeeping", () => {
   it("merges with no board at all", async () => {
     await makeTicketBranch();
 
-    expect(await mergeCommand(TICKET_ID)).toBe(0);
+    expect(await runMerge()).toBe(0);
 
     expect(await git(fixture.repo, "log", "--oneline", "main")).toContain("implement the thing");
   });
