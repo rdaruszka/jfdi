@@ -411,11 +411,11 @@ export async function integrateTicket(
  * merge` crosses), plus the Integration row from this process's own ledger when
  * a conflict pulled in an integration agent. Null when there is nothing to show.
  */
-async function mergedUsageTable(
+function mergedUsageTable(
   context: PipelineContext,
   ticketId: string,
   report: RunReport | null,
-): Promise<string | null> {
+): string | null {
   const integrationRow = context.usage
     .of(ticketId)
     .snapshot()
@@ -449,7 +449,7 @@ async function recordMergedTransition(
       `landed on \`${details.target}\` as \`${shortSha(details.landingCommit)}\``,
     ),
   ];
-  const table = await mergedUsageTable(context, ticket.id, report);
+  const table = mergedUsageTable(context, ticket.id, report);
   if (table) mergedNarration.push("", table);
   if (details.leftoverNote) mergedNarration.push("", details.leftoverNote.trim());
   if (details.resolutionNote)

@@ -12,7 +12,7 @@ import {
   recordMergeReady,
   recordObservations,
 } from "../report.js";
-import { ensureTicketNote, resolveTicket } from "../tickets.js";
+import { ensureTicketNote, resolveTicket, type Ticket } from "../tickets.js";
 import { EXIT_SIGINT } from "../util/exit-codes.js";
 import { readIfExists } from "../util/fsx.js";
 import { attachInlinePrinter, attachRetryKey, buildContext } from "./context.js";
@@ -56,6 +56,26 @@ export async function runCommand(ticketRef: string, options: RunOptions = {}): P
   }
 }
 
+/** Refuse a corrupt saved report before a direct run can dispatch any stage. */
+async function refuseCorruptReport(
+  context: PipelineContext,
+  ticket: Ticket,
+  ticketsDir: string,
+): Promise<boolean> {
+  const columns = context.config.board.columns;
+  const savedReport = await loadReport(context.stateDir, ticket.id);
+  if (!savedReport || !isCorruptReport(savedReport)) return false;
+  const notePath = await ensureTicketNote(ticket, ticketsDir);
+  const message = await recordCorruptReport(context, ticket.id, notePath, savedReport);
+  const located = await findTicketCard(context, ticket.id, columns.inbox);
+  if (located) {
+    await ensureColumns(boardPath(context), [columns.blocked]);
+    await moveCardSafe(context, located.card, located.column, columns.blocked, false);
+  }
+  console.error(`\nBlocked: ${message}`);
+  return true;
+}
+
 /** The run itself, over an already-built context. */
 export async function runTicketInline(
   context: PipelineContext,
@@ -67,18 +87,7 @@ export async function runTicketInline(
   console.log(`ticket: ${ticket.id}`);
 
   const columns = context.config.board.columns;
-  const savedReport = await loadReport(context.stateDir, ticket.id);
-  if (savedReport && isCorruptReport(savedReport)) {
-    const notePath = await ensureTicketNote(ticket, ticketsDir);
-    const message = await recordCorruptReport(context, ticket.id, notePath, savedReport);
-    const located = await findTicketCard(context, ticket.id, columns.inbox);
-    if (located) {
-      await ensureColumns(boardPath(context), [columns.blocked]);
-      await moveCardSafe(context, located.card, located.column, columns.blocked, false);
-    }
-    console.error(`\nBlocked: ${message}`);
-    return 2;
-  }
+  if (await refuseCorruptReport(context, ticket, ticketsDir)) return 2;
 
   // Blocking means blocked on every path: a direct run refuses a ticket whose
   // blocked-by tickets are not done, and only --force spells out the override.

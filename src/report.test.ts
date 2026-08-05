@@ -1,9 +1,9 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { loadReport } from "./report.js";
 import type { Fixture } from "./test-helpers.js";
 import { makeFixture } from "./test-helpers.js";
-import { loadReport } from "./report.js";
 
 let fixture: Fixture;
 
