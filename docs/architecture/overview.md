@@ -99,8 +99,11 @@ flowchart TB
   see [Harness](harness.md). Constructed **per stage**, not per instance:
   `config.stages` picks a harness (and optionally a model and effort) for each
   of implementation, code review, QA, integration and the scribe, so a run
-  routinely spans two providers. It also classifies its own provider's failures, so a usage
-  limit or an outage is never mistaken for bad work.
+  routinely spans two providers. The separate instance-wide `permissions.mode`
+  is passed to every harness; its default is sandboxed autonomous `auto`, and
+  each implementation owns the mapping to provider-native flags. The harness
+  also classifies its own provider's failures, so a usage limit or an outage is
+  never mistaken for bad work.
 - **Pause controller** ([src/pause.ts](../../src/pause.ts)) — the tool-wide hold
   that classification feeds. It lives on the `PipelineContext`, so `jfdi run`
   and every dispatched pipeline share one pause and one resume; the coordinator

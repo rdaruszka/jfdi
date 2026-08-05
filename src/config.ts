@@ -19,6 +19,7 @@ export interface GateCommand {
 }
 
 export type IntegrationMode = "auto" | "on-approval";
+export type PermissionMode = "auto" | "bypass";
 export type { HarnessName, SessionKind };
 
 /**
@@ -39,6 +40,7 @@ export interface JfdiConfig {
   gate: GateCommand[];
   pipeline: { max_rounds: number };
   integration: { target_branch: string; mode: IntegrationMode };
+  permissions: { mode: PermissionMode };
   max_concurrent: number;
   /** Required, one entry per stage plus the scribe — there is no global harness. */
   stages: Record<SessionKind, SessionConfig>;
@@ -63,6 +65,7 @@ export function defaultConfig(): JfdiConfig {
     gate: [],
     pipeline: { max_rounds: 3 },
     integration: { target_branch: "main", mode: "on-approval" },
+    permissions: { mode: "auto" },
     max_concurrent: 2,
     stages: {
       implementation: { harness: "claude", model: "claude-opus-4-8", effort: "high" },
@@ -237,6 +240,14 @@ export function parseConfig(raw: unknown): JfdiConfig {
   const mode = stringOrDefault(integration.mode, defaults.integration.mode, "integration.mode");
   if (mode !== "auto" && mode !== "on-approval")
     throw new ConfigError(`integration.mode must be "auto" or "on-approval", got "${mode}"`);
+  const permissions = isRecord(raw.permissions) ? raw.permissions : {};
+  const permissionMode = stringOrDefault(
+    permissions.mode,
+    defaults.permissions.mode,
+    "permissions.mode",
+  );
+  if (permissionMode !== "auto" && permissionMode !== "bypass")
+    throw new ConfigError(`permissions.mode must be "auto" or "bypass", got "${permissionMode}"`);
 
   return {
     board: { path: stringOrDefault(board.path, defaults.board.path, "board.path"), columns },
@@ -257,6 +268,7 @@ export function parseConfig(raw: unknown): JfdiConfig {
       ),
       mode,
     },
+    permissions: { mode: permissionMode },
     max_concurrent: positiveInteger(raw.max_concurrent, defaults.max_concurrent, "max_concurrent"),
     stages: parseStages(raw.stages),
   };

@@ -224,7 +224,7 @@ describe("ClaudeHarness subprocess", () => {
       { type: "assistant", message: { content: [{ type: "text", text: "hi" }] } },
       { type: "result", subtype: "success", result: "finished the work" },
     ]);
-    const harness = new ClaudeHarness(TEST_SELECTION, exe);
+    const harness = new ClaudeHarness(TEST_SELECTION, "bypass", exe);
     const session = harness.spawn({ prompt: "first line\nsecond line with spaces" }, { cwd: dir });
     const seen: HarnessEvent[] = [];
     for await (const event of session.events) seen.push(event);
@@ -237,7 +237,7 @@ describe("ClaudeHarness subprocess", () => {
   it("captures raw output to the log path", async () => {
     const exe = await stubClaude([{ type: "result", subtype: "success", result: "ok" }]);
     const logPath = path.join(dir, "logs/session.jsonl");
-    const harness = new ClaudeHarness(TEST_SELECTION, exe);
+    const harness = new ClaudeHarness(TEST_SELECTION, "bypass", exe);
     const session = harness.spawn(
       { prompt: "first line\nsecond line with spaces" },
       { cwd: dir, logPath },
@@ -249,7 +249,7 @@ describe("ClaudeHarness subprocess", () => {
 
   it("reports failure when the process exits non-zero", async () => {
     const exe = await stubClaude([], 2);
-    const harness = new ClaudeHarness(TEST_SELECTION, exe);
+    const harness = new ClaudeHarness(TEST_SELECTION, "bypass", exe);
     const session = harness.spawn({ prompt: "first line\nsecond line with spaces" }, { cwd: dir });
     const result = await session.done;
     expect(result.ok).toBe(false);
@@ -257,7 +257,7 @@ describe("ClaudeHarness subprocess", () => {
   });
 
   it("reports failure when the executable is missing", async () => {
-    const harness = new ClaudeHarness(TEST_SELECTION, path.join(dir, "does-not-exist"));
+    const harness = new ClaudeHarness(TEST_SELECTION, "bypass", path.join(dir, "does-not-exist"));
     const session = harness.spawn({ prompt: "p" }, { cwd: dir });
     const result = await session.done;
     expect(result.ok).toBe(false);
@@ -269,7 +269,7 @@ describe("ClaudeHarness subprocess", () => {
       { type: "system", subtype: "init", session_id: "session-1" },
       { type: "result", subtype: "success", result: "ok", session_id: "session-1" },
     ]);
-    const result = await new ClaudeHarness(TEST_SELECTION, exe).spawn(
+    const result = await new ClaudeHarness(TEST_SELECTION, "bypass", exe).spawn(
       { prompt: "first line\nsecond line with spaces" },
       { cwd: dir },
     ).done;
@@ -285,7 +285,7 @@ describe("ClaudeHarness subprocess", () => {
       `echo '${JSON.stringify({ type: "result", subtype: "success", result: "continued" })}'`,
     ].join("\n");
     await fs.writeFile(script, `${body}\n`, { mode: 0o755 });
-    const result = await new ClaudeHarness(TEST_SELECTION, script).spawn(
+    const result = await new ClaudeHarness(TEST_SELECTION, "bypass", script).spawn(
       { prompt: "go on" },
       { cwd: dir, continueSessionId: "old-session" },
     ).done;
@@ -305,7 +305,7 @@ describe("ClaudeHarness subprocess", () => {
       `echo '${JSON.stringify({ type: "result", subtype: "success", result: "hooked" })}'`,
     ].join("\n");
     await fs.writeFile(script, `${body}\n`, { mode: 0o755 });
-    const result = await new ClaudeHarness(TEST_SELECTION, script).spawn(
+    const result = await new ClaudeHarness(TEST_SELECTION, "bypass", script).spawn(
       { prompt: "p" },
       { cwd: dir },
     ).done;
@@ -324,9 +324,11 @@ describe("ClaudeHarness selection flags", () => {
   });
 
   /** Stub `claude` that records the argv it was handed, one argument per line. */
-  async function argvRecorder(): Promise<{ executable: string; argv: () => Promise<string[]> }> {
-    const argvPath = path.join(dir, "argv.txt");
-    const executable = path.join(dir, "recording-claude");
+  async function argvRecorder(
+    name = "recording-claude",
+  ): Promise<{ executable: string; argv: () => Promise<string[]> }> {
+    const argvPath = path.join(dir, `${name}.txt`);
+    const executable = path.join(dir, name);
     await fs.writeFile(
       executable,
       ["#!/bin/sh", `for arg in "$@"; do echo "$arg" >> "${argvPath}"; done`, ""].join("\n"),
@@ -342,6 +344,7 @@ describe("ClaudeHarness selection flags", () => {
     const recorder = await argvRecorder();
     await new ClaudeHarness(
       { sessionKind: "qa", model: "claude-opus-4-8", effort: "xhigh" },
+      "bypass",
       recorder.executable,
     ).spawn({ prompt: "p" }, { cwd: dir }).done;
     const argv = await recorder.argv();
@@ -353,10 +356,11 @@ describe("ClaudeHarness selection flags", () => {
 
   it("passes no flag for a value the stage did not configure", async () => {
     const recorder = await argvRecorder();
-    await new ClaudeHarness({ sessionKind: "qa", model: "opus" }, recorder.executable).spawn(
-      { prompt: "p" },
-      { cwd: dir },
-    ).done;
+    await new ClaudeHarness(
+      { sessionKind: "qa", model: "opus" },
+      "bypass",
+      recorder.executable,
+    ).spawn({ prompt: "p" }, { cwd: dir }).done;
     const argv = await recorder.argv();
     expect(argv).toContain("--model");
     expect(argv).not.toContain("--effort");
@@ -366,9 +370,12 @@ describe("ClaudeHarness selection flags", () => {
     const recorder = await argvRecorder();
     await new ClaudeHarness(
       { sessionKind: "implementation", model: "claude-opus-4-8", effort: "high" },
+      "bypass",
       recorder.executable,
     ).spawnInteractive({ prompt: "brief" }, { cwd: dir, isSystemPrompt: true });
     expect(await recorder.argv()).toEqual([
+      "--permission-mode",
+      "bypassPermissions",
       "--model",
       "claude-opus-4-8",
       "--effort",
@@ -378,9 +385,40 @@ describe("ClaudeHarness selection flags", () => {
     ]);
   });
 
+  it.each([
+    { permissionMode: "auto" as const, claudeMode: "auto" },
+    { permissionMode: "bypass" as const, claudeMode: "bypassPermissions" },
+  ])(
+    "maps $permissionMode permissions across headless, resume, and interactive launches",
+    async ({ permissionMode, claudeMode }) => {
+      const headless = await argvRecorder(`${permissionMode}-headless`);
+      await new ClaudeHarness(TEST_SELECTION, permissionMode, headless.executable).spawn(
+        { prompt: "start" },
+        { cwd: dir },
+      ).done;
+      const resume = await argvRecorder(`${permissionMode}-resume`);
+      await new ClaudeHarness(TEST_SELECTION, permissionMode, resume.executable).spawn(
+        { prompt: "continue" },
+        { cwd: dir, continueSessionId: "session-4" },
+      ).done;
+      const interactive = await argvRecorder(`${permissionMode}-interactive`);
+      await new ClaudeHarness(
+        TEST_SELECTION,
+        permissionMode,
+        interactive.executable,
+      ).spawnInteractive({ prompt: "talk" }, { cwd: dir });
+
+      for (const argv of [await headless.argv(), await resume.argv(), await interactive.argv()]) {
+        const flagIndex = argv.indexOf("--permission-mode");
+        expect(argv.slice(flagIndex, flagIndex + 2)).toEqual(["--permission-mode", claudeMode]);
+      }
+    },
+  );
+
   it("names the binary and the stages entry when the CLI is not installed", async () => {
     const result = await new ClaudeHarness(
       { sessionKind: "code-review" },
+      "auto",
       path.join(dir, "not-installed"),
     ).spawn({ prompt: "p" }, { cwd: dir }).done;
     expect(result.ok).toBe(false);

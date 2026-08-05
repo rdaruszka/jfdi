@@ -21,9 +21,11 @@ afterEach(async () => {
 describe("scaffoldJfdi", () => {
   it("creates config, board, tickets dir, prompts, sandbox, and state gitignore", async () => {
     await scaffoldJfdi(root, jfdiDir);
-    expect(JSON.parse(await fs.readFile(path.join(jfdiDir, "config.json"), "utf8"))).toEqual(
-      defaultConfig(),
+    const scaffoldedConfig = JSON.parse(
+      await fs.readFile(path.join(jfdiDir, "config.json"), "utf8"),
     );
+    expect(scaffoldedConfig).toEqual(defaultConfig());
+    expect(scaffoldedConfig.permissions).toEqual({ mode: "auto" });
     const board = parseBoard(await fs.readFile(path.join(jfdiDir, "board.md"), "utf8"));
     expect(board.columns.map((c) => c.name)).toEqual([
       "Ready",

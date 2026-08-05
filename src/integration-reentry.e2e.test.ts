@@ -22,7 +22,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { git } from "./git.js";
 import { waitFor } from "./test-helpers.js";
 
@@ -198,14 +198,54 @@ interface CoordinatorPostCondition {
   description: string;
 }
 
-function signalProcessGroup(child: ReturnType<typeof spawn>, signal: NodeJS.Signals): void {
+interface SignalableChild {
+  pid: number | undefined;
+  kill: (signal?: number | NodeJS.Signals) => boolean;
+}
+
+function signalProcessGroup(child: SignalableChild, signal: NodeJS.Signals): void {
   if (child.pid === undefined) return;
   try {
     process.kill(-child.pid, signal);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return;
+    // The detached child can exit between the liveness check and the group
+    // signal. macOS may report that race as EPERM when the process-group id is
+    // no longer ours; signal the owned child directly if it still exists.
+    if (code === "EPERM") {
+      child.kill(signal);
+      return;
+    }
+    throw error;
   }
 }
+
+describe("coordinator process-group cleanup", () => {
+  it("signals the owned child directly when macOS denies a stale process-group signal", () => {
+    const directSignals: Array<number | NodeJS.Signals | undefined> = [];
+    const child: SignalableChild = {
+      pid: 123,
+      kill: (signal) => {
+        directSignals.push(signal);
+        return true;
+      },
+    };
+    const processKill = vi.spyOn(process, "kill").mockImplementation(() => {
+      const permissionError = new Error("operation not permitted") as NodeJS.ErrnoException;
+      permissionError.code = "EPERM";
+      throw permissionError;
+    });
+
+    try {
+      signalProcessGroup(child, "SIGTERM");
+      expect(processKill).toHaveBeenCalledWith(-123, "SIGTERM");
+      expect(directSignals).toEqual(["SIGTERM"]);
+    } finally {
+      processKill.mockRestore();
+    }
+  });
+});
 
 async function stopCoordinator(
   child: ReturnType<typeof spawn>,

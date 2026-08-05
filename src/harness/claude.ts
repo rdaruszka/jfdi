@@ -2,6 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync } from "node:fs";
 import * as path from "node:path";
 import * as readline from "node:readline";
+import type { PermissionMode } from "../config.js";
 import { EXIT_COMMAND_NOT_EXECUTABLE } from "../util/exit-codes.js";
 import { parseResetTime } from "./reset-time.js";
 import { spawnFailureText } from "./spawn-failure.js";
@@ -32,6 +33,11 @@ function claudeSelectionArgs(selection: HarnessSelection): string[] {
     ...(selection.model ? ["--model", selection.model] : []),
     ...(selection.effort ? ["--effort", selection.effort] : []),
   ];
+}
+
+/** The instance-wide permission mode, as Claude Code spells it. */
+function claudePermissionArgs(permissionMode: PermissionMode): string[] {
+  return ["--permission-mode", permissionMode === "auto" ? "auto" : "bypassPermissions"];
 }
 
 /** Longest tool-input excerpt shown as a progress detail. */
@@ -237,6 +243,7 @@ export class ClaudeHarness implements Harness {
 
   constructor(
     private readonly selection: HarnessSelection,
+    private readonly permissionMode: PermissionMode,
     private readonly executable: string = "claude",
   ) {}
 
@@ -247,8 +254,7 @@ export class ClaudeHarness implements Harness {
       "--output-format",
       "stream-json",
       "--verbose",
-      "--permission-mode",
-      "bypassPermissions",
+      ...claudePermissionArgs(this.permissionMode),
       ...claudeSelectionArgs(this.selection),
     ];
     if (options.continueSessionId) args.push("--resume", options.continueSessionId);
@@ -370,6 +376,7 @@ export class ClaudeHarness implements Harness {
     // Both flags are session-scoped on the interactive CLI too, so an
     // interactive launch runs the same agent the implementation stage would.
     const args = [
+      ...claudePermissionArgs(this.permissionMode),
       ...claudeSelectionArgs(this.selection),
       ...(options.isSystemPrompt ? ["--append-system-prompt"] : []),
       promptSpec.prompt,

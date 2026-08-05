@@ -2,6 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { createWriteStream, mkdirSync } from "node:fs";
 import * as path from "node:path";
 import * as readline from "node:readline";
+import type { PermissionMode } from "../config.js";
 import { EXIT_COMMAND_NOT_EXECUTABLE } from "../util/exit-codes.js";
 import { codexCostUsd } from "./codex-pricing.js";
 import { parseResetTime } from "./reset-time.js";
@@ -47,6 +48,13 @@ function codexSelectionArgs(selection: HarnessSelection): string[] {
     ...(selection.model ? ["--model", selection.model] : []),
     ...(selection.effort ? ["-c", `model_reasoning_effort=${selection.effort}`] : []),
   ];
+}
+
+/** The instance-wide permission mode, as Codex spells it. */
+function codexPermissionArgs(permissionMode: PermissionMode): string[] {
+  return permissionMode === "auto"
+    ? ["--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=true"]
+    : ["--dangerously-bypass-approvals-and-sandbox"];
 }
 
 /**
@@ -285,6 +293,7 @@ export class CodexHarness implements Harness {
 
   constructor(
     private readonly selection: HarnessSelection,
+    private readonly permissionMode: PermissionMode,
     private readonly executable: string = "codex",
   ) {}
 
@@ -297,7 +306,7 @@ export class CodexHarness implements Harness {
           "exec",
           "resume",
           "--json",
-          "--dangerously-bypass-approvals-and-sandbox",
+          ...codexPermissionArgs(this.permissionMode),
           ...selectionArgs,
           options.continueSessionId,
           promptSpec.prompt,
@@ -305,7 +314,7 @@ export class CodexHarness implements Harness {
       : [
           "exec",
           "--json",
-          "--dangerously-bypass-approvals-and-sandbox",
+          ...codexPermissionArgs(this.permissionMode),
           ...selectionArgs,
           promptSpec.prompt,
         ];
@@ -411,7 +420,7 @@ export class CodexHarness implements Harness {
     const child = spawn(
       this.executable,
       [
-        "--dangerously-bypass-approvals-and-sandbox",
+        ...codexPermissionArgs(this.permissionMode),
         ...codexSelectionArgs(this.selection),
         promptSpec.prompt,
       ],

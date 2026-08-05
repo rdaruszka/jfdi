@@ -98,6 +98,7 @@ Use these terms exactly; introduce no synonyms. The list grows only by editing t
 - **integration** — the coordinator-owned merge → gate → land step; globally serialized. Lands one merge commit per ticket; the signed-off commit stays reachable as its second parent.
 - **coordinator** — the long-running process that watches the board and dispatches runs.
 - **harness** — the agent-session abstraction (`spawn(promptSpec, cwd) → event stream`, plus interactive launch); Claude Code and Codex are implementations.
+- **permission mode** — the instance-wide `permissions.mode` policy applied to every harness session: sandboxed autonomous `auto` by default, or opt-in `bypass`; each harness maps it to provider-native flags.
 - **worktree** — the isolated git checkout (branch `jfdi/<ticket-id>`) a run works in.
 - **resume** — a re-dispatch that deliberately continues an interrupted run's partial work: the worktree is sanitized first, and the Implementation prompt carries what the branch already holds plus the previous run's unanswered feedback. (Run-level; distinct from **continuation**, which is session-level.)
 - **continuation** — re-entering a stage's own previous agent session in a later round of the same run (`claude -p --resume` / `codex exec resume`) with a short brief, instead of starting a fresh session. Round 1 of every stage is always fresh; a forgotten session falls back to one fresh spawn.

@@ -81,7 +81,8 @@ Contracts worth knowing:
 Headless spawn:
 
 ```
-claude -p <prompt> --output-format stream-json --verbose --permission-mode bypassPermissions
+claude -p <prompt> --output-format stream-json --verbose
+       --permission-mode <auto|bypassPermissions>
        [--model <model>] [--effort <effort>]  # from the stage's selection
        [--resume <sessionId>]                 # continuation
        [--settings <cwd>/.jfdi/claude-settings.json]   # when the file exists
@@ -97,7 +98,8 @@ claude -p <prompt> --output-format stream-json --verbose --permission-mode bypas
   PostToolUse hook that formats each edited file
   ([details](../guide/prompts-and-customization.md#the-format-hook)).
 - Effort levels: `low`, `medium`, `high`, `xhigh`, `max` (`CLAUDE_EFFORT_LEVELS`).
-- Interactive: `claude [--model …] [--effort …] <prompt>`, with
+- Interactive: `claude --permission-mode <auto|bypassPermissions> [--model …]
+  [--effort …] <prompt>`, with
   `--append-system-prompt` before the prompt when `isSystemPrompt` is set.
 
 ### Codex
@@ -105,9 +107,9 @@ claude -p <prompt> --output-format stream-json --verbose --permission-mode bypas
 Headless spawn:
 
 ```
-codex exec --json --dangerously-bypass-approvals-and-sandbox \
+codex exec --json <permission-args> \
      [--model <model>] [-c model_reasoning_effort=<effort>] <prompt>
-codex exec resume --json --dangerously-bypass-approvals-and-sandbox \
+codex exec resume --json <permission-args> \
      [--model …] [-c …] <threadId> <prompt>   # continuation; flags precede the positionals
 ```
 
@@ -125,8 +127,8 @@ codex exec resume --json --dangerously-bypass-approvals-and-sandbox \
   locally: it forwards the value to the API, which answers an unknown one with a
   400 mid-session. `CODEX_EFFORT_LEVELS` (`none`, `minimal`, `low`, `medium`,
   `high`, `xhigh`, `max`) is what turns that into a config error at startup.
-- Interactive: `codex --dangerously-bypass-approvals-and-sandbox [--model …]
-  [-c …] <prompt>`; `isSystemPrompt` is ignored.
+- Interactive: `codex <permission-args> [--model …] [-c …] <prompt>`;
+  `isSystemPrompt` is ignored.
 
 Both implementations share the same shape deliberately: line-by-line stdout
 parsing mirrored to the log file, a rolling stderr tail for diagnostics when the
@@ -137,12 +139,22 @@ layer that wouldn't be.
 
 ### Permissions
 
-JFDI supplies the autonomous-operation flags (`bypassPermissions` /
-`--dangerously-bypass-approvals-and-sandbox`) itself; they are not project
-configuration, and a legacy `harnessArgs` config key is explicitly rejected.
-The safety model is the pipeline around the session — isolated worktrees, the
-gate, two reviews, serialized integration — not per-tool-call prompting, which
-would make unattended operation impossible.
+The instance-wide `permissions.mode` selects one of two unattended policies;
+the default is `auto`, while `bypass` is an explicit opt-in:
+
+| JFDI mode | Claude Code | Codex permission args |
+|---|---|---|
+| `auto` | `--permission-mode auto` | `--sandbox workspace-write -c sandbox_workspace_write.network_access=true` |
+| `bypass` | `--permission-mode bypassPermissions` | `--dangerously-bypass-approvals-and-sandbox` |
+
+Codex network access is enabled under `workspace-write` so a headless session
+can fetch and resolve packages without weakening the worktree filesystem
+boundary. JFDI deliberately does not use Codex's deprecated `--full-auto`
+compatibility path. Interactive launches use the same permission mode as
+pipeline sessions. The neutral config value is passed separately from a
+stage's harness/model/effort selection, and each harness owns its provider
+mapping; pipeline code never sees these flags. A legacy `harnessArgs` config key
+is explicitly rejected.
 
 ### The fake harness
 
@@ -209,16 +221,18 @@ verdict, no round, no sign-off — but it spawns a session, so it needs a
 selection, and `stages` is where selections live. `SessionKind` in
 [src/harness/types.ts](../../src/harness/types.ts) is the union that says so.
 
-Constructors take the selection (`new ClaudeHarness({ sessionKind, model, effort })`)
-and each implementation maps it to its own CLI's spelling; `SpawnOptions` is
-unchanged, so pipeline logic never sees a model name. An absent model or effort
-passes no flag at all. `sessionKind` rides along purely as provenance: a spawn
-that fails names the `stages` entry that selected the missing binary.
+Constructors take the selection and the separate permission mode
+(`new ClaudeHarness({ sessionKind, model, effort }, permissionMode)`), and each
+implementation maps both to its own CLI's spelling; `SpawnOptions` is unchanged,
+so pipeline logic never sees a model name or permission flag. An absent model or
+effort passes no flag at all. `sessionKind` rides along purely as provenance: a
+spawn that fails names the `stages` entry that selected the missing binary.
 
 Fixing the harness per stage is also what keeps continuations honest — a session
 id is only meaningful to the harness that minted it, and a stage always
 re-enters its own. `jfdi init` and `jfdi convo` use the `implementation` stage's
-harness, model and effort included.
+harness, model and effort included, under the same instance-wide permission
+mode as pipeline sessions.
 
 Each implementation declares the effort values its CLI accepts in a table beside
 the flag mapping it feeds; `EFFORT_LEVELS_BY_HARNESS` gathers them for
