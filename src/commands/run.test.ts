@@ -195,7 +195,7 @@ async function writeNote(id: string, frontmatter: string): Promise<void> {
 
 describe("jfdi run — blocked-by", () => {
   it("refuses a ticket whose blocker is not done, naming it and running nothing", async () => {
-    await writeNote("alpha", 'blocked-by:\n  - "[[blocker]]"');
+    await writeNote("alpha", "blocked-by: [[blocker]]");
     await writeBoard(boardWithBlocker("Ready"));
     const context = fixture.context(passingHandler());
     const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);

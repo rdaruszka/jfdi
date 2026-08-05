@@ -286,8 +286,8 @@ function toComment(heading: string, body: string): TicketComment | null {
 
 /**
  * Frontmatter as key → values, over the YAML subset Obsidian properties emit:
- * scalars, block sequences (`- item` lines), and inline `[a, b]` flow lists.
- * Keys JFDI does not know are read and ignored — humans add their own.
+ * scalars and block sequences (`- item` lines). Keys JFDI does not know are
+ * read and ignored — humans add their own.
  */
 function parseFrontmatterFields(block: string): Map<string, string[]> {
   const fields = new Map<string, string[]>();
@@ -312,12 +312,6 @@ function parseFrontmatterFields(block: string): Map<string, string[]> {
 function inlineValues(value: string): string[] {
   const trimmed = value.trim();
   if (trimmed === "") return [];
-  if (trimmed.startsWith("[") && trimmed.endsWith("]"))
-    return trimmed
-      .slice(1, -1)
-      .split(",")
-      .map(unquote)
-      .filter((entry) => entry !== "");
   return [unquote(trimmed)];
 }
 
@@ -327,7 +321,7 @@ function unquote(value: string): string {
     trimmed.length >= 2 &&
     ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
       (trimmed.startsWith("'") && trimmed.endsWith("'")));
-  return isQuoted ? trimmed.slice(1, -1).trim() : trimmed;
+  return isQuoted ? trimmed.slice(1, -1) : trimmed;
 }
 
 /**

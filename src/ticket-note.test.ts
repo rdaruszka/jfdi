@@ -153,9 +153,14 @@ describe("parseTicketNote", () => {
     expect(note.description).toBe("Just a sentence.");
   });
 
-  it("accepts inline frontmatter lists and ignores non-wikilink values", () => {
-    const note = parseTicketNote('---\nblocks: ["[[a]]", plain-text]\n---\n\n# T\n');
-    expect(note.blocks).toEqual(["a"]);
+  it("reads an unquoted inline wikilink blocker as a scalar", () => {
+    const note = parseTicketNote("---\nblocked-by: [[foo]]\n---\n\n# T\n");
+    expect(note.blockedBy).toEqual(["foo"]);
+  });
+
+  it("preserves whitespace inside quoted frontmatter values", () => {
+    const note = parseTicketNote('---\nmode: " ask "\n---\n\n# T\n');
+    expect(note.mode).toBe("default");
   });
 
   it("ignores a comment entry whose heading matches neither format", () => {
