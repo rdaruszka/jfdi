@@ -132,7 +132,7 @@ describe("CodexHarness subprocess", () => {
       { type: "item.completed", item: { type: "agent_message", text: "all done" } },
       { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 2 } },
     ]);
-    const session = new CodexHarness(TEST_SELECTION, executable).spawn(
+    const session = new CodexHarness(TEST_SELECTION, "bypass", executable).spawn(
       { prompt: "first line\nsecond line with spaces" },
       { cwd: dir },
     );
@@ -169,7 +169,7 @@ describe("CodexHarness subprocess", () => {
       { type: "item.completed", item: { type: "agent_message", text: "done" } },
     ]);
     const logPath = path.join(dir, "logs/session.jsonl");
-    const session = new CodexHarness(TEST_SELECTION, executable).spawn(
+    const session = new CodexHarness(TEST_SELECTION, "bypass", executable).spawn(
       { prompt: "first line\nsecond line with spaces" },
       { cwd: dir, logPath },
     );
@@ -179,7 +179,7 @@ describe("CodexHarness subprocess", () => {
 
   it("reports a nonzero exit", async () => {
     const executable = await stubCodex([], 2);
-    const result = await new CodexHarness(TEST_SELECTION, executable).spawn(
+    const result = await new CodexHarness(TEST_SELECTION, "bypass", executable).spawn(
       { prompt: "first line\nsecond line with spaces" },
       { cwd: dir },
     ).done;
@@ -188,10 +188,11 @@ describe("CodexHarness subprocess", () => {
   });
 
   it("reports a missing executable", async () => {
-    const result = await new CodexHarness(TEST_SELECTION, path.join(dir, "missing")).spawn(
-      { prompt: "do it" },
-      { cwd: dir },
-    ).done;
+    const result = await new CodexHarness(
+      TEST_SELECTION,
+      "bypass",
+      path.join(dir, "missing"),
+    ).spawn({ prompt: "do it" }, { cwd: dir }).done;
     expect(result.ok).toBe(false);
     expect(result.exitCode).not.toBe(0);
   });
@@ -201,7 +202,7 @@ describe("CodexHarness subprocess", () => {
       { type: "thread.started", thread_id: "thread-1" },
       { type: "item.completed", item: { type: "agent_message", text: "done" } },
     ]);
-    const result = await new CodexHarness(TEST_SELECTION, executable).spawn(
+    const result = await new CodexHarness(TEST_SELECTION, "bypass", executable).spawn(
       { prompt: "first line\nsecond line with spaces" },
       { cwd: dir },
     ).done;
@@ -214,7 +215,7 @@ describe("CodexHarness subprocess", () => {
       { type: "error", message: "Reconnecting... 2/5: stream disconnected" },
       { type: "item.completed", item: { type: "agent_message", text: "all done" } },
     ]);
-    const result = await new CodexHarness(TEST_SELECTION, executable).spawn(
+    const result = await new CodexHarness(TEST_SELECTION, "bypass", executable).spawn(
       { prompt: "first line\nsecond line with spaces" },
       { cwd: dir },
     ).done;
@@ -232,7 +233,7 @@ describe("CodexHarness subprocess", () => {
       ],
       1,
     );
-    const result = await new CodexHarness(TEST_SELECTION, executable).spawn(
+    const result = await new CodexHarness(TEST_SELECTION, "bypass", executable).spawn(
       { prompt: "first line\nsecond line with spaces" },
       { cwd: dir },
     ).done;
@@ -246,7 +247,7 @@ describe("CodexHarness subprocess", () => {
   it("calls a session that never started a thread an outage, whatever its exit code", async () => {
     // The detached-TTY regression: codex exits having emitted nothing at all.
     const executable = await stubCodex([]);
-    const result = await new CodexHarness(TEST_SELECTION, executable).spawn(
+    const result = await new CodexHarness(TEST_SELECTION, "bypass", executable).spawn(
       { prompt: "first line\nsecond line with spaces" },
       { cwd: dir },
     ).done;
@@ -267,7 +268,7 @@ describe("CodexHarness subprocess", () => {
       `echo '${JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "continued" } })}'`,
     ].join("\n");
     await fs.writeFile(script, `${body}\n`, { mode: 0o755 });
-    const result = await new CodexHarness(TEST_SELECTION, script).spawn(
+    const result = await new CodexHarness(TEST_SELECTION, "bypass", script).spawn(
       { prompt: "go on" },
       { cwd: dir, continueSessionId: "thread-7" },
     ).done;
@@ -286,9 +287,11 @@ describe("CodexHarness selection flags", () => {
   });
 
   /** Stub `codex` that records the argv it was handed, one argument per line. */
-  async function argvRecorder(): Promise<{ executable: string; argv: () => Promise<string[]> }> {
-    const argvPath = path.join(dir, "argv.txt");
-    const executable = path.join(dir, "recording-codex");
+  async function argvRecorder(
+    name = "recording-codex",
+  ): Promise<{ executable: string; argv: () => Promise<string[]> }> {
+    const argvPath = path.join(dir, `${name}.txt`);
+    const executable = path.join(dir, name);
     await fs.writeFile(
       executable,
       ["#!/bin/sh", `for arg in "$@"; do echo "$arg" >> "${argvPath}"; done`, ""].join("\n"),
@@ -304,6 +307,7 @@ describe("CodexHarness selection flags", () => {
     const recorder = await argvRecorder();
     await new CodexHarness(
       { sessionKind: "code-review", model: "gpt-5.6-sol", effort: "high" },
+      "bypass",
       recorder.executable,
     ).spawn({ prompt: "review it" }, { cwd: dir }).done;
     expect(await recorder.argv()).toEqual([
@@ -322,6 +326,7 @@ describe("CodexHarness selection flags", () => {
     const recorder = await argvRecorder();
     await new CodexHarness(
       { sessionKind: "code-review", model: "gpt-5.6-sol", effort: "low" },
+      "bypass",
       recorder.executable,
     ).spawn({ prompt: "go on" }, { cwd: dir, continueSessionId: "thread-7" }).done;
     const argv = await recorder.argv();
@@ -332,10 +337,11 @@ describe("CodexHarness selection flags", () => {
 
   it("passes no flag for a value the stage did not configure", async () => {
     const recorder = await argvRecorder();
-    await new CodexHarness({ sessionKind: "qa", effort: "medium" }, recorder.executable).spawn(
-      { prompt: "p" },
-      { cwd: dir },
-    ).done;
+    await new CodexHarness(
+      { sessionKind: "qa", effort: "medium" },
+      "bypass",
+      recorder.executable,
+    ).spawn({ prompt: "p" }, { cwd: dir }).done;
     const argv = await recorder.argv();
     expect(argv).not.toContain("--model");
     expect(argv).toContain("model_reasoning_effort=medium");
@@ -345,6 +351,7 @@ describe("CodexHarness selection flags", () => {
     const recorder = await argvRecorder();
     await new CodexHarness(
       { sessionKind: "implementation", model: "gpt-5.6-sol", effort: "high" },
+      "bypass",
       recorder.executable,
     ).spawnInteractive({ prompt: "brief" }, { cwd: dir });
     expect(await recorder.argv()).toEqual([
@@ -357,9 +364,56 @@ describe("CodexHarness selection flags", () => {
     ]);
   });
 
+  it.each([
+    {
+      permissionMode: "auto" as const,
+      codexArgs: [
+        "--sandbox",
+        "workspace-write",
+        "-c",
+        "sandbox_workspace_write.network_access=true",
+      ],
+    },
+    {
+      permissionMode: "bypass" as const,
+      codexArgs: ["--dangerously-bypass-approvals-and-sandbox"],
+    },
+  ])(
+    "maps $permissionMode permissions across exec, exec resume, and interactive launches",
+    async ({ permissionMode, codexArgs }) => {
+      const headless = await argvRecorder(`${permissionMode}-headless`);
+      await new CodexHarness(TEST_SELECTION, permissionMode, headless.executable).spawn(
+        { prompt: "start" },
+        { cwd: dir },
+      ).done;
+      const resume = await argvRecorder(`${permissionMode}-resume`);
+      await new CodexHarness(TEST_SELECTION, permissionMode, resume.executable).spawn(
+        { prompt: "continue" },
+        { cwd: dir, continueSessionId: "thread-4" },
+      ).done;
+      const interactive = await argvRecorder(`${permissionMode}-interactive`);
+      await new CodexHarness(
+        TEST_SELECTION,
+        permissionMode,
+        interactive.executable,
+      ).spawnInteractive({ prompt: "talk" }, { cwd: dir });
+
+      for (const argv of [await headless.argv(), await resume.argv(), await interactive.argv()]) {
+        expect(argv).toEqual(expect.arrayContaining(codexArgs));
+        expect(argv).not.toContain("--full-auto");
+        if (permissionMode === "auto") {
+          expect(argv).not.toContain("--dangerously-bypass-approvals-and-sandbox");
+        } else {
+          expect(argv).not.toContain("--sandbox");
+        }
+      }
+    },
+  );
+
   it("names the binary and the stages entry when the CLI is not installed", async () => {
     const result = await new CodexHarness(
       { sessionKind: "code-review" },
+      "auto",
       path.join(dir, "not-installed"),
     ).spawn({ prompt: "p" }, { cwd: dir }).done;
     expect(result.ok).toBe(false);

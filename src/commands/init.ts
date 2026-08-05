@@ -30,6 +30,7 @@ export async function initCommand(options: { isBare?: boolean } = {}): Promise<n
   const exitCode = await createHarness(
     "implementation",
     config.stages.implementation,
+    config.permissions.mode,
   ).spawnInteractive({ prompt }, { cwd: root });
   if (exitCode !== 0)
     console.error("scaffold is in place — fill in .jfdi/config.json's gate by hand");

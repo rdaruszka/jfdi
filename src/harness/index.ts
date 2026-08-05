@@ -1,4 +1,4 @@
-import type { JfdiConfig, SessionConfig } from "../config.js";
+import type { JfdiConfig, PermissionMode, SessionConfig } from "../config.js";
 import { CLAUDE_EFFORT_LEVELS, ClaudeHarness } from "./claude.js";
 import { CODEX_EFFORT_LEVELS, CodexHarness } from "./codex.js";
 import type { Harness, HarnessName, SessionKind } from "./types.js";
@@ -19,14 +19,18 @@ export const EFFORT_LEVELS_BY_HARNESS: Record<HarnessName, readonly string[]> = 
   codex: CODEX_EFFORT_LEVELS,
 };
 
-/** Build the harness one `stages` entry asks for. */
-export function createHarness(sessionKind: SessionKind, entry: SessionConfig): Harness {
+/** Build the harness one `stages` entry asks for under the global permission mode. */
+export function createHarness(
+  sessionKind: SessionKind,
+  entry: SessionConfig,
+  permissionMode: PermissionMode,
+): Harness {
   const selection = { sessionKind, model: entry.model, effort: entry.effort };
   switch (entry.harness) {
     case "claude":
-      return new ClaudeHarness(selection);
+      return new ClaudeHarness(selection, permissionMode);
     case "codex":
-      return new CodexHarness(selection);
+      return new CodexHarness(selection, permissionMode);
   }
 }
 
@@ -40,11 +44,16 @@ export type SessionHarnesses = Record<SessionKind, Harness>;
  * re-enters its own.
  */
 export function createSessionHarnesses(config: JfdiConfig): SessionHarnesses {
+  const permissionMode = config.permissions.mode;
   return {
-    implementation: createHarness("implementation", config.stages.implementation),
-    "code-review": createHarness("code-review", config.stages["code-review"]),
-    qa: createHarness("qa", config.stages.qa),
-    integration: createHarness("integration", config.stages.integration),
-    "commit-message": createHarness("commit-message", config.stages["commit-message"]),
+    implementation: createHarness("implementation", config.stages.implementation, permissionMode),
+    "code-review": createHarness("code-review", config.stages["code-review"], permissionMode),
+    qa: createHarness("qa", config.stages.qa, permissionMode),
+    integration: createHarness("integration", config.stages.integration, permissionMode),
+    "commit-message": createHarness(
+      "commit-message",
+      config.stages["commit-message"],
+      permissionMode,
+    ),
   };
 }

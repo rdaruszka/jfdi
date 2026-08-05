@@ -15,9 +15,10 @@ export async function convoCommand(): Promise<number> {
   const prompt = await loadPrompt(jfdiDir, "convo");
   // With no global harness left, an interactive session takes the
   // implementation stage's — the closest analogue to "the agent that writes
-  // code here" — model and effort included.
-  return createHarness("implementation", config.stages.implementation).spawnInteractive(
-    { prompt },
-    { cwd: root, isSystemPrompt: true },
-  );
+  // code here" — model and effort included, under the global permission mode.
+  return createHarness(
+    "implementation",
+    config.stages.implementation,
+    config.permissions.mode,
+  ).spawnInteractive({ prompt }, { cwd: root, isSystemPrompt: true });
 }

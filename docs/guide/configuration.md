@@ -30,6 +30,7 @@ init fills in for your repo):
   ],
   "pipeline": { "max_rounds": 3 },
   "integration": { "target_branch": "main", "mode": "on-approval" },
+  "permissions": { "mode": "auto" },
   "max_concurrent": 2,
   "stages": {
     "implementation": { "harness": "claude", "model": "claude-opus-4-8", "effort": "high" },
@@ -107,6 +108,28 @@ per round; rounds count trips through the review stages.
 `auto` merges a passing pipeline immediately; `on-approval` parks it in Ready to
 Merge for your sign-off. See [Integration & Merging](integration.md).
 
+### `permissions`
+
+| Field | Type | Default | Values |
+|---|---|---|---|
+| `permissions.mode` | string | `auto` | `"auto"` or `"bypass"` |
+
+The **permission mode** is one instance-wide policy for every headless,
+continued, and interactive agent session. `auto` is the safer default for
+unattended work; `bypass` is an opt-in for hosts whose isolation is managed
+outside JFDI.
+
+| JFDI mode | Claude Code | Codex |
+|---|---|---|
+| `auto` | `--permission-mode auto` | `--sandbox workspace-write -c sandbox_workspace_write.network_access=true` |
+| `bypass` | `--permission-mode bypassPermissions` | `--dangerously-bypass-approvals-and-sandbox` |
+
+Codex's `workspace-write` sandbox keeps filesystem writes inside the worktree.
+Network access is normally off in that sandbox, so JFDI enables it to keep
+unattended sessions able to fetch and resolve packages. JFDI does not use the
+deprecated `--full-auto` compatibility flag. Claude Code's `auto` mode needs no
+separate network setting.
+
 ### `max_concurrent`
 
 | Type | Default | Constraint |
@@ -167,9 +190,10 @@ event, so `jfdi logs` answers "which model produced this" after the fact.
 Whichever harness `implementation` names also runs the interactive commands —
 `jfdi init` and `jfdi convo` — with that stage's model and effort.
 
-Both selected CLIs must be on your `PATH`. Beyond model and effort,
-provider-specific flags are supplied by JFDI itself and are not configurable; a
-legacy `harnessArgs` key is rejected with an explicit error.
+Both selected CLIs must be on your `PATH`. Beyond model, effort, and the
+provider-neutral permission mode, provider-specific flags are supplied by JFDI
+itself and are not configurable; a legacy `harnessArgs` key is rejected with an
+explicit error.
 
 > **Upgrading:** `stages` replaced a single top-level `harness` key, and there
 > is no migration. A config still carrying `harness`, missing `stages`, or

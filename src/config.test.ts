@@ -25,10 +25,12 @@ describe("parseConfig", () => {
       ],
       pipeline: { max_rounds: 3 },
       integration: { target_branch: "develop", mode: "auto" },
+      permissions: { mode: "bypass" },
       max_concurrent: 4,
       stages: STAGES,
     });
     expect(config.integration).toEqual({ target_branch: "develop", mode: "auto" });
+    expect(config.permissions).toEqual({ mode: "bypass" });
     expect(config.gate).toHaveLength(2);
     expect(config.max_concurrent).toBe(4);
     expect(config.board.columns.blocked).toBe("Blocked");
@@ -37,6 +39,19 @@ describe("parseConfig", () => {
   it("rejects a bad integration mode", () => {
     expect(() => parseConfig({ integration: { mode: "yolo" }, stages: STAGES })).toThrow(
       ConfigError,
+    );
+  });
+
+  it("defaults, accepts, and validates the global permission mode", () => {
+    expect(parseConfig({ stages: STAGES }).permissions).toEqual({ mode: "auto" });
+    expect(parseConfig({ permissions: { mode: "auto" }, stages: STAGES }).permissions).toEqual({
+      mode: "auto",
+    });
+    expect(parseConfig({ permissions: { mode: "bypass" }, stages: STAGES }).permissions).toEqual({
+      mode: "bypass",
+    });
+    expect(() => parseConfig({ permissions: { mode: "manual" }, stages: STAGES })).toThrowError(
+      new ConfigError('permissions.mode must be "auto" or "bypass", got "manual"'),
     );
   });
 

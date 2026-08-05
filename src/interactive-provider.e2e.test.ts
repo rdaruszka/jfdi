@@ -108,7 +108,13 @@ describe("interactive provider selection", () => {
 
       const trace = await readTrace(sandbox.tracePath);
       expect(trace.executable).toBe("codex");
-      expect(trace.args[0]).toBe("--dangerously-bypass-approvals-and-sandbox");
+      expect(trace.args.slice(0, 4)).toEqual([
+        "--sandbox",
+        "workspace-write",
+        "-c",
+        "sandbox_workspace_write.network_access=true",
+      ]);
+      expect(trace.args).not.toContain("--full-auto");
       expect(trace.args.at(-1)).toContain(
         command === "init"
           ? "You are bootstrapping **JFDI**"
@@ -126,7 +132,10 @@ describe("interactive provider selection", () => {
 
     const trace = await readTrace(sandbox.tracePath);
     expect(trace.args).toEqual([
-      "--dangerously-bypass-approvals-and-sandbox",
+      "--sandbox",
+      "workspace-write",
+      "-c",
+      "sandbox_workspace_write.network_access=true",
       "--model",
       "gpt-5.6-sol",
       "-c",
@@ -142,7 +151,14 @@ describe("interactive provider selection", () => {
     const trace = await readTrace(sandbox.tracePath);
     expect(trace.executable).toBe("claude");
     const { model, effort } = defaultConfig().stages.implementation;
-    expect(trace.args.slice(0, 4)).toEqual(["--model", model, "--effort", effort]);
+    expect(trace.args.slice(0, 6)).toEqual([
+      "--permission-mode",
+      "auto",
+      "--model",
+      model,
+      "--effort",
+      effort,
+    ]);
     expect(trace.args.at(-1)).toContain("You are bootstrapping **JFDI**");
     expect(trace.cwd).toBe(sandbox.project);
   });
