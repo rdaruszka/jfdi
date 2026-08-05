@@ -31,10 +31,7 @@ export async function logsCommand(ticketId: string): Promise<number> {
     let files: string[] = [];
     try {
       const rounds = await fs.readdir(dir, { recursive: true });
-      files = rounds
-        .filter((f) => String(f).endsWith(".log.jsonl"))
-        .map(String)
-        .sort();
+      files = rounds.filter((entry) => entry.endsWith(".log.jsonl")).sort();
     } catch {
       // This run has no such directory (e.g. no integration ever ran); the
       // remaining directories may still have logs, so keep going.
