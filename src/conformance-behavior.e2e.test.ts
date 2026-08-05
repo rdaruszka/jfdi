@@ -72,6 +72,8 @@ if (match) {
     verdict = { status: "done", summary: "implemented", decisions: ["chose A"], observations: ["stray TODO in foo.ts"], testsAdded: "unit tests" };
   } else if (stage === "integration") {
     verdict = { resolution: "clean" };
+  } else if (stage === "code-review" && mode === "review-fail-observed") {
+    verdict = { verdict: "fail", feedback: "needs work", observations: ["reviewer-flagged: unchecked auth on the legacy endpoint"] };
   } else if (stage === "code-review" && mode === "review-fail") {
     verdict = { verdict: "fail", feedback: "needs work" };
   } else {
@@ -576,6 +578,36 @@ describe("pipeline behavior", () => {
       expect(note).toContain(
         "> JFDI run exhausted its 3 rounds — moving to Blocked for human review",
       );
+    },
+    PIPELINE_TIMEOUT_MS,
+  );
+
+  it(
+    "surfaces an observation carried by a failing code-review verdict, even when the run blocks",
+    async () => {
+      const sandbox = await makeSandbox();
+      await initProject(sandbox);
+
+      // Every round's code review fails (blocking the run at max_rounds) and
+      // carries its own observation in the same verdict. The observation
+      // channel's contract says every proposal reaches a human via the inbox,
+      // so the reviewer's flag must land there despite the failing outcome —
+      // the drop this ticket fixes.
+      const run = await runCli(sandbox, ["run", "Add a greeting"], {
+        stubMode: "review-fail-observed",
+      });
+      expect(run.code).toBe(2);
+
+      const board = await fs.readFile(path.join(sandbox.project, ".jfdi", "board.md"), "utf8");
+      const ticketId = ticketIdOf(run);
+      // The failing reviewer's own flag reached the inbox…
+      expect(board).toContain(
+        `reviewer-flagged: unchecked auth on the legacy endpoint *(from ${ticketId})*`,
+      );
+      // …and it is proposed once, not once per failed round, despite being
+      // re-reported across all three rounds (within-run deduplication).
+      const inbox = board.slice(board.indexOf("## Inbox"));
+      expect(inbox.match(/reviewer-flagged: unchecked auth/g)).toHaveLength(1);
     },
     PIPELINE_TIMEOUT_MS,
   );
