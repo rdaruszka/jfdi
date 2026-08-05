@@ -160,9 +160,27 @@ describe("jfdi run — board card", () => {
   it("runs boardless when there is no board file", async () => {
     fixture.config.integration.mode = "on-approval";
 
-    expect(await runTicketInline(fixture.context(passingHandler()), CARD)).toBe(0);
+    const logs = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const handler = async (spec: { prompt: string }, options: { cwd: string }) => {
+      const stage = sessionKindOf(spec.prompt);
+      if (stage === "implementation") {
+        await commitFile(options.cwd, "alpha.txt", "alpha\n", "implement alpha");
+        await writeVerdict(spec.prompt, {
+          status: "done",
+          summary: "built alpha",
+          observations: ["The legacy executable has no owner"],
+        });
+      } else {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    };
+
+    expect(await runTicketInline(fixture.context(handler), CARD)).toBe(0);
 
     await expect(fs.access(boardPath())).rejects.toThrow();
+    expect(logs.mock.calls.flat().join("\n")).toContain("The legacy executable has no owner");
+    logs.mockRestore();
   });
 });
 

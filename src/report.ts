@@ -63,15 +63,16 @@ export async function loadReport(stateDir: string, ticketId: string): Promise<Ru
  * propose, humans promote. Stage agents never touch the board themselves; this
  * runs coordinator-side through the same atomic-write path as card moves.
  * Duplicate proposals (retries, re-dispatches) are dropped by addCardIfAbsent.
+ * Returns false only when non-empty observations have no board to receive them.
  */
 export async function recordObservations(
   context: PipelineContext,
   ticketId: string,
   observations: string[],
-): Promise<void> {
-  if (observations.length === 0) return;
+): Promise<boolean> {
+  if (observations.length === 0) return true;
   const boardPath = path.join(context.repoRoot, context.config.board.path);
-  if (!(await fileExists(boardPath))) return;
+  if (!(await fileExists(boardPath))) return false;
   for (const observation of observations) {
     const added = await addCardIfAbsent(
       boardPath,
@@ -80,6 +81,7 @@ export async function recordObservations(
     );
     if (added) context.log.emit("observation", ticketId, { text: observation });
   }
+  return true;
 }
 
 /**

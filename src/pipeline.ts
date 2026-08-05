@@ -109,8 +109,8 @@ export interface RunReport {
 
 export type PipelineOutcome =
   | { status: "passed"; worktree: Worktree; report: RunReport }
-  | { status: "blocked"; reason: string }
-  | { status: "failed"; reason: string };
+  | { status: "blocked"; reason: string; observations: string[] }
+  | { status: "failed"; reason: string; observations: string[] };
 
 /** One line of live session activity, trimmed to stay readable in the TUI. */
 const MAX_ACTIVITY_CHARS = 120;
@@ -715,7 +715,7 @@ async function buildQaContinuation(
 type ImplementationStep =
   | { kind: "done"; summary: string | undefined; decisions: string[]; observations: string[] }
   | { kind: "retry"; feedback: string }
-  | { kind: "escalate"; question: string; recommendation: string };
+  | { kind: "escalate"; question: string; recommendation: string; observations: string[] };
 
 interface ImplementationStageInput {
   roundDir: string;
@@ -800,6 +800,7 @@ async function runImplementationStage(
       kind: "escalate",
       question: verdict.question ?? "Escalated without a stated question.",
       recommendation: verdict.recommendation ?? "(no recommendation given)",
+      observations: verdict.observations ?? [],
     });
   }
   return staged({
@@ -812,7 +813,7 @@ async function runImplementationStage(
 
 type CodeReviewStep =
   | { kind: "pass"; decisions: string[]; observations: string[] }
-  | { kind: "retry"; feedback: string };
+  | { kind: "retry"; feedback: string; observations: string[] };
 
 interface CodeReviewStageInput {
   roundDir: string;
@@ -891,7 +892,10 @@ async function runCodeReviewStage(
       routing: retryRouting(input.round, context.config.pipeline.max_rounds),
       detail: feedback,
     });
-    return { sessionId: outcome.sessionId, step: { kind: "retry", feedback } };
+    return {
+      sessionId: outcome.sessionId,
+      step: { kind: "retry", feedback, observations: verdict?.observations ?? [] },
+    };
   }
   const decisions = await recordDecisions(
     input.notePath,
@@ -1094,16 +1098,19 @@ async function runImplementationGateCycle(
         handoff: implementationHandoff(implementation.step, round, maxRounds, implementation.usage),
         preSessionHead: implementation.preSessionHead,
       })) ?? lastHandoffCommit;
+    if (implementation.step.kind === "done") {
+      decisions.push(...implementation.step.decisions);
+      observations.push(...implementation.step.observations);
+      summary = implementation.step.summary ?? summary;
+    } else if (implementation.step.kind === "escalate") {
+      observations.push(...implementation.step.observations);
+    }
     const exitStep = await implementationExitStep(context, ticket, notePath, implementation.step);
     if (exitStep) return { kind: "exit", ...collected(), step: exitStep };
     if (implementation.step.kind !== "done")
       throw new Error(
         `implementation step "${implementation.step.kind}" escaped implementationExitStep — only "done" may reach the gate`,
       );
-    decisions.push(...implementation.step.decisions);
-    observations.push(...implementation.step.observations);
-    summary = implementation.step.summary ?? summary;
-
     const gate = await runGateStage(context, ticket, worktree);
     if (gate.ok) {
       // The sign-offs bind to the pipeline's own handoff commit; only a cycle
@@ -1154,6 +1161,7 @@ async function runRound(
     previousFailure,
   });
   memory["code-review"] = { sessionId: review.sessionId, lastSeenCommit: headCommit };
+  observations.push(...review.step.observations);
   if (review.step.kind === "retry") {
     const { feedback } = review.step;
     return {
@@ -1165,7 +1173,6 @@ async function runRound(
     };
   }
   decisions.push(...review.step.decisions);
-  observations.push(...review.step.observations);
 
   const qa = await runQaPhase(context, ticket, worktree, {
     roundDir,
@@ -1237,12 +1244,12 @@ async function runQaPhase(
     sessionId: qa.outcome.sessionId,
     lastSeenCommit: qaCommit ?? input.headCommit,
   };
-  if (step.kind !== "passed") return { step, decisions: [], observations: [], memory };
-
   const collected = {
     decisions: qa.verdict?.decisions ?? [],
     observations: qa.verdict?.observations ?? [],
   };
+  if (step.kind !== "passed") return { step, ...collected, memory };
+
   if (qaCommit === null) return { step, ...collected, memory };
   const postQaGate = await runGateStage(context, ticket, worktree);
   if (postQaGate.ok) return { step, ...collected, memory };
@@ -1422,7 +1429,7 @@ export async function runPipeline(
   const priorHistory = runDirs.previous ? await loadFeedbackHistory(runDirs.previous) : [];
   const history: FeedbackItem[] = [];
   const allDecisions: string[] = [];
-  const allObservations: string[] = [];
+  const allObservations = new Set<string>();
   let summary = "";
   let memory: SessionMemory = {};
   const maxRounds = context.config.pipeline.max_rounds;
@@ -1445,7 +1452,7 @@ export async function runPipeline(
     });
     memory = result.memory;
     allDecisions.push(...result.decisions);
-    allObservations.push(...result.observations);
+    for (const observation of result.observations) allObservations.add(observation);
     summary = result.summary ?? summary;
 
     if (result.step.kind === "retry") {
@@ -1463,7 +1470,11 @@ export async function runPipeline(
       // but stopped on a question instead of answering it. So the inherited
       // items stay unanswered business too and are carried forward.
       await saveFeedbackHistory(runDirs.current, [...priorHistory, ...history]);
-      return { status: "blocked", reason: result.step.reason };
+      return {
+        status: "blocked",
+        reason: result.step.reason,
+        observations: [...allObservations],
+      };
     }
 
     // The run finished: earlier rounds' feedback was addressed, so it is no
@@ -1476,7 +1487,7 @@ export async function runPipeline(
       report: {
         summary,
         decisions: allDecisions,
-        observations: allObservations,
+        observations: [...allObservations],
         testsAdded: result.step.testsAdded,
         rounds: round,
         commit: finalCommit,
@@ -1486,7 +1497,7 @@ export async function runPipeline(
     };
   }
 
-  return recordRoundsExhausted(context, ticket, notePath, history, maxRounds);
+  return recordRoundsExhausted(context, ticket, notePath, history, maxRounds, [...allObservations]);
 }
 
 /** Rounds exhausted → Blocked, with the accumulated round history in the note. */
@@ -1496,6 +1507,7 @@ async function recordRoundsExhausted(
   notePath: string,
   history: FeedbackItem[],
   maxRounds: number,
+  observations: string[],
 ): Promise<PipelineOutcome> {
   const historyMarkdown = history
     .map((h) => `- **round ${h.round} (${h.source}):** ${h.feedback.split("\n")[0]}`)
@@ -1520,5 +1532,9 @@ async function recordRoundsExhausted(
     ].join("\n"),
   );
   context.log.emit("blocked", ticket.id, { reason: `retries exhausted after ${maxRounds} rounds` });
-  return { status: "blocked", reason: `retries exhausted after ${maxRounds} rounds` };
+  return {
+    status: "blocked",
+    reason: `retries exhausted after ${maxRounds} rounds`,
+    observations,
+  };
 }

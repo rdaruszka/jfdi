@@ -146,17 +146,21 @@ sequenceDiagram
         P->>A: Code Review (gates QA)
         P->>A: QA (sandbox + regression tests)
     end
-    P-->>C: passed (report: commit, decisions, observations)
+    P-->>C: outcome (observations from every valid verdict)
     C->>H: observations → Inbox cards
-    alt on-approval
-        C->>C: card → Ready to Merge
-        H->>C: jfdi merge / drag card / hand-merge
+    alt blocked / failed
+        C->>C: card → Blocked
+    else passed
+        opt on-approval
+            C->>C: card → Ready to Merge
+            H->>C: jfdi merge / drag card / hand-merge
+        end
+        C->>I: enqueue (serialized)
+        I->>I: merge target in → resolve → gate → (re-QA?)
+        I->>G: land merge commit
+        I-->>C: merged
+        C->>C: card → Done ✓, worktree removed, branch deleted
     end
-    C->>I: enqueue (serialized)
-    I->>I: merge target in → resolve → gate → (re-QA?)
-    I->>G: land merge commit
-    I-->>C: merged
-    C->>C: card → Done ✓, worktree removed, branch deleted
 ```
 
 ## Hard invariants

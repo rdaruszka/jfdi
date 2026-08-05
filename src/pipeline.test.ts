@@ -167,6 +167,73 @@ describe("runPipeline", () => {
     if (outcome.status === "passed") expect(outcome.report.rounds).toBe(2);
   });
 
+  it("keeps an implementation observation when that verdict escalates", async () => {
+    const context = fixture.context(async (spec) => {
+      await writeVerdict(spec.prompt, {
+        status: "escalate",
+        question: "Which parser should own this format?",
+        recommendation: "Use the new parser",
+        observations: ["The legacy parser accepts unbounded input"],
+      });
+      return { ok: true, text: "" };
+    });
+
+    const ticket = await resolveTicket("Escalate with context", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+
+    expect(outcome.status).toBe("blocked");
+    if (outcome.status === "blocked") {
+      expect(outcome.observations).toEqual(["The legacy parser accepts unbounded input"]);
+    }
+  });
+
+  it("keeps a failing QA observation and deduplicates observations within the run", async () => {
+    let implementationAttempts = 0;
+    let qaAttempts = 0;
+    const context = fixture.context(async (spec, options) => {
+      const stage = sessionKindOf(spec.prompt);
+      if (stage === "implementation") {
+        implementationAttempts += 1;
+        await commitFile(
+          options.cwd,
+          "impl.txt",
+          `attempt ${implementationAttempts}\n`,
+          "implement",
+        );
+        await writeVerdict(spec.prompt, {
+          status: "done",
+          observations: ["The adjacent command has no timeout"],
+        });
+      } else if (stage === "code-review") {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      } else {
+        qaAttempts += 1;
+        await writeVerdict(
+          spec.prompt,
+          qaAttempts === 1
+            ? {
+                verdict: "fail",
+                feedback: "the acceptance behavior is wrong",
+                observations: ["The old fixture contains a plaintext token placeholder"],
+              }
+            : { verdict: "pass" },
+        );
+      }
+      return { ok: true, text: "" };
+    });
+
+    const ticket = await resolveTicket("Retry QA observations", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+
+    expect(outcome.status).toBe("passed");
+    if (outcome.status === "passed") {
+      expect(outcome.report.observations).toEqual([
+        "The adjacent command has no timeout",
+        "The old fixture contains a plaintext token placeholder",
+      ]);
+    }
+  });
+
   // The failure tail sits past 4_100 chars, beyond every removed cap
   // (2_000/1_000/500). Asserting the tail survives into the retry prompt is
   // what the removal buys — and it must be checked *after* the run, on
