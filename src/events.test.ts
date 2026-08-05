@@ -214,6 +214,23 @@ describe("EventLog", () => {
     expect(log.snapshot().tickets.t1?.status).toBe("done");
   });
 
+  it("steps past an oversized line written outside JFDI", async () => {
+    const log = new EventLog(dir, false);
+    await log.followFromEnd();
+    const oversizedLine = "x".repeat(1_048_576);
+    const event = JSON.stringify({
+      ts: "2020-01-01T00:00:00.000Z",
+      type: "dispatch",
+      ticketId: "t1",
+    });
+    await fs.writeFile(path.join(dir, "events.jsonl"), `${oversizedLine}\n${event}\n`, "utf8");
+
+    expect(await log.pullForeignEvents()).toEqual([]);
+    expect((await log.pullForeignEvents()).map((foreignEvent) => foreignEvent.type)).toEqual([
+      "dispatch",
+    ]);
+  });
+
   it("leaves a half-written trailing line for the next pull", async () => {
     const log = new EventLog(dir, false);
     await log.followFromEnd();

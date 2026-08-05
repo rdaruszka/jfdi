@@ -563,9 +563,9 @@ async function readAppendedLines(
     const text = buffer.subarray(0, bytesRead).toString("utf8");
     const lastBreak = text.lastIndexOf("\n");
     if (lastBreak === -1) {
-      // No line end in a full chunk means one line longer than the chunk — an
-      // event carrying a whole gate transcript, say. Step over it rather than
-      // stall on it forever; its remainder surfaces as an unreadable line.
+      // A hand edit or external writer can leave a line at least as long as a
+      // full chunk. Step over it so the tail advances instead of retrying the
+      // same bytes forever; any remainder surfaces as an unreadable line.
       const isChunkFull = buffer.length === MAX_TAIL_READ_BYTES;
       return {
         lines: [],
