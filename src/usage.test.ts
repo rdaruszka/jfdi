@@ -64,6 +64,25 @@ describe("codexCostUsd", () => {
     ).toBeNull();
   });
 
+  it("uses the configured model spelling verbatim", () => {
+    expect(
+      codexCostUsd("GPT-5.6-TERRA", {
+        inputTokens: 1_000_000,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+      }),
+    ).toBeNull();
+  });
+
+  it("does not silently clamp cached input that exceeds total input", () => {
+    const cost = codexCostUsd("gpt-5.6-terra", {
+      inputTokens: 100_000,
+      cachedInputTokens: 200_000,
+      outputTokens: 0,
+    });
+    expect(cost).toBeCloseTo(-0.16, 6);
+  });
+
   it("does not double-bill reasoning: the priced output is the output count, reasoning excluded", () => {
     // Decision (logged on the ticket): Codex's output_tokens already includes
     // reasoning tokens, so cost depends on output alone. Two sessions with the

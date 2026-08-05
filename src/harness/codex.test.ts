@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CODEX_EFFORT_LEVELS, CodexHarness, classifyCodexFailure, mapCodexLine } from "./codex.js";
-import type { HarnessEvent, HarnessSelection } from "./types.js";
+import type { HarnessEvent, HarnessResult, HarnessSelection } from "./types.js";
 
 /** 2026-08-03 09:30 local. */
 const NOW = new Date(2026, 7, 3, 9, 30).getTime();
@@ -431,5 +431,103 @@ describe("CodexHarness selection flags", () => {
       "xhigh",
       "max",
     ]);
+  });
+});
+
+// End-to-end coverage of the pricing fix: `selection.model` is the single string
+// handed to `--model` (what the CLI accepts) AND used to look up the price table.
+// These drive a real codex subprocess and assert both facts at once — the CLI got
+// the exact spelling (the stub refuses any other) and the price came from that same
+// spelling. Re-introducing `.toLowerCase()` or the `Math.max(0, …)` clamp fails one.
+describe("CodexHarness prices from the configured model spelling verbatim", () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-codex-pricing-")));
+  });
+  afterEach(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  /**
+   * Stub `codex` that runs only when `--model <expectedModel>` reached it verbatim
+   * (exit 95 otherwise, which fails the session), then reports `usage` on
+   * `turn.completed`. The agent message makes the session a success so the harness
+   * prices it. Because the harness derives both `--model` and the price lookup from
+   * the one `selection.model`, the spelling this stub accepts is the spelling priced.
+   */
+  async function stubPricingCodex(
+    name: string,
+    expectedModel: string,
+    usage: object,
+  ): Promise<string> {
+    const script = path.join(dir, name);
+    const body = [
+      "#!/bin/sh",
+      '[ "$1" = "exec" ] || exit 91',
+      '[ "$2" = "--json" ] || exit 92',
+      '[ "$3" = "--dangerously-bypass-approvals-and-sandbox" ] || exit 93',
+      '[ "$4" = "--model" ] || exit 94',
+      `[ "$5" = "${expectedModel}" ] || exit 95`,
+      '[ "$6" = "do the work" ] || exit 96',
+      `echo '${JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "done" } })}'`,
+      `echo '${JSON.stringify({ type: "turn.completed", usage })}'`,
+      "exit 0",
+    ].join("\n");
+    await fs.writeFile(script, `${body}\n`, { mode: 0o755 });
+    return script;
+  }
+
+  function priceRun(model: string, executable: string): Promise<HarnessResult> {
+    return new CodexHarness({ sessionKind: "implementation", model }, "bypass", executable).spawn(
+      { prompt: "do the work" },
+      { cwd: dir },
+    ).done;
+  }
+
+  it("prices a table model, proving the CLI model and the priced model are one string", async () => {
+    const executable = await stubPricingCodex("priced", "gpt-5.6-terra", {
+      input_tokens: 1_000_000,
+      cached_input_tokens: 200_000,
+      output_tokens: 500_000,
+    });
+    const result = await priceRun("gpt-5.6-terra", executable);
+    // ok:true means the stub's `--model gpt-5.6-terra` guard passed → the CLI got
+    // the verbatim spelling. terra: 800K×$2 + 200K×$0.20 + 500K×$12 per 1M.
+    expect(result.ok).toBe(true);
+    expect(result.usage?.costUsd).toBeCloseTo(1.6 + 0.04 + 6.0, 6);
+    expect(result.usage?.isCostEstimated).toBe(true);
+  });
+
+  it("leaves a mixed-case model unpriced instead of lowercasing it into the table", async () => {
+    // The CLI is handed "GPT-5.6-Terra" verbatim (the stub guard enforces it), yet
+    // the table — keyed on the exact lowercase spelling the CLI accepts — has no
+    // such row, so the cost stays unknown. The lookup must not widen the table's
+    // vocabulary past what the CLI itself would take.
+    const executable = await stubPricingCodex("mixedcase", "GPT-5.6-Terra", {
+      input_tokens: 1_000_000,
+      cached_input_tokens: 0,
+      output_tokens: 0,
+    });
+    const result = await priceRun("GPT-5.6-Terra", executable);
+    expect(result.ok).toBe(true);
+    expect(result.usage?.costUsd).toBeNull();
+    // Tokens are still recorded; only the dollar figure is withheld.
+    expect(result.usage?.inputTokens).toBe(1_000_000);
+    expect(result.usage?.isCostEstimated).toBeUndefined();
+  });
+
+  it("lets cached input exceeding total input surface as a negative cost, unclamped", async () => {
+    // These provider counts break the documented subset invariant. Without the old
+    // `Math.max(0, …)` clamp the figure goes negative — a visibly wrong number that
+    // exposes the broken boundary data instead of a plausible clamped one that hides
+    // it. terra: (100K−200K)×$2/M input = −0.2, +200K×$0.20/M cached = +0.04 → −0.16.
+    const executable = await stubPricingCodex("overcached", "gpt-5.6-terra", {
+      input_tokens: 100_000,
+      cached_input_tokens: 200_000,
+      output_tokens: 0,
+    });
+    const result = await priceRun("gpt-5.6-terra", executable);
+    expect(result.usage?.costUsd).toBeCloseTo(-0.16, 6);
+    expect(result.usage?.costUsd).toBeLessThan(0);
   });
 });
