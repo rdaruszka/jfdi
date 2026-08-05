@@ -292,6 +292,13 @@ fix sessions per round. A round is spent when the work moves to other agents (or
 when the gate is still red after those fixes), so a hard-to-green gate cannot
 silently eat the whole round budget one compile error at a time.
 
+Every gate attempt writes its complete combined output to a numbered `gate-*.log`
+file in the run directory before JFDI excerpts it for prompt context. Failure
+feedback names that file and quotes a 20,000-character head-and-tail excerpt, so
+the first causal diagnostic and the final summary remain visible without spending
+the prompt budget on the full transcript. Red attempts remain on disk when a later
+attempt turns green.
+
 ### Fresh sessions vs. continuations
 
 Round 1 of every stage is always a **fresh** session — the independence of fresh

@@ -946,9 +946,10 @@ async function runGateStage(
   context: PipelineContext,
   ticket: Ticket,
   worktree: Worktree,
+  logPath: string,
 ): Promise<GateResult> {
   context.log.emit("gate_start", ticket.id);
-  const gate = await runGate(context.config.gate, worktree.path, (name) =>
+  const gate = await runGate(context.config.gate, worktree.path, logPath, (name) =>
     context.log.emit("session_activity", ticket.id, { text: `gate: ${name}` }),
   );
   const failedStep = gate.results.at(-1)?.name;
@@ -1063,9 +1064,8 @@ async function runImplementationGateCycle(
   let summary: string | undefined;
   let implementationSession: StageSessionMemory = input.memory.implementation ?? {};
   let lastHandoffCommit: string | null = null;
-  // Gate failures this round, oldest first — feedback for the next fix
-  // session, never persisted: the round either goes green (the failures are
-  // history) or its last failure leaves via the retry step below.
+  // Gate failures this round, oldest first — feedback for the next fix session.
+  // Their full transcripts persist independently in the round directory.
   const gateFailures: FeedbackItem[] = [];
   const collected = () => ({ decisions, observations, summary, implementationSession });
 
@@ -1104,7 +1104,12 @@ async function runImplementationGateCycle(
     observations.push(...implementation.step.observations);
     summary = implementation.step.summary ?? summary;
 
-    const gate = await runGateStage(context, ticket, worktree);
+    const gate = await runGateStage(
+      context,
+      ticket,
+      worktree,
+      path.join(roundDir, `gate-implementation-${fixSession + 1}.log`),
+    );
     if (gate.ok) {
       // The sign-offs bind to the pipeline's own handoff commit; only a cycle
       // that committed nothing (an unchanged tree) reviews the branch as it stood.
@@ -1244,7 +1249,12 @@ async function runQaPhase(
     observations: qa.verdict?.observations ?? [],
   };
   if (qaCommit === null) return { step, ...collected, memory };
-  const postQaGate = await runGateStage(context, ticket, worktree);
+  const postQaGate = await runGateStage(
+    context,
+    ticket,
+    worktree,
+    path.join(input.roundDir, "gate-post-qa-1.log"),
+  );
   if (postQaGate.ok) return { step, ...collected, memory };
   return {
     ...collected,

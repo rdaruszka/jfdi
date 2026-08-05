@@ -63,6 +63,12 @@ describe("integrateTicket", () => {
 
     const result = await integrateTicket(context, ticket, outcome.worktree);
     expect(result).toEqual({ status: "merged" });
+    expect(
+      await fs.readFile(
+        path.join(fixture.stateDir, "runs", ticket.id, "integration", "gate-clean-merge-1.log"),
+        "utf8",
+      ),
+    ).toBe("");
     // The landing commit: target's prior head first, signed-off commit second.
     expect(await git(fixture.repo, "rev-parse", "main^1")).toBe(targetHead);
     expect(await git(fixture.repo, "rev-parse", "main^2")).toBe(signedOff);

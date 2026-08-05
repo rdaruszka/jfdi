@@ -202,7 +202,7 @@ describe.runIf(process.env.JFDI_FIXTURE_E2E === "1")("half-app real gate", () =>
       ready: "none",
     });
     const config = await loadConfig(fixture.repo);
-    const gate = await runGate(config.gate, fixture.repo);
+    const gate = await runGate(config.gate, fixture.repo, path.join(root, "gate.log"));
     expect(gate.results.map((r) => `${r.name}:${r.code}`)).toEqual(
       config.gate.map((g) => `${g.name}:0`),
     );

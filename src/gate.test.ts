@@ -17,17 +17,20 @@ afterEach(async () => {
 describe("runGate", () => {
   it("runs all commands in order and passes", async () => {
     const seen: string[] = [];
+    const logPath = path.join(dir, "gate.log");
     const result = await runGate(
       [
         { name: "one", cmd: "echo first" },
         { name: "two", cmd: "echo second" },
       ],
       dir,
+      logPath,
       (name) => seen.push(name),
     );
     expect(result.ok).toBe(true);
     expect(seen).toEqual(["one", "two"]);
     expect(result.results[0]?.output).toContain("first");
+    expect(await fs.readFile(logPath, "utf8")).toBe("first\nsecond\n");
   });
 
   it("stops at the first failure", async () => {
@@ -37,6 +40,7 @@ describe("runGate", () => {
         { name: "never", cmd: "echo unreachable" },
       ],
       dir,
+      path.join(dir, "gate.log"),
     );
     expect(result.ok).toBe(false);
     expect(result.results).toHaveLength(1);
@@ -46,21 +50,51 @@ describe("runGate", () => {
 
   it("runs in the given cwd", async () => {
     await fs.writeFile(path.join(dir, "marker.txt"), "here");
-    const result = await runGate([{ name: "ls", cmd: "cat marker.txt" }], dir);
+    const result = await runGate(
+      [{ name: "ls", cmd: "cat marker.txt" }],
+      dir,
+      path.join(dir, "gate.log"),
+    );
     expect(result.ok).toBe(true);
     expect(result.results[0]?.output).toContain("here");
   });
 
   it("an empty gate passes", async () => {
-    expect((await runGate([], dir)).ok).toBe(true);
+    const logPath = path.join(dir, "gate.log");
+    expect((await runGate([], dir, logPath)).ok).toBe(true);
+    expect(await fs.readFile(logPath, "utf8")).toBe("");
+  });
+
+  it("persists full output before creating a head-and-tail prompt excerpt", async () => {
+    const logPath = path.join(dir, "gate.log");
+    const result = await runGate(
+      [
+        {
+          name: "large",
+          cmd: "printf HEAD_CAUSE; head -c 30000 /dev/zero | tr '\\0' x; printf TAIL_DETAIL; exit 1",
+        },
+      ],
+      dir,
+      logPath,
+    );
+
+    const fullOutput = await fs.readFile(logPath, "utf8");
+    expect(fullOutput).toHaveLength(30_021);
+    expect(fullOutput).toMatch(/^HEAD_CAUSE/);
+    expect(fullOutput).toMatch(/TAIL_DETAIL$/);
+    expect(result.results[0]?.output).toHaveLength(20_000);
+    expect(result.results[0]?.output).toMatch(/^HEAD_CAUSE/);
+    expect(result.results[0]?.output).toMatch(/TAIL_DETAIL$/);
   });
 });
 
 describe("formatGateFailure", () => {
   it("names the failing step and includes output", async () => {
-    const result = await runGate([{ name: "lint", cmd: "echo bad style; exit 1" }], dir);
+    const logPath = path.join(dir, "gate.log");
+    const result = await runGate([{ name: "lint", cmd: "echo bad style; exit 1" }], dir, logPath);
     const message = formatGateFailure(result);
     expect(message).toContain('failed at step "lint"');
     expect(message).toContain("bad style");
+    expect(message).toContain(logPath);
   });
 });
