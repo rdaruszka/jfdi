@@ -128,7 +128,7 @@ describe("resolveTicket", () => {
         "---",
         "blocks:",
         '  - "[[other]]"',
-        "blocked-by: [[[ghost]]]",
+        "blocked-by: [[ghost]]",
         "tags: [mine]",
         "---",
         "",
