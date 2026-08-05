@@ -12,10 +12,9 @@ import {
   mergeTargetIntoBranch,
   removeWorktree,
   revParse,
-  ticketBranch,
   type Worktree,
 } from "./git.js";
-import type { PipelineContext, RunReport } from "./pipeline.js";
+import type { PipelineContext } from "./pipeline.js";
 import {
   runHeldSession,
   runQaStage,
@@ -44,33 +43,6 @@ export type IntegrateOutcome =
   | { status: "merged" }
   | { status: "already-merged" }
   | { status: "blocked"; reason: string };
-
-async function appendReport(
-  notePath: string,
-  ticket: Ticket,
-  report: RunReport | null,
-  mergeNote: string,
-): Promise<void> {
-  const lines = [
-    `### ${todayIsoDate()}`,
-    "",
-    report?.summary
-      ? `**Summary:**\n${quoteAgentText(report.summary)}`
-      : "**Summary:** (none recorded)",
-    "",
-    `**Rounds:** ${report?.rounds ?? "?"} · **Branch:** \`${ticketBranch(ticket.id)}\``,
-  ];
-  if (report?.testsAdded)
-    lines.push("", `**QA tests added:**\n${quoteAgentText(report.testsAdded)}`);
-  if (report && report.decisions.length > 0)
-    lines.push(
-      "",
-      "**Decisions made autonomously:**",
-      ...report.decisions.flatMap((decision) => ["", quoteAgentText(decision)]),
-    );
-  lines.push("", mergeNote);
-  await appendToSection(notePath, "Report", lines.join("\n"));
-}
 
 type ConflictOutcome =
   | { status: "resolved"; notes: string }
@@ -249,7 +221,6 @@ export async function integrateTicket(
   context: PipelineContext,
   ticket: Ticket,
   worktree: Worktree,
-  report: RunReport | null,
 ): Promise<IntegrateOutcome> {
   const target = context.config.integration.target_branch;
   const notePath = await ensureTicketNote(
@@ -263,7 +234,12 @@ export async function integrateTicket(
   // Human may have merged by hand (on-approval mode) — never double-merge.
   if (await isAncestor(context.repoRoot, worktree.branch, target)) {
     context.log.emit("merged", ticket.id, { note: "already contained in target" });
-    await appendReport(notePath, ticket, report, `Branch already merged into \`${target}\`.`);
+    await recordTransition(
+      notePath,
+      "integration",
+      INTEGRATION_ROUND,
+      `Branch already contained in \`${target}\` — closed without re-merging.`,
+    );
     await cleanup(context, worktree);
     return { status: "already-merged" };
   }
@@ -315,24 +291,19 @@ export async function integrateTicket(
     return blocked(context, ticket, notePath, `merge failed: ${(error as Error).message}`);
   }
   context.log.emit("merged", ticket.id);
-  await recordTransition(
-    notePath,
-    "integration",
-    INTEGRATION_ROUND,
+  // The closing entry on the trail. Its whole body is blockquoted as one
+  // comment, so the Integration agent's resolution notes ride in raw rather
+  // than pre-quoted the way a standalone note append would need.
+  const mergedNarration = [
     statusLine(
       "integration",
       "merged",
       `landed on \`${target}\` as \`${shortSha(landingCommit)}\``,
     ),
-  );
-  // The resolution notes come from the Integration agent's verdict — quoted,
-  // like every other piece of agent text a note carries.
-  await appendReport(
-    notePath,
-    ticket,
-    report,
-    `Merged into \`${target}\`.${leftoverNote}${resolutionNote ? `\n\nConflict resolution:\n${quoteAgentText(resolutionNote)}` : ""}`,
-  );
+  ];
+  if (leftoverNote) mergedNarration.push("", leftoverNote.trim());
+  if (resolutionNote) mergedNarration.push("", "Conflict resolution:", resolutionNote);
+  await recordTransition(notePath, "integration", INTEGRATION_ROUND, mergedNarration.join("\n"));
   await cleanup(context, worktree);
   await deleteBranch(context.repoRoot, worktree.branch);
   return { status: "merged" };

@@ -2,8 +2,7 @@ import * as path from "node:path";
 import { addCardIfAbsent } from "./board.js";
 import type { PipelineContext, RunReport } from "./pipeline.js";
 import { runsDir } from "./pipeline.js";
-import { appendToSection, quoteAgentText } from "./ticket-note.js";
-import { todayIsoDate } from "./util/dates.js";
+import { recordTransition, shortSha } from "./transitions.js";
 import { atomicWrite, fileExists, readIfExists } from "./util/fsx.js";
 
 /** Persist the pipeline report so a later `jfdi merge` / restart can pick it up. */
@@ -74,7 +73,14 @@ export async function recordObservations(
   }
 }
 
-/** Append the final report to the ticket note at the merge-ready gate (on-approval). */
+/**
+ * Record merge-readiness (on-approval): persist the run report for a later
+ * `jfdi merge`, then close the note's `## Comments` trail with the
+ * ready-to-merge entry a human approves from. The saved `report.json` — not
+ * this comment — is what the coordinator and `jfdi merge` consult; the comment
+ * is only the human-readable half. Autonomous decisions are already decision
+ * entries in the trail, so they are not repeated here.
+ */
 export async function recordMergeReady(
   context: PipelineContext,
   ticketId: string,
@@ -83,23 +89,14 @@ export async function recordMergeReady(
 ): Promise<void> {
   await saveReport(context.stateDir, ticketId, report);
   const lines = [
-    `### ${todayIsoDate()} — ready to merge`,
+    "Run passed all stages — ready to merge.",
     "",
-    report.summary
-      ? `**Summary:**\n${quoteAgentText(report.summary)}`
-      : "**Summary:** (none recorded)",
+    report.summary ? `**Summary:**\n${report.summary}` : "**Summary:** (none recorded)",
     "",
-    `**Rounds:** ${report.rounds} · **Commit:** \`${report.commit.slice(0, 10)}\``,
+    `**Rounds:** ${report.rounds} · **Commit:** \`${shortSha(report.commit)}\``,
   ];
-  if (report.testsAdded)
-    lines.push("", `**QA tests added:**\n${quoteAgentText(report.testsAdded)}`);
-  if (report.decisions.length > 0)
-    lines.push(
-      "",
-      "**Decisions made autonomously:**",
-      ...report.decisions.flatMap((decision) => ["", quoteAgentText(decision)]),
-    );
+  if (report.testsAdded) lines.push("", `**QA tests added:**\n${report.testsAdded}`);
   lines.push("", `_Approve with \`jfdi merge ${ticketId}\`, or merge the branch by hand._`);
-  await appendToSection(notePath, "Report", lines.join("\n"));
+  await recordTransition(notePath, "pipeline", report.rounds, lines.join("\n"));
   context.log.emit("merge_ready", ticketId);
 }

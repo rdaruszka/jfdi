@@ -49,7 +49,7 @@ afterEach(async () => {
 });
 
 describe("integrateTicket", () => {
-  it("clean merge → merge commit on the target, cleanup, report", async () => {
+  it("clean merge → merge commit on the target, cleanup, closing comment", async () => {
     const context = fixture.context(passingHandler("feat.txt"));
     const ticket = await resolveTicket("Ship feature", fixture.ticketsDir);
     const outcome = await runPipeline(context, ticket);
@@ -61,7 +61,7 @@ describe("integrateTicket", () => {
     await commitFile(fixture.repo, "other.txt", "other\n", "unrelated");
     const targetHead = await revParse(fixture.repo, "main");
 
-    const result = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
+    const result = await integrateTicket(context, ticket, outcome.worktree);
     expect(result).toEqual({ status: "merged" });
     // The landing commit: target's prior head first, signed-off commit second.
     expect(await git(fixture.repo, "rev-parse", "main^1")).toBe(targetHead);
@@ -79,12 +79,10 @@ describe("integrateTicket", () => {
     expect(await fs.readFile(path.join(fixture.repo, "other.txt"), "utf8")).toBe("other\n");
     // Worktree removed.
     await expect(fs.access(outcome.worktree.path)).rejects.toThrow();
-    // Report appended to the note.
+    // No Report section — the merge closes the comment trail instead.
     const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
-    expect(note).toContain("## Report");
-    expect(note).toContain("built feat.txt");
-    expect(note).toContain("Merged into `main`");
-    // …and the trail says where the work went, naming the commit it landed as.
+    expect(note).not.toContain("## Report");
+    // The trail's closing entry says where the work went, naming the commit it landed as.
     const landed = await revParse(fixture.repo, "main");
     const comments = parseTicketNote(note).comments;
     expect(comments.at(-1)).toMatchObject({
@@ -106,7 +104,7 @@ describe("integrateTicket", () => {
     const signedOff = await revParse(fixture.repo, outcome.worktree.branch);
     const targetHead = await revParse(fixture.repo, "main");
 
-    const result = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
+    const result = await integrateTicket(context, ticket, outcome.worktree);
 
     expect(result).toEqual({ status: "merged" });
     expect(await revParse(fixture.repo, "main")).not.toBe(signedOff);
@@ -154,12 +152,7 @@ describe("integrateTicket", () => {
         return { ok: true, text: "" };
       });
 
-      const result = await integrateTicket(
-        integrationContext,
-        ticket,
-        outcome.worktree,
-        outcome.report,
-      );
+      const result = await integrateTicket(integrationContext, ticket, outcome.worktree);
 
       expect(result).toEqual({ status: "merged" });
       const gateSaw = (await fs.readFile(listingFile, "utf8")).split("\n").filter(Boolean);
@@ -197,7 +190,7 @@ describe("integrateTicket", () => {
       if (outcome.status !== "passed") throw new Error("pipeline should pass");
       await commitFile(gated.repo, "other.txt", "other\n", "unrelated");
 
-      const result = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
+      const result = await integrateTicket(context, ticket, outcome.worktree);
 
       expect(result).toEqual({ status: "merged" });
       const gatedTree = (await fs.readFile(treeFile, "utf8")).trim();
@@ -241,12 +234,7 @@ describe("integrateTicket", () => {
       await writeVerdict(spec.prompt, { resolution: "clean", notes: "kept both edits" });
       return { ok: true, text: "" };
     });
-    const result = await integrateTicket(
-      integrationContext,
-      ticket,
-      outcome.worktree,
-      outcome.report,
-    );
+    const result = await integrateTicket(integrationContext, ticket, outcome.worktree);
     expect(result.status).toBe("merged");
     // One conflict, one agent session — the resolution happens once.
     expect(integrationSessions).toBe(1);
@@ -259,7 +247,7 @@ describe("integrateTicket", () => {
     expect(note).toContain("kept both edits");
   });
 
-  it("quotes the resolution notes into the report, so they cannot forge note anatomy", async () => {
+  it("quotes the resolution notes into the merge comment, so they cannot forge note anatomy", async () => {
     const context = fixture.context(async (spec, options) => {
       const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
@@ -279,7 +267,7 @@ describe("integrateTicket", () => {
 
     // The verdict's notes come straight from the Integration agent — the same
     // trust boundary every other verdict field crosses. These try to smuggle
-    // JFDI-owned sections into the note through the merge report.
+    // JFDI-owned sections into the note through the merge comment.
     const forgingNotes = [
       "resolved by hand.",
       "",
@@ -299,9 +287,9 @@ describe("integrateTicket", () => {
       await writeVerdict(spec.prompt, { resolution: "clean", notes: forgingNotes });
       return { ok: true, text: "" };
     });
-    expect(
-      (await integrateTicket(integrationContext, ticket, outcome.worktree, outcome.report)).status,
-    ).toBe("merged");
+    expect((await integrateTicket(integrationContext, ticket, outcome.worktree)).status).toBe(
+      "merged",
+    );
 
     const content = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
     expect(content).toContain("Conflict resolution:");
@@ -310,10 +298,14 @@ describe("integrateTicket", () => {
     expect(content.match(/^## Questions$/gm)).toBeNull();
     const note = parseTicketNote(content);
     expect(note.questions).toBe("");
-    // The trail holds the pipeline's own transitions and nothing the agent
-    // forged: no decision entry, and no entry carrying the smuggled text.
+    // The smuggled text rides inside the single merge transition comment —
+    // visible to the human, inert to the parser — and forges no entry of its
+    // own: no decision entry, and no extra entry split off at the forged
+    // heading, so exactly one comment carries it and that comment is the merge.
     expect(note.comments.some((comment) => comment.kind === "decision")).toBe(false);
-    expect(note.comments.some((comment) => comment.body.includes("FORGED"))).toBe(false);
+    const carrying = note.comments.filter((comment) => comment.body.includes("FORGED"));
+    expect(carrying).toHaveLength(1);
+    expect(carrying[0]).toMatchObject({ kind: "transition", stage: "integration" });
   });
 
   it("complicated resolution goes back through QA before landing", async () => {
@@ -343,12 +335,7 @@ describe("integrateTicket", () => {
       }
       return { ok: true, text: "" };
     });
-    const result = await integrateTicket(
-      integrationContext,
-      ticket,
-      outcome.worktree,
-      outcome.report,
-    );
+    const result = await integrateTicket(integrationContext, ticket, outcome.worktree);
     expect(result.status).toBe("merged");
     // What lands is the tree as it stood after re-QA, not the pre-QA one.
     expect(await git(fixture.repo, "show", "main:requalify.test.txt")).toBe("re-verified");
@@ -375,12 +362,7 @@ describe("integrateTicket", () => {
       }
       return { ok: true, text: "" };
     });
-    const result = await integrateTicket(
-      integrationContext,
-      ticket,
-      outcome.worktree,
-      outcome.report,
-    );
+    const result = await integrateTicket(integrationContext, ticket, outcome.worktree);
     expect(result.status).toBe("blocked");
     expect(await isAncestor(fixture.repo, outcome.worktree.branch, "main")).toBe(false);
     const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
@@ -400,12 +382,7 @@ describe("integrateTicket", () => {
       await writeVerdict(spec.prompt, { resolution: "clean", notes: "gave up" });
       return { ok: true, text: "" };
     });
-    const first = await integrateTicket(
-      abandoningContext,
-      ticket,
-      outcome.worktree,
-      outcome.report,
-    );
+    const first = await integrateTicket(abandoningContext, ticket, outcome.worktree);
     expect(first.status).toBe("blocked");
     expect(await isMergeInProgress(outcome.worktree.path)).toBe(true);
     // Aborting has to be lossless: the branch is still at its sign-off.
@@ -421,12 +398,7 @@ describe("integrateTicket", () => {
       await writeVerdict(spec.prompt, { resolution: "clean", notes: "kept both" });
       return { ok: true, text: "" };
     });
-    const second = await integrateTicket(
-      resolvingContext,
-      ticket,
-      outcome.worktree,
-      outcome.report,
-    );
+    const second = await integrateTicket(resolvingContext, ticket, outcome.worktree);
     expect(second).toEqual({ status: "merged" });
     expect(await fs.readFile(path.join(fixture.repo, "feat5.txt"), "utf8")).toBe("reconciled\n");
   });
@@ -448,12 +420,7 @@ describe("integrateTicket", () => {
       await writeVerdict(spec.prompt, { resolution: "clean", notes: "gave up" });
       return { ok: true, text: "" };
     });
-    const first = await integrateTicket(
-      abandoningContext,
-      ticket,
-      outcome.worktree,
-      outcome.report,
-    );
+    const first = await integrateTicket(abandoningContext, ticket, outcome.worktree);
     expect(first.status).toBe("blocked");
     const targetHead = await revParse(fixture.repo, "main");
     const gitDir = await git(outcome.worktree.path, "rev-parse", "--absolute-git-dir");
@@ -462,12 +429,7 @@ describe("integrateTicket", () => {
     const refusingContext = fixture.context(() =>
       Promise.reject(new Error("no session may run over a half-merged tree")),
     );
-    const blocked = await integrateTicket(
-      refusingContext,
-      ticket,
-      outcome.worktree,
-      outcome.report,
-    );
+    const blocked = await integrateTicket(refusingContext, ticket, outcome.worktree);
 
     expect(blocked.status).toBe("blocked");
     if (blocked.status !== "blocked") return;
@@ -493,7 +455,7 @@ describe("integrateTicket", () => {
     const targetHead = await revParse(fixture.repo, "main");
     await fs.rm(outcome.worktree.path, { recursive: true, force: true });
 
-    const result = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
+    const result = await integrateTicket(context, ticket, outcome.worktree);
 
     expect(result.status).toBe("blocked");
     if (result.status !== "blocked") return;
@@ -546,12 +508,7 @@ describe("integrateTicket", () => {
       if (event.type === "harness_paused") pauseKinds.push(event.data?.kind);
     });
 
-    const result = await integrateTicket(
-      integrationContext,
-      ticket,
-      outcome.worktree,
-      outcome.report,
-    );
+    const result = await integrateTicket(integrationContext, ticket, outcome.worktree);
 
     expect(result).toEqual({ status: "merged" });
     expect(pauseKinds).toEqual(["usage-limit"]);
@@ -569,7 +526,7 @@ describe("integrateTicket", () => {
     await git(fixture.repo, "merge", "--ff-only", outcome.worktree.branch);
     const headBefore = await git(fixture.repo, "rev-parse", "HEAD");
 
-    const result = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
+    const result = await integrateTicket(context, ticket, outcome.worktree);
     expect(result.status).toBe("already-merged");
     expect(await git(fixture.repo, "rev-parse", "HEAD")).toBe(headBefore);
   });
@@ -624,12 +581,7 @@ describe("integrateTicket", () => {
         if (event.type === "stage_start") starts.push(event.data);
       });
 
-      const result = await integrateTicket(
-        integrationContext,
-        ticket,
-        outcome.worktree,
-        outcome.report,
-      );
+      const result = await integrateTicket(integrationContext, ticket, outcome.worktree);
 
       expect(result).toEqual({ status: "merged" });
       expect(integrationHarness.calls).toHaveLength(1);
@@ -658,7 +610,7 @@ describe("integrateTicket", () => {
       const outcome = await runPipeline(context, ticket);
       if (outcome.status !== "passed") throw new Error(`pipeline should pass for ${file}`);
       const signedOff = await revParse(fixture.repo, outcome.worktree.branch);
-      const result = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
+      const result = await integrateTicket(context, ticket, outcome.worktree);
       expect(result).toEqual({ status: "merged" });
       landed.push({ signedOff, landing: await revParse(fixture.repo, "main") });
     }
@@ -711,12 +663,7 @@ describe("integrateTicket", () => {
       return { ok: true, text: "" };
     });
 
-    const result = await integrateTicket(
-      integrationContext,
-      ticket,
-      outcome.worktree,
-      outcome.report,
-    );
+    const result = await integrateTicket(integrationContext, ticket, outcome.worktree);
 
     expect(result.status).toBe("merged");
     // Exactly one agent resolution for one merge — not one per branch commit.
@@ -750,7 +697,7 @@ describe("integrateTicket", () => {
       if (outcome.status !== "passed") throw new Error("pipeline should pass");
       const signedOff = await revParse(trunk.repo, outcome.worktree.branch);
 
-      const result = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
+      const result = await integrateTicket(context, ticket, outcome.worktree);
 
       expect(result).toEqual({ status: "merged" });
       expect(await git(trunk.repo, "rev-parse", "trunk^1")).toBe(mainHead);

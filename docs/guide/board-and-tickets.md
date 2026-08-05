@@ -176,14 +176,15 @@ The anatomy, part by part. Every part is optional; an absent one is simply empty
   decide-log-proceed audit trail, and the JIRA emulation: an agent's decisions
   land in the same chronological trail a human's comments would. Every transition
   a run makes is here — dispatch, each commit's message verbatim, each review
-  verdict, exhausted rounds, the merge — so the note tells the whole story
-  without `git log`, and `git log` tells it without the note. See
+  verdict, exhausted rounds, and the run's close: on-approval, the ready-to-merge
+  entry (summary, rounds, commit, QA tests added, and the `jfdi merge` approval
+  line); either way, the merge entry that lands the branch. So the note tells the
+  whole story without `git log`, and `git log` tells it without the note. See
   [Commits and the scribe](pipeline.md#commits-and-the-scribe).
-- **`## Report`** — the final summary at sign-off: what was done, rounds taken,
-  the commit, QA tests added.
 
-Sections JFDI does not recognize — your own, or a legacy `## Decisions` block
-from before the anatomy — are never rewritten and never appended to.
+Sections JFDI does not recognize — your own, a legacy `## Decisions` block, or a
+`## Report` section from before the trail carried the run summary — are never
+rewritten and never appended to.
 
 Text an agent wrote — a decision, a question, a summary — reaches the note
 through a verdict, so JFDI wraps it in a markdown blockquote (`> ` on every

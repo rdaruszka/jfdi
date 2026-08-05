@@ -527,7 +527,7 @@ describe("the shape integration leaves on the target branch", () => {
       expect(await git(sandbox.project, "rev-parse", TARGET_BRANCH)).toBe(handMerged);
       expect(await integrationSessions(sandbox)).toEqual([]);
       expect(await ticketNote(sandbox, ticketId)).toContain(
-        `Branch already merged into \`${TARGET_BRANCH}\``,
+        `Branch already contained in \`${TARGET_BRANCH}\` — closed without re-merging.`,
       );
       expect(
         await fs

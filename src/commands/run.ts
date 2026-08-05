@@ -111,7 +111,7 @@ export async function runTicketInline(
 
     await recordObservations(context, ticket.id, outcome.report.observations);
     if (context.config.integration.mode === "auto") {
-      const merged = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
+      const merged = await integrateTicket(context, ticket, outcome.worktree);
       if (merged.status === "blocked") {
         await settleCard(columns.blocked);
         console.error(`\nIntegration blocked: ${merged.reason}`);
