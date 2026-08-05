@@ -84,6 +84,27 @@ afterEach(async () => {
 });
 
 describe("mergeCommand board bookkeeping", () => {
+  it("refuses a corrupt report without touching the branch and preserves the evidence", async () => {
+    await writeBoard(board([CARD]));
+    await makeTicketBranch();
+    const reportPath = path.join(fixture.stateDir, "runs", TICKET_ID, "report.json");
+    await fs.mkdir(path.dirname(reportPath), { recursive: true });
+    const corruptContent = '{"summary":';
+    await fs.writeFile(reportPath, corruptContent);
+
+    expect(await runMerge()).toBe(2);
+
+    expect(await git(fixture.repo, "log", "--oneline", "main")).not.toContain(
+      "implement the thing",
+    );
+    expect(await fs.readFile(reportPath, "utf8")).toBe(corruptContent);
+    expect(cardsIn(await readColumns(), "Blocked")).toEqual([CARD]);
+    const note = await fs.readFile(path.join(fixture.ticketsDir, `${TICKET_ID}.md`), "utf8");
+    expect(note).toContain(reportPath);
+    expect(note).toContain("fix or restore");
+    expect(note).toContain("delete the file");
+  });
+
   it("moves the merged ticket's card to Done and checks it off", async () => {
     await writeBoard(board([CARD]));
     await makeTicketBranch();

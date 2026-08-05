@@ -4,10 +4,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { findColumn, moveCard, parseBoard } from "./board.js";
 import { Coordinator } from "./coordinator.js";
 import { EventLog, integrationRecords, type JfdiEvent, loadState } from "./events.js";
-import { branchExists, deleteBranch, git, isAncestor, revParse } from "./git.js";
+import { branchExists, createWorktree, deleteBranch, git, isAncestor, revParse } from "./git.js";
 import { integrateTicket } from "./integrate.js";
 import { worktreesDir } from "./pipeline.js";
-import { loadReport, saveReport } from "./report.js";
+import { isCorruptReport, loadReport, saveReport } from "./report.js";
 import {
   commitFile,
   type Fixture,
@@ -341,6 +341,95 @@ async function runToMergeReady(stages: string[]): Promise<Coordinator> {
 }
 
 describe("Coordinator", () => {
+  it("blocks a corrupt report with an unblock recipe and never dispatches", async () => {
+    await fs.writeFile(boardPath(), SINGLE_CARD_BOARD);
+    const ticketId = ticketIdFromCard(ALPHA_TEXT);
+    const reportPath = path.join(fixture.stateDir, "runs", ticketId, "report.json");
+    await fs.mkdir(path.dirname(reportPath), { recursive: true });
+    const corruptContent = '{"summary":';
+    await fs.writeFile(reportPath, corruptContent);
+    const stages: string[] = [];
+    const context = fixture.context(countingHandler(stages));
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+
+    await startCoordinator(coordinator);
+    await coordinator.drain();
+
+    expect(stages).toEqual([]);
+    expect(findColumn(await readBoard(), "Blocked")?.cards.map((card) => card.text)).toContain(
+      ALPHA_TEXT,
+    );
+    expect(await fs.readFile(reportPath, "utf8")).toBe(corruptContent);
+    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticketId}.md`), "utf8");
+    expect(note).toContain(reportPath);
+    expect(note).toContain("JSON");
+    expect(note).toContain("fix or restore");
+    expect(note).toContain("delete the file");
+  });
+
+  it("proceeds normally on the next scan after the corrupt report is restored", async () => {
+    await fs.writeFile(boardPath(), SINGLE_CARD_BOARD);
+    const ticketId = ticketIdFromCard(ALPHA_TEXT);
+    const worktree = await createWorktree(
+      fixture.repo,
+      worktreesDir(fixture.jfdiDir),
+      ticketId,
+      "main",
+    );
+    await commitFile(worktree.path, "restored.txt", "restored\n", "restore signed-off work");
+    const signedOffCommit = await revParse(worktree.path, "HEAD");
+    const reportPath = path.join(fixture.stateDir, "runs", ticketId, "report.json");
+    await fs.mkdir(path.dirname(reportPath), { recursive: true });
+    await fs.writeFile(reportPath, '{"summary":');
+    const stages: string[] = [];
+    const coordinator = new Coordinator(fixture.context(countingHandler(stages)), {
+      pollMs: 60_000,
+    });
+    await startCoordinator(coordinator);
+    await coordinator.drain();
+
+    await fs.writeFile(
+      reportPath,
+      JSON.stringify({
+        summary: "restored pass",
+        decisions: [],
+        observations: [],
+        testsAdded: "",
+        rounds: 1,
+        commit: signedOffCommit,
+        usageRows: [],
+        elapsedMs: 0,
+      }),
+    );
+    await moveCard(boardPath(), ALPHA_CARD, "Blocked", "Ready");
+    await rescan(coordinator);
+
+    expect(stages).toEqual([]);
+    expect(await fs.readFile(path.join(fixture.repo, "restored.txt"), "utf8")).toBe("restored\n");
+    expect(findColumn(await readBoard(), "Done")?.cards.map((card) => card.text)).toEqual([
+      ALPHA_TEXT,
+    ]);
+  });
+
+  it("moves a Ready-to-Merge card to Blocked when its sign-off report is corrupt", async () => {
+    const ticketId = await strandCard();
+    const reportPath = path.join(fixture.stateDir, "runs", ticketId, "report.json");
+    await fs.mkdir(path.dirname(reportPath), { recursive: true });
+    await fs.writeFile(reportPath, JSON.stringify({ summary: "missing core fields" }));
+    const coordinator = new Coordinator(fixture.context(autoHandler()), { pollMs: 60_000 });
+
+    await startCoordinator(coordinator);
+
+    const board = await readBoard();
+    expect(findColumn(board, "Ready to Merge")?.cards).toHaveLength(0);
+    expect(findColumn(board, "Blocked")?.cards.map((card) => card.text)).toEqual([ALPHA_TEXT]);
+    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticketId}.md`), "utf8");
+    expect(note).toContain(reportPath);
+    expect(note).toContain("decisions");
+    expect(note).toContain("fix or restore");
+    expect(note).toContain("delete the file");
+  });
+
   it("auto mode: dispatches board cards, runs pipelines, merges, moves cards to Done", async () => {
     const context = fixture.context(autoHandler());
     fixture.config.integration.mode = "auto";
@@ -507,7 +596,8 @@ describe("Coordinator", () => {
     const alphaId = ticketIdFromCard(ALPHA_TEXT);
     const ticket = await resolveTicket(ALPHA_TEXT, fixture.ticketsDir);
     const report = await loadReport(fixture.stateDir, alphaId);
-    if (!report) throw new Error("pipeline should save a report before integration");
+    if (!report || isCorruptReport(report))
+      throw new Error("pipeline should save a valid report before integration");
 
     const integrationContext = fixture.context(autoHandler());
     const integrationLog = new FlushControlledEventLog(fixture.stateDir);
@@ -553,7 +643,8 @@ describe("Coordinator", () => {
     const alphaId = ticketIdFromCard(ALPHA_TEXT);
     const ticket = await resolveTicket(ALPHA_TEXT, fixture.ticketsDir);
     const report = await loadReport(fixture.stateDir, alphaId);
-    if (!report) throw new Error("pipeline should save a report before integration");
+    if (!report || isCorruptReport(report))
+      throw new Error("pipeline should save a valid report before integration");
 
     const barriers: { recordedPhase: string | undefined; mergeVisibleInTarget: boolean }[] = [];
     class BarrierObservingEventLog extends EventLog {
@@ -1060,7 +1151,8 @@ describe("Coordinator under a broken provider", () => {
     expect(findColumn(board, "Ready to Merge")?.cards.map((c) => c.text)).toEqual([ALPHA_TEXT]);
     // The dead session cost a respawn, not a round.
     expect(implementationAttempts).toBe(2);
-    expect((await loadReport(fixture.stateDir, ticketIdFromCard(ALPHA_TEXT)))?.rounds).toBe(1);
+    const report = await loadReport(fixture.stateDir, ticketIdFromCard(ALPHA_TEXT));
+    expect(report && !isCorruptReport(report) ? report.rounds : null).toBe(1);
   });
 
   /**

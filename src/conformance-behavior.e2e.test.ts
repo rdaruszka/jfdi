@@ -814,7 +814,7 @@ describe("trust boundaries", () => {
   );
 
   it(
-    "treats a shape-invalid report.json as absent rather than merging off it",
+    "blocks a shape-invalid report.json with its repair recipe",
     async () => {
       const sandbox = await makeSandbox();
       await initProject(sandbox);
@@ -826,19 +826,21 @@ describe("trust boundaries", () => {
       const realCommit = JSON.parse(await fs.readFile(reportPath, "utf8")).commit;
       // Parses as JSON, but `decisions`/`observations` are missing — the shape a
       // hand edit or an older JFDI leaves behind.
-      await fs.writeFile(reportPath, JSON.stringify({ summary: "s", commit: realCommit }));
+      const corruptContent = JSON.stringify({ summary: "s", commit: realCommit });
+      await fs.writeFile(reportPath, corruptContent);
 
-      // The merge itself still completes: a bad report must not strand a branch
-      // half-merged the way an unchecked dereference did.
       const merge = await runCli(sandbox, ["merge", ticketId]);
-      expect(merge.code).toBe(0);
-      expect(merge.stdout).toContain("Merged into main.");
-      // The branch carries the pipeline's own commit, written by the scribe —
-      // and not the one the agent made for itself despite the prompt.
+      expect(merge.code).toBe(2);
+      expect(merge.stderr).toContain(reportPath);
+      expect(merge.stderr).toContain("decisions");
+      expect(merge.stderr).toContain("fix or restore");
+      expect(merge.stderr).toContain("delete the file");
+      expect(await fs.readFile(reportPath, "utf8")).toBe(corruptContent);
       const landed = await git(sandbox.project, "log", "--oneline", "main");
-      expect(landed).toContain("stub-scribed subject");
-      expect(landed).not.toContain("implement round 1");
-      expect(await git(sandbox.project, "branch", "--list", `jfdi/${ticketId}`)).toBe("");
+      expect(landed).not.toContain("stub-scribed subject");
+      expect(await git(sandbox.project, "branch", "--list", `jfdi/${ticketId}`)).toContain(
+        `jfdi/${ticketId}`,
+      );
     },
     PIPELINE_TIMEOUT_MS,
   );
