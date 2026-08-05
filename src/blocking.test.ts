@@ -7,11 +7,9 @@ function card(text: string): Card {
   return { raw: `- [ ] ${text}`, text, checked: false };
 }
 
-/** A board of `{ column: cardTexts }` — enough for the column lookups here. */
-function board(columns: Record<string, string[]>): Board {
-  return {
-    columns: Object.entries(columns).map(([name, texts]) => ({ name, cards: texts.map(card) })),
-  };
+/** A one-column board — enough for the column lookups these cases make. */
+function boardWith(column: string, cardTexts: string[]): Board {
+  return { columns: [{ name: column, cards: cardTexts.map(card) }] };
 }
 
 function blockedBy(...targets: string[]): TicketLink[] {
@@ -22,7 +20,7 @@ describe("unresolvedBlockers", () => {
   it("treats a blocker in the done column as resolved", () => {
     const result = unresolvedBlockers(
       blockedBy("blocker"),
-      board({ Done: ["[[blocker]]"] }),
+      boardWith("Done", ["[[blocker]]"]),
       "Done",
     );
     expect(result.ids).toEqual([]);
@@ -32,7 +30,7 @@ describe("unresolvedBlockers", () => {
   it("reports a blocker parked anywhere but done as unresolved", () => {
     const result = unresolvedBlockers(
       blockedBy("blocker"),
-      board({ Ready: ["[[blocker]]"] }),
+      boardWith("Ready", ["[[blocker]]"]),
       "Done",
     );
     expect(result.ids).toEqual(["blocker"]);
@@ -40,20 +38,22 @@ describe("unresolvedBlockers", () => {
   });
 
   it("reports a blocker with no card at all as unresolved and missing", () => {
-    const result = unresolvedBlockers(blockedBy("ghost"), board({ Done: [] }), "Done");
+    const result = unresolvedBlockers(blockedBy("ghost"), boardWith("Done", []), "Done");
     expect(result.ids).toEqual(["ghost"]);
     expect(result.missing).toEqual(["ghost"]);
   });
 
   it("ignores blocks-direction links — only blocked-by gates", () => {
     const links: TicketLink[] = [{ kind: "blocks", target: "downstream", notePath: null }];
-    expect(unresolvedBlockers(links, board({ Ready: ["[[downstream]]"] }), "Done").ids).toEqual([]);
+    expect(unresolvedBlockers(links, boardWith("Ready", ["[[downstream]]"]), "Done").ids).toEqual(
+      [],
+    );
   });
 
   it("does not repeat a blocker listed twice", () => {
     const result = unresolvedBlockers(
       blockedBy("blocker", "blocker"),
-      board({ Ready: ["[[blocker]]"] }),
+      boardWith("Ready", ["[[blocker]]"]),
       "Done",
     );
     expect(result.ids).toEqual(["blocker"]);

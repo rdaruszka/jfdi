@@ -87,40 +87,65 @@ export function blockedByCycles(nodes: BlockingNode[]): string[][] {
  * Returns every component; the caller keeps the ones that are cycles.
  */
 function stronglyConnectedComponents(ids: string[], edges: Map<string, string[]>): string[][] {
-  let counter = 0;
-  const index = new Map<string, number>();
-  const lowlink = new Map<string, number>();
-  const onStack = new Set<string>();
-  const stack: string[] = [];
-  const components: string[][] = [];
-
-  const connect = (id: string): void => {
-    index.set(id, counter);
-    lowlink.set(id, counter);
-    counter++;
-    stack.push(id);
-    onStack.add(id);
-    for (const neighbor of edges.get(id) ?? []) {
-      if (!index.has(neighbor)) {
-        connect(neighbor);
-        lowlink.set(id, Math.min(lowlink.get(id) ?? counter, lowlink.get(neighbor) ?? counter));
-      } else if (onStack.has(neighbor)) {
-        lowlink.set(id, Math.min(lowlink.get(id) ?? counter, index.get(neighbor) ?? counter));
-      }
-    }
-    if (lowlink.get(id) === index.get(id)) {
-      const component: string[] = [];
-      while (stack.length > 0) {
-        const member = stack.pop();
-        if (member === undefined) break;
-        onStack.delete(member);
-        component.push(member);
-        if (member === id) break;
-      }
-      components.push(component);
-    }
+  const state: SccState = {
+    edges,
+    counter: 0,
+    index: new Map(),
+    lowlink: new Map(),
+    onStack: new Set(),
+    stack: [],
+    components: [],
   };
+  for (const id of ids) if (!state.index.has(id)) sccVisit(id, state);
+  return state.components;
+}
 
-  for (const id of ids) if (!index.has(id)) connect(id);
-  return components;
+/** The running state one SCC traversal threads through its helpers. */
+interface SccState {
+  edges: Map<string, string[]>;
+  counter: number;
+  index: Map<string, number>;
+  lowlink: Map<string, number>;
+  onStack: Set<string>;
+  stack: string[];
+  components: string[][];
+}
+
+/** Visit one node, recurse into unvisited neighbours, then close its component. */
+function sccVisit(id: string, state: SccState): void {
+  state.index.set(id, state.counter);
+  state.lowlink.set(id, state.counter);
+  state.counter += 1;
+  state.stack.push(id);
+  state.onStack.add(id);
+  for (const neighbor of state.edges.get(id) ?? []) sccRelax(id, neighbor, state);
+  if (numberAt(state.lowlink, id) === numberAt(state.index, id)) sccPopComponent(id, state);
+}
+
+/** Fold a neighbour's reachability into this node's lowlink. */
+function sccRelax(id: string, neighbor: string, state: SccState): void {
+  if (!state.index.has(neighbor)) {
+    sccVisit(neighbor, state);
+    state.lowlink.set(id, Math.min(numberAt(state.lowlink, id), numberAt(state.lowlink, neighbor)));
+  } else if (state.onStack.has(neighbor)) {
+    state.lowlink.set(id, Math.min(numberAt(state.lowlink, id), numberAt(state.index, neighbor)));
+  }
+}
+
+/** Pop the stack down to `root`, emitting those nodes as one component. */
+function sccPopComponent(root: string, state: SccState): void {
+  const component: string[] = [];
+  while (state.stack.length > 0) {
+    const member = state.stack.pop();
+    if (member === undefined) break;
+    state.onStack.delete(member);
+    component.push(member);
+    if (member === root) break;
+  }
+  state.components.push(component);
+}
+
+/** A Map value the algorithm always sets before it reads; the floor is unreached. */
+function numberAt(map: Map<string, number>, key: string): number {
+  return map.get(key) ?? 0;
 }
