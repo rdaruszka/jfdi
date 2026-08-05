@@ -193,12 +193,12 @@ describe("assembleCommitMessage against hostile scribe output", () => {
     );
   });
 
-  it("bounds the whole body when the scribe echoes its input back", () => {
-    const echoed = "diff --git a/src/git.ts b/src/git.ts\n".repeat(2_000);
+  it("keeps an arbitrarily long body exactly as the scribe wrote it", () => {
+    const echoed = "diff --git a/src/git.ts b/src/git.ts\n".repeat(2_000).trimEnd();
     const message = assembleCommitMessage(`Widen the pattern\n\n${echoed}`, "fix-names", HANDOFF);
-    expect(message.length).toBeLessThan(echoed.length);
-    // Cut loudly: a reader can tell the message is not all there.
-    expect(message).toContain("[commit message truncated by JFDI]");
+    expect(echoed.length).toBeGreaterThan(8_000);
+    expect(message).toContain(`\n\n${echoed}\n\nJFDI Implementation complete`);
+    expect(message).not.toContain("[commit message truncated by JFDI]");
     expect(message).toContain("JFDI-Round: 2/3");
   });
 

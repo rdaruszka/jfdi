@@ -74,16 +74,6 @@ const MAX_SUMMARY_CHARS = 4_000;
 const MAX_SUBJECT_SUMMARY_CHARS = 72;
 
 /**
- * Longest body kept from the scribe. A scribe that echoed the diff back would
- * otherwise write a megabyte into every `git log`; the cut is loud (it ends in
- * a marker) rather than silent.
- */
-const MAX_BODY_CHARS = 8_000;
-
-/** What a truncated body ends with, so a reader knows the message is not all there. */
-const BODY_TRUNCATION_MARKER = "\n\n[commit message truncated by JFDI]";
-
-/**
  * A commit message's own trailing metadata, which the pipeline owns and the
  * scribe is told not to write. Matched narrowly — a status line names a stage
  * and its routing — so a body sentence that merely opens with the tool's name
@@ -161,7 +151,7 @@ export function assembleCommitMessage(
   // the change there is.
   const writtenBody = summary === null ? written : lines.slice(1).join("\n");
   const fallbackBody = scrubControlCharacters(handoff.summary);
-  const body = boundBody((writtenBody.trim() !== "" ? writtenBody : fallbackBody).trim());
+  const body = (writtenBody.trim() !== "" ? writtenBody : fallbackBody).trim();
   // The status line is one line by definition: a reason quoted from a dead
   // session's output would otherwise wrap onto a line of its own. It is NOT
   // part of the trailer paragraph: git only treats the last paragraph as a
@@ -214,12 +204,6 @@ function subjectSummary(ticketId: string, written: string): string | null {
   const stripped = written.trim().replace(new RegExp(`^${escapeForRegExp(ticketId)}:\\s*`), "");
   if (stripped === "" || stripped.length > MAX_SUBJECT_SUMMARY_CHARS) return null;
   return stripped;
-}
-
-/** Cut a body no reader would finish, and say that it was cut. */
-function boundBody(body: string): string {
-  if (body.length <= MAX_BODY_CHARS) return body;
-  return `${body.slice(0, MAX_BODY_CHARS).trimEnd()}${BODY_TRUNCATION_MARKER}`;
 }
 
 /** Code point below which every character is a C0 control. */
