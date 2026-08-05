@@ -1,3 +1,4 @@
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { StageName } from "./events.js";
 import { formatGateFailure, runGate } from "./gate.js";
@@ -42,6 +43,19 @@ import {
  * comments carry no round of their own — the same zero its QA re-run uses.
  */
 const INTEGRATION_ROUND = 0;
+
+/** Preserve every serialized integration gate run without overwriting an earlier attempt. */
+async function nextIntegrationGateLogPath(runDir: string, step: string): Promise<string> {
+  const prefix = `gate-${step}-`;
+  const attempts = (await fs.readdir(runDir)).flatMap((entry) => {
+    if (!entry.startsWith(prefix) || !entry.endsWith(".log")) return [];
+    const attemptText = entry.slice(prefix.length, -".log".length);
+    if (!/^\d+$/.test(attemptText)) return [];
+    return [Number.parseInt(attemptText, 10)];
+  });
+  const attempt = Math.max(0, ...attempts) + 1;
+  return path.join(runDir, `${prefix}${attempt}.log`);
+}
 
 export type IntegrateOutcome =
   | { status: "merged" }
@@ -130,7 +144,11 @@ async function requalifyAfterMerge(
     const detail = qa.verdict?.feedback ?? qa.verdict?.question ?? "no valid verdict";
     return { status: "blocked", reason: `post-merge QA did not pass: ${detail}` };
   }
-  const gate = await runGate(context.config.gate, worktree.path);
+  const gate = await runGate(
+    context.config.gate,
+    worktree.path,
+    await nextIntegrationGateLogPath(runDir, "requalify"),
+  );
   if (!gate.ok)
     return { status: "blocked", reason: `gate failed after re-QA:\n\n${formatGateFailure(gate)}` };
   return { status: "resolved", notes };
@@ -146,9 +164,8 @@ async function resolveConflictedMerge(
   ticket: Ticket,
   worktree: Worktree,
   notePath: string,
+  runDir: string,
 ): Promise<ConflictOutcome> {
-  const runDir = path.join(runsDir(context.stateDir, ticket.id), "integration");
-  await ensureDir(runDir);
   const verdict = await runIntegrationAgent(context, ticket, worktree, runDir);
   if (await isMergeInProgress(worktree.path))
     return {
@@ -158,7 +175,11 @@ async function resolveConflictedMerge(
   if (!verdict) return { status: "blocked", reason: "integration agent produced no valid verdict" };
   const notes = verdict.notes ?? "";
 
-  const gate = await runGate(context.config.gate, worktree.path);
+  const gate = await runGate(
+    context.config.gate,
+    worktree.path,
+    await nextIntegrationGateLogPath(runDir, "conflict-resolution"),
+  );
   context.log.emit("gate_result", ticket.id, { ok: gate.ok });
   if (!gate.ok)
     return {
@@ -289,6 +310,8 @@ export async function integrateTicket(
   worktree: Worktree,
 ): Promise<IntegrateOutcome> {
   const target = context.config.integration.target_branch;
+  const runDir = path.join(runsDir(context.stateDir, ticket.id), "integration");
+  await ensureDir(runDir);
   const notePath = await ensureTicketNote(
     ticket,
     path.join(context.repoRoot, context.config.ticketsDir),
@@ -327,13 +350,17 @@ export async function integrateTicket(
       return blocked(context, ticket, notePath, reason);
     }
     // 2–4. Conflicts — agent resolution, gate, and re-QA if it got complicated.
-    const resolution = await resolveConflictedMerge(context, ticket, worktree, notePath);
+    const resolution = await resolveConflictedMerge(context, ticket, worktree, notePath, runDir);
     if (resolution.status === "blocked")
       return blocked(context, ticket, notePath, resolution.reason);
     resolutionNote = resolution.notes;
   } else {
     // Clean merge still reruns the gate pre-land.
-    const gate = await runGate(context.config.gate, worktree.path);
+    const gate = await runGate(
+      context.config.gate,
+      worktree.path,
+      await nextIntegrationGateLogPath(runDir, "clean-merge"),
+    );
     context.log.emit("gate_result", ticket.id, { ok: gate.ok });
     if (!gate.ok) {
       return blocked(

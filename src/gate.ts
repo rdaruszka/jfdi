@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import * as fs from "node:fs/promises";
 import type { GateCommand } from "./config.js";
 import { EXIT_COMMAND_NOT_EXECUTABLE } from "./util/exit-codes.js";
 
@@ -6,7 +7,7 @@ export interface GateCommandResult {
   name: string;
   cmd: string;
   code: number;
-  /** Interleaved stdout+stderr, tail-truncated. */
+  /** Interleaved stdout+stderr excerpt sized for prompt context. */
   output: string;
   durationMs: number;
 }
@@ -14,15 +15,21 @@ export interface GateCommandResult {
 export interface GateResult {
   ok: boolean;
   results: GateCommandResult[];
+  /** Absolute path to the complete combined gate transcript. */
+  logPath: string;
 }
 
-const MAX_OUTPUT_CHARS = 20_000;
+/** Transcript characters quoted into prompts; the complete output stays in `logPath`. */
+const MAX_PROMPT_OUTPUT_CHARS = 20_000;
+const TRUNCATION_MARKER = "\n…(middle truncated; full output is in the gate log)…\n";
 const MILLISECONDS_PER_SECOND = 1_000;
 
-function tail(output: string): string {
-  return output.length <= MAX_OUTPUT_CHARS
-    ? output
-    : `…(truncated)…\n${output.slice(-MAX_OUTPUT_CHARS)}`;
+function promptExcerpt(output: string): string {
+  if (output.length <= MAX_PROMPT_OUTPUT_CHARS) return output;
+  const contentChars = MAX_PROMPT_OUTPUT_CHARS - TRUNCATION_MARKER.length;
+  const headChars = Math.ceil(contentChars / 2);
+  const tailChars = contentChars - headChars;
+  return `${output.slice(0, headChars)}${TRUNCATION_MARKER}${output.slice(-tailChars)}`;
 }
 
 function runCommand(cmd: string, cwd: string): Promise<{ code: number; output: string }> {
@@ -48,17 +55,23 @@ function runCommand(cmd: string, cwd: string): Promise<{ code: number; output: s
 export async function runGate(
   gate: GateCommand[],
   cwd: string,
+  logPath: string,
   onCommand?: (name: string) => void,
 ): Promise<GateResult> {
-  const results: GateCommandResult[] = [];
+  const fullResults: GateCommandResult[] = [];
   for (const { name, cmd } of gate) {
     onCommand?.(name);
     const started = Date.now();
     const { code, output } = await runCommand(cmd, cwd);
-    results.push({ name, cmd, code, output: tail(output), durationMs: Date.now() - started });
-    if (code !== 0) return { ok: false, results };
+    fullResults.push({ name, cmd, code, output, durationMs: Date.now() - started });
+    if (code !== 0) break;
   }
-  return { ok: true, results };
+  await fs.writeFile(logPath, fullResults.map((result) => result.output).join(""), "utf8");
+  const results = fullResults.map((result) => ({
+    ...result,
+    output: promptExcerpt(result.output),
+  }));
+  return { ok: results.every((result) => result.code === 0), results, logPath };
 }
 
 /**
@@ -82,8 +95,9 @@ export function formatGateFailure(result: GateResult): string {
   if (!failed) return "gate failed with no results";
   return [
     `Mechanical gate failed at step "${failed.name}" (\`${failed.cmd}\`, exit ${failed.code}).`,
+    `Full output: \`${result.logPath}\``,
     "",
-    "Output:",
+    "Prompt-sized output excerpt (head and tail):",
     "```",
     failed.output.trim(),
     "```",

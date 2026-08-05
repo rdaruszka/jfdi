@@ -28,8 +28,10 @@ with separators flattened to dashes (`/Users/alice/dev/app` →
       round-1/, round-2/, …    one per feedback round
         <stage>.log.jsonl        raw harness session output
         <stage>.verdict.json     the agent's verdict
+        gate-<step>-<attempt>.log complete gate output for every attempt
     integration/
       integration.log.jsonl / integration.verdict.json
+      gate-<step>-<attempt>.log complete integration gate output
       requalify/               the complicated-merge re-QA session
 ```
 

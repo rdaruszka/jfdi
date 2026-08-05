@@ -285,6 +285,7 @@ describe("runPipeline", () => {
           // gate's own output — not a fresh session in a fresh round.
           expect(spec.prompt).toContain("Your implementation session is being continued");
           expect(spec.prompt).toContain("Mechanical gate failed");
+          expect(spec.prompt).toContain("gate-implementation-1.log");
         }
         // The first session forgets impl.txt → gate fails; the fix session
         // inside the same round writes it.
@@ -300,6 +301,12 @@ describe("runPipeline", () => {
       await writeVerdict(spec.prompt, { verdict: "pass" });
       return { ok: true, text: "" };
     });
+    context.config.gate = [
+      {
+        name: "check",
+        cmd: "if test -f impl.txt; then echo GREEN_TRANSCRIPT; else echo RED_TRANSCRIPT >&2; exit 1; fi",
+      },
+    ];
 
     const ticket = await resolveTicket("Gate learner", fixture.ticketsDir);
     const outcome = await runPipeline(context, ticket);
@@ -311,6 +318,13 @@ describe("runPipeline", () => {
     const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
     expect(note).toContain(
       "JFDI gate FAILED at `check` — returning to Implementation for gate fix 1 of 10",
+    );
+    const roundDir = path.join(fixture.stateDir, "runs", ticket.id, "run-1", "round-1");
+    expect(await fs.readFile(path.join(roundDir, "gate-implementation-1.log"), "utf8")).toBe(
+      "RED_TRANSCRIPT\n",
+    );
+    expect(await fs.readFile(path.join(roundDir, "gate-implementation-2.log"), "utf8")).toBe(
+      "GREEN_TRANSCRIPT\n",
     );
   });
 
