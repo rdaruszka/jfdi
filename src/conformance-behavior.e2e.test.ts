@@ -335,12 +335,14 @@ describe("CLI surface", () => {
           "gate",
           "integration",
           "max_concurrent",
+          "permissions",
           "pipeline",
           "stages",
           "ticketsDir",
         ].sort(),
       );
       expect(config.integration.target_branch).toBe("main");
+      expect(config.permissions).toEqual({ mode: "auto" });
       expect(config.pipeline.max_rounds).toBe(3);
       // The scaffolded mix: a cross-provider review, everything else on Claude.
       expect(config.stages).toEqual({

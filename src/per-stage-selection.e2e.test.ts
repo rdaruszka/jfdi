@@ -231,8 +231,11 @@ async function invocations(sandbox: Sandbox): Promise<Invocation[]> {
       // it as a `-c` override. Reading either spelling from either CLI would
       // let a swapped mapping pass.
       const codexEffort = () => {
-        const at = argv.indexOf("-c");
-        return at === -1 ? undefined : argv[at + 1]?.replace("model_reasoning_effort=", "");
+        const effortOverride = argv.find(
+          (argument, index) =>
+            argv[index - 1] === "-c" && argument.startsWith("model_reasoning_effort="),
+        );
+        return effortOverride?.replace("model_reasoning_effort=", "");
       };
       return {
         cli,
