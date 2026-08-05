@@ -368,8 +368,8 @@ describe("CodexHarness selection flags", () => {
     {
       permissionMode: "auto" as const,
       codexArgs: [
-        "--sandbox",
-        "workspace-write",
+        "-c",
+        'sandbox_mode="workspace-write"',
         "-c",
         "sandbox_workspace_write.network_access=true",
       ],
@@ -401,10 +401,10 @@ describe("CodexHarness selection flags", () => {
       for (const argv of [await headless.argv(), await resume.argv(), await interactive.argv()]) {
         expect(argv).toEqual(expect.arrayContaining(codexArgs));
         expect(argv).not.toContain("--full-auto");
+        // `codex exec resume` rejects `--sandbox`, so no spawn form may use it.
+        expect(argv).not.toContain("--sandbox");
         if (permissionMode === "auto") {
           expect(argv).not.toContain("--dangerously-bypass-approvals-and-sandbox");
-        } else {
-          expect(argv).not.toContain("--sandbox");
         }
       }
     },

@@ -121,14 +121,17 @@ outside JFDI.
 
 | JFDI mode | Claude Code | Codex |
 |---|---|---|
-| `auto` | `--permission-mode auto` | `--sandbox workspace-write -c sandbox_workspace_write.network_access=true` |
+| `auto` | `--permission-mode auto` | `-c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=true` |
 | `bypass` | `--permission-mode bypassPermissions` | `--dangerously-bypass-approvals-and-sandbox` |
 
 Codex's `workspace-write` sandbox keeps filesystem writes inside the worktree.
 Network access is normally off in that sandbox, so JFDI enables it to keep
-unattended sessions able to fetch and resolve packages. JFDI does not use the
-deprecated `--full-auto` compatibility flag. Claude Code's `auto` mode needs no
-separate network setting.
+unattended sessions able to fetch and resolve packages. The sandbox is selected
+via `-c sandbox_mode=` rather than the equivalent `--sandbox` flag because
+`codex exec resume` (continuations) rejects `--sandbox`; the `-c` spelling is
+accepted by every spawn form. JFDI does not use the deprecated `--full-auto`
+compatibility flag. Claude Code's `auto` mode needs no separate network
+setting.
 
 ### `max_concurrent`
 

@@ -27,10 +27,13 @@ const repoRoot = path.dirname(import.meta.dirname);
 const cliPath = path.join(repoRoot, "dist", "index.js");
 const PIPELINE_TIMEOUT_MS = 120_000;
 
-/** The auto-mode Codex args, in order — sandbox plus the network override. */
+/**
+ * The auto-mode Codex args, in order — sandbox plus the network override, both
+ * as `-c` config overrides because `codex exec resume` rejects `--sandbox`.
+ */
 const CODEX_AUTO_ARGS = [
-  "--sandbox",
-  "workspace-write",
+  "-c",
+  'sandbox_mode="workspace-write"',
   "-c",
   "sandbox_workspace_write.network_access=true",
 ];
@@ -77,6 +80,14 @@ process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_err
 const STUB_CODEX = `#!/usr/bin/env node
 const cliName = "codex";
 const argv = process.argv.slice(2);
+// Mirror the real CLI's contract (codex 0.146.0): \`exec resume\` has no
+// \`--sandbox\` flag. A stub that accepted it there would hide the exact
+// production failure this suite exists to catch — a continuation dying on
+// argument parsing before any thread starts.
+if (argv[0] === "exec" && argv[1] === "resume" && argv.includes("--sandbox")) {
+  process.stderr.write("error: unexpected argument '--sandbox' found\\n");
+  process.exit(2);
+}
 const prompt = argv[argv.length - 1] || "";
 process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "codex-thread" }) + "\\n");
 ${STUB_BODY}
@@ -268,6 +279,7 @@ describe("permission mode, end to end", () => {
         } else {
           expect(call.argv).toContain(CODEX_BYPASS_ARG);
           expect(call.argv).not.toContain("--sandbox");
+          expect(call.argv).not.toContain('sandbox_mode="workspace-write"');
           expect(call.argv).not.toContain("sandbox_workspace_write.network_access=true");
         }
       }
@@ -300,7 +312,8 @@ describe("permission mode, end to end", () => {
           expect(containsInOrder(call.argv, CODEX_AUTO_ARGS)).toBe(true);
           // Flags still precede the positional thread id on a resume.
           const threadAt = call.argv.indexOf("codex-thread");
-          expect(threadAt).toBeGreaterThan(call.argv.indexOf("--sandbox"));
+          expect(call.argv.indexOf("-c")).toBeGreaterThan(-1);
+          expect(threadAt).toBeGreaterThan(call.argv.indexOf("-c"));
         }
       }
     },

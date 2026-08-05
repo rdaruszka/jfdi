@@ -109,8 +109,8 @@ describe("interactive provider selection", () => {
       const trace = await readTrace(sandbox.tracePath);
       expect(trace.executable).toBe("codex");
       expect(trace.args.slice(0, 4)).toEqual([
-        "--sandbox",
-        "workspace-write",
+        "-c",
+        'sandbox_mode="workspace-write"',
         "-c",
         "sandbox_workspace_write.network_access=true",
       ]);
@@ -132,8 +132,8 @@ describe("interactive provider selection", () => {
 
     const trace = await readTrace(sandbox.tracePath);
     expect(trace.args).toEqual([
-      "--sandbox",
-      "workspace-write",
+      "-c",
+      'sandbox_mode="workspace-write"',
       "-c",
       "sandbox_workspace_write.network_access=true",
       "--model",

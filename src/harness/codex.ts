@@ -50,10 +50,15 @@ function codexSelectionArgs(selection: HarnessSelection): string[] {
   ];
 }
 
-/** The instance-wide permission mode, as Codex spells it. */
+/**
+ * The instance-wide permission mode, as Codex spells it. `auto` uses the `-c`
+ * config spelling, not `--sandbox`: `codex exec resume` rejects `--sandbox`
+ * (verified against Codex 0.146.0, Aug 2026), and both subcommands accept the
+ * `-c` overrides, so one spelling serves fresh spawns and continuations alike.
+ */
 function codexPermissionArgs(permissionMode: PermissionMode): string[] {
   return permissionMode === "auto"
-    ? ["--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=true"]
+    ? ["-c", 'sandbox_mode="workspace-write"', "-c", "sandbox_workspace_write.network_access=true"]
     : ["--dangerously-bypass-approvals-and-sandbox"];
 }
 

@@ -144,12 +144,14 @@ the default is `auto`, while `bypass` is an explicit opt-in:
 
 | JFDI mode | Claude Code | Codex permission args |
 |---|---|---|
-| `auto` | `--permission-mode auto` | `--sandbox workspace-write -c sandbox_workspace_write.network_access=true` |
+| `auto` | `--permission-mode auto` | `-c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=true` |
 | `bypass` | `--permission-mode bypassPermissions` | `--dangerously-bypass-approvals-and-sandbox` |
 
 Codex network access is enabled under `workspace-write` so a headless session
 can fetch and resolve packages without weakening the worktree filesystem
-boundary. JFDI deliberately does not use Codex's deprecated `--full-auto`
+boundary. The sandbox is spelled as a `-c sandbox_mode=` override, not the
+equivalent `--sandbox` flag, because `codex exec resume` rejects `--sandbox`
+while every Codex spawn form accepts `-c`. JFDI deliberately does not use Codex's deprecated `--full-auto`
 compatibility path. Interactive launches use the same permission mode as
 pipeline sessions. The neutral config value is passed separately from a
 stage's harness/model/effort selection, and each harness owns its provider
