@@ -167,6 +167,21 @@ describe("runPipeline", () => {
     if (outcome.status === "passed") expect(outcome.report.rounds).toBe(2);
   });
 
+  // The failure tail sits past 4_100 chars, beyond every removed cap
+  // (2_000/1_000/500). Asserting the tail survives into the retry prompt is
+  // what the removal buys — and it must be checked *after* the run, on
+  // harness.calls: an expect() thrown inside the handler is swallowed by the
+  // FakeHarness catch, turned into a crashed session, and quietly recovered by
+  // a later round, so an in-handler assertion passes with the caps still in.
+  const retryImplementationPrompt = (harness: FakeHarness): string => {
+    const implementationPrompts = harness.calls
+      .map((call) => call.promptSpec.prompt)
+      .filter((prompt) => sessionKindOf(prompt) === "implementation");
+    const retry = implementationPrompts[1];
+    if (!retry) throw new Error("expected a second implementation session (the retry)");
+    return retry;
+  };
+
   it("feeds a failed implementation session's full result text into the retry", async () => {
     const failureTail = "implementation failure tail";
     const failureText = `implementation failed\n${"x".repeat(4_100)}\n${failureTail}`;
@@ -176,7 +191,6 @@ describe("runPipeline", () => {
       if (stage === "implementation") {
         implementationSessions += 1;
         if (implementationSessions === 1) return { ok: false, text: failureText };
-        expect(spec.prompt).toContain(failureTail);
         await commitFile(options.cwd, "impl.txt", "fixed\n", "fix implementation");
         await writeVerdict(spec.prompt, { status: "done", summary: "fixed the failure" });
       } else {
@@ -187,6 +201,7 @@ describe("runPipeline", () => {
 
     const ticket = await resolveTicket("Retry failed implementation", fixture.ticketsDir);
     expect((await runPipeline(context, ticket)).status).toBe("passed");
+    expect(retryImplementationPrompt(context.harness)).toContain(failureTail);
   });
 
   it("feeds a failed code review session's full result text into the retry", async () => {
@@ -198,7 +213,6 @@ describe("runPipeline", () => {
       const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         implementationSessions += 1;
-        if (implementationSessions === 2) expect(spec.prompt).toContain(failureTail);
         await commitFile(
           options.cwd,
           "impl.txt",
@@ -221,6 +235,7 @@ describe("runPipeline", () => {
 
     const ticket = await resolveTicket("Retry failed code review", fixture.ticketsDir);
     expect((await runPipeline(context, ticket)).status).toBe("passed");
+    expect(retryImplementationPrompt(context.harness)).toContain(failureTail);
   });
 
   it("feeds a failed QA session's full result text into the retry", async () => {
@@ -232,7 +247,6 @@ describe("runPipeline", () => {
       const stage = sessionKindOf(spec.prompt);
       if (stage === "implementation") {
         implementationSessions += 1;
-        if (implementationSessions === 2) expect(spec.prompt).toContain(failureTail);
         await commitFile(
           options.cwd,
           "impl.txt",
@@ -255,6 +269,7 @@ describe("runPipeline", () => {
 
     const ticket = await resolveTicket("Retry failed QA", fixture.ticketsDir);
     expect((await runPipeline(context, ticket)).status).toBe("passed");
+    expect(retryImplementationPrompt(context.harness)).toContain(failureTail);
   });
 
   it("gate failure feeds back into a fix session without consuming the round", async () => {
