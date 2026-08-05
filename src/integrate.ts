@@ -21,7 +21,6 @@ import {
   runQaStage,
   runsDir,
   sessionSelectionFields,
-  worktreesDir,
 } from "./pipeline.js";
 import { formatGateCommands, loadPrompt, renderPrompt } from "./prompts.js";
 import { loadReport } from "./report.js";
