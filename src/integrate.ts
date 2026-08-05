@@ -209,11 +209,14 @@ type StaleMergeOutcome = { status: "clear"; note?: string } | { status: "blocked
  * A previous integration can leave the worktree mid-merge (the agent gave up
  * half-resolved and we blocked). Re-entering there makes git refuse with "you
  * have not concluded your merge" — which is not a conflict, so it would block
- * again with a baffling reason. Abort first: a conflicted merge has committed
- * nothing and left the branch ref alone, so this restores the pre-merge state
- * losslessly. A worktree that is gone has no merge to abort; the merge itself
- * reports its absence as a blocked integration. An abort git refuses is fatal
- * to this integration — everything after it would run over conflict markers.
+ * again with a baffling reason. Abort first: this discards the integration
+ * agent's half-done conflict resolutions because mid-merge working-tree state
+ * cannot be checkpoint-committed. The raw session log at
+ * runs/<ticket>/integration/integration.log.jsonl retains the agent's edit
+ * history for manual archaeology. A worktree that is gone has no merge to abort;
+ * the merge itself reports its absence as a blocked integration. An abort git
+ * refuses is fatal to this integration — everything after it would run over
+ * conflict markers.
  */
 async function clearStaleMerge(worktree: Worktree): Promise<StaleMergeOutcome> {
   if (!(await fileExists(worktree.path))) return { status: "clear" };
