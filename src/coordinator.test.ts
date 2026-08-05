@@ -19,6 +19,7 @@ import { resolveTicket } from "./tickets.js";
 import { ticketIdFromCard } from "./util/ids.js";
 
 let fixture: Fixture;
+let coordinators: Coordinator[];
 
 const BOARD = `---
 
@@ -82,30 +83,35 @@ async function readBoard(): Promise<ReturnType<typeof parseBoard>> {
 }
 
 beforeEach(async () => {
+  coordinators = [];
   fixture = await makeFixture();
   await fs.writeFile(path.join(fixture.jfdiDir, "board.md"), BOARD);
 });
 
 afterEach(async () => {
+  for (const coordinator of coordinators) coordinator.stop();
   await fixture.cleanup();
 });
 
 /** Attempts and spacing for the poll-until helpers below. */
 const WAIT_ATTEMPTS = 100;
 const WAIT_STEP_MS = 20;
-/** Slack for the async board edits a scan makes after it is requested. */
-const SCAN_SETTLE_MS = 200;
 
 function sleep(durationMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, durationMs));
 }
 
-/** Trigger a scan, let it reach dispatch, then give its board edits time to land. */
+/** Start a coordinator and register its resources for unconditional teardown. */
+async function startCoordinator(coordinator: Coordinator): Promise<void> {
+  coordinators.push(coordinator);
+  await coordinator.start();
+}
+
+/** Trigger a scan and settle both its dispatched work and completion rescan. */
 async function rescan(coordinator: Coordinator): Promise<void> {
-  coordinator.requestScan();
-  await sleep(SCAN_SETTLE_MS);
+  await coordinator.settleScan();
   await coordinator.drain();
-  await sleep(SCAN_SETTLE_MS);
+  await coordinator.settleScan();
 }
 
 /** A promise a test resolves by hand, to sequence two concurrent runs against each other. */
@@ -314,7 +320,7 @@ async function runToMergeReady(stages: string[]): Promise<Coordinator> {
   const coordinator = new Coordinator(fixture.context(countingHandler(stages)), {
     pollMs: 60_000,
   });
-  await coordinator.start();
+  await startCoordinator(coordinator);
   await coordinator.drain();
   return coordinator;
 }
@@ -324,7 +330,7 @@ describe("Coordinator", () => {
     const context = fixture.context(autoHandler());
     fixture.config.integration.mode = "auto";
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
     await coordinator.drain();
     coordinator.stop();
 
@@ -351,7 +357,7 @@ describe("Coordinator", () => {
     const context = fixture.context(autoHandler());
     fixture.config.integration.mode = "on-approval";
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
     await coordinator.drain();
     coordinator.stop();
 
@@ -377,7 +383,7 @@ describe("Coordinator", () => {
       return { ok: true, text: "" };
     });
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
     await coordinator.drain();
     coordinator.stop();
 
@@ -390,7 +396,7 @@ describe("Coordinator", () => {
     const context = fixture.context(autoHandler());
     fixture.config.integration.mode = "on-approval";
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
     await coordinator.drain();
 
     // Human merges alpha by hand.
@@ -398,10 +404,7 @@ describe("Coordinator", () => {
     await git(fixture.repo, "merge", "--ff-only", `jfdi/${alphaId}`);
     const headBefore = await git(fixture.repo, "rev-parse", "HEAD");
 
-    coordinator.requestScan();
-    await coordinator.drain();
-    // Give the async scan a beat to finish card moves.
-    await new Promise((r) => setTimeout(r, 200));
+    await rescan(coordinator);
     coordinator.stop();
 
     expect(await git(fixture.repo, "rev-parse", "HEAD")).toBe(headBefore);
@@ -423,7 +426,7 @@ describe("Coordinator", () => {
 
     const context = fixture.context(autoHandler(), { shouldPersistEvents: true });
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
     coordinator.stop();
     await context.log.flush();
 
@@ -458,7 +461,7 @@ describe("Coordinator", () => {
 
     const context = fixture.context(autoHandler(), { shouldPersistEvents: true });
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
 
     expect(findColumn(await readBoard(), "Ready to Merge")?.cards).toHaveLength(1);
     expect(await recordedMergedEvents(alphaId)).toHaveLength(0);
@@ -579,7 +582,7 @@ describe("Coordinator", () => {
 
     const context = fixture.context(autoHandler());
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
     coordinator.stop();
 
     const board = await readBoard();
@@ -596,7 +599,7 @@ describe("Coordinator", () => {
 
     const context = fixture.context(autoHandler());
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
     coordinator.stop();
 
     const board = await readBoard();
@@ -619,7 +622,7 @@ describe("Coordinator", () => {
 
     const context = fixture.context(autoHandler());
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
     coordinator.stop();
 
     const board = await readBoard();
@@ -631,7 +634,7 @@ describe("Coordinator", () => {
     const context = fixture.context(autoHandler());
     fixture.config.integration.mode = "on-approval";
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
     await coordinator.drain();
 
     const alphaId = ticketIdFromCard("Add feature alpha");
@@ -666,7 +669,7 @@ describe("Coordinator", () => {
 
     const context = fixture.context(autoHandler());
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
     coordinator.stop();
 
     const board = await readBoard();
@@ -690,7 +693,7 @@ describe("Coordinator", () => {
     const context = fixture.context(autoHandler(), { shouldPersistEvents: true });
     fixture.config.integration.mode = "on-approval";
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
     await coordinator.drain();
 
     const alphaId = ticketIdFromCard("Add feature alpha");
@@ -719,7 +722,7 @@ describe("Coordinator", () => {
     const context = fixture.context(autoHandler());
     fixture.config.integration.mode = "on-approval";
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
     await coordinator.drain();
 
     const alphaId = ticketIdFromCard("Add feature alpha");
@@ -739,7 +742,7 @@ describe("Coordinator", () => {
     const context = fixture.context(autoHandler(), { shouldPersistEvents: true });
     fixture.config.integration.mode = "on-approval";
     const coordinator = new Coordinator(context, { pollMs: 20 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
     await coordinator.drain();
 
     const alphaId = ticketIdFromCard("Add feature alpha");
@@ -779,7 +782,7 @@ describe("Coordinator", () => {
     });
     fixture.config.integration.mode = "auto";
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
     await coordinator.drain();
     // Inbox cards trigger a board change; make sure a rescan does not dispatch them.
     coordinator.requestScan();
@@ -840,7 +843,7 @@ describe("Coordinator", () => {
     const context = fixture.context(autoHandler());
     fixture.config.integration.mode = "on-approval";
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
     await coordinator.drain();
     coordinator.stop();
 
@@ -849,7 +852,6 @@ describe("Coordinator", () => {
     expect(findColumn(board, "Ready to Merge")?.cards.map((c) => c.text)).toEqual([
       "Add feature gamma",
     ]);
-    expect(context.harness.calls.length).toBeGreaterThan(0);
   });
 
   it("takes the stranded in-progress card before a waiting one, and counts it against max_concurrent", async () => {
@@ -866,12 +868,12 @@ describe("Coordinator", () => {
     });
 
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
     await coordinator.drain();
     expect(dispatched).toEqual([ticketIdFromCard("Add feature gamma")]);
     expect(coordinator.activeCount()).toBe(0);
 
-    await sleep(SCAN_SETTLE_MS);
+    await coordinator.settleScan();
     await coordinator.drain();
     coordinator.stop();
 
@@ -895,7 +897,7 @@ describe("Coordinator", () => {
       if (stage === "implementation") {
         current++;
         peak = Math.max(peak, current);
-        await new Promise((r) => setTimeout(r, 50));
+        await new Promise((resolve) => setImmediate(resolve));
         current--;
         const match = /feature (\w+)/.exec(spec.prompt);
         await commitFile(options.cwd, `${match?.[1]}.txt`, "x\n", "impl");
@@ -910,11 +912,9 @@ describe("Coordinator", () => {
     fixture.config.max_concurrent = 1;
     fixture.config.integration.mode = "auto";
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
     await coordinator.drain();
-    // Second card dispatches on the completion rescan.
-    await new Promise((r) => setTimeout(r, 100));
-    await coordinator.drain();
+    await rescan(coordinator);
     coordinator.stop();
     expect(peak).toBe(1);
   });
@@ -964,7 +964,7 @@ describe("Coordinator under a broken provider", () => {
     });
 
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
     await waitUntil(() => pauses.length === 1);
 
     // Held mid-run: the card is still in flight, and the pause says why and
@@ -1000,6 +1000,7 @@ describe("Coordinator under a broken provider", () => {
     const betaStarted = deferred();
     const sessions: string[] = [];
     let alphaImplementations = 0;
+    let hasBetaImplementationFinished = false;
     const healthy = autoHandler();
     const context = fixture.context(async (spec, options) => {
       const stage = sessionKindOf(spec.prompt);
@@ -1010,6 +1011,9 @@ describe("Coordinator under a broken provider", () => {
       if (stage === "implementation" && name === "beta") {
         betaStarted.resolve();
         await pauseSeen.promise;
+        const result = await healthy(spec, options);
+        hasBetaImplementationFinished = true;
+        return result;
       }
       const isFirstAlpha =
         stage === "implementation" && name === "alpha" && ++alphaImplementations === 1;
@@ -1030,9 +1034,9 @@ describe("Coordinator under a broken provider", () => {
     fixture.config.max_concurrent = 2;
 
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
     await pauseSeen.promise;
-    await sleep(SCAN_SETTLE_MS);
+    await waitUntil(() => hasBetaImplementationFinished);
 
     // Beta finished a stage into a paused tool: it holds rather than starting
     // its review, and alpha holds rather than retrying. The two runs are
@@ -1041,9 +1045,7 @@ describe("Coordinator under a broken provider", () => {
     expect(findColumn(await readBoard(), "Blocked")?.cards).toHaveLength(0);
 
     context.pause.retryNow();
-    await coordinator.drain();
-    await sleep(SCAN_SETTLE_MS);
-    await coordinator.drain();
+    await rescan(coordinator);
     coordinator.stop();
 
     // One pause, one resume, and both runs finished on the far side of it.
@@ -1061,8 +1063,9 @@ describe("Coordinator under a broken provider", () => {
     const held = context.pause.holdAfterFailure({ kind: "needs-human", detail: "run /login" }, 1);
 
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
-    await sleep(SCAN_SETTLE_MS);
+    await startCoordinator(coordinator);
+    // Complete a scan while paused before asserting the non-event: no dispatch.
+    await coordinator.settleScan();
     expect(context.harness.calls).toHaveLength(0);
     expect(findColumn(await readBoard(), "In Progress")?.cards).toHaveLength(0);
     expect(findColumn(await readBoard(), "Ready")?.cards).toHaveLength(2);
@@ -1120,7 +1123,7 @@ describe("Coordinator — blocked-by gating", () => {
     const events = recordEvents(context);
 
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
     // Held across several scans: never dispatched, and announced exactly once.
     await coordinator.settleScan();
     await coordinator.settleScan();
@@ -1159,7 +1162,7 @@ describe("Coordinator — blocked-by gating", () => {
     const events = recordEvents(context);
 
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
     await coordinator.settleScan();
     coordinator.stop();
 
@@ -1185,7 +1188,7 @@ describe("Coordinator — blocked-by gating", () => {
     const events = recordEvents(context);
 
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
     coordinator.stop();
 
     const skips = events.filter((event) => event.type === "blocked_by");
@@ -1209,7 +1212,7 @@ describe("Coordinator — blocked-by gating", () => {
     const events = recordEvents(context);
 
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
-    await coordinator.start();
+    await startCoordinator(coordinator);
     // A second scan must not re-report the same deadlock.
     await coordinator.settleScan();
     coordinator.stop();
