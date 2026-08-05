@@ -892,35 +892,56 @@ describe("Coordinator under a broken provider", () => {
 
     expect(findColumn(await readBoard(), "Ready to Merge")?.cards).toHaveLength(2);
   });
+});
 
-  const writeNote = async (id: string, frontmatter: string): Promise<void> => {
-    await fs.writeFile(
-      path.join(fixture.ticketsDir, `${id}.md`),
-      `---\n${frontmatter}\n---\n\n# ${id}\n\nSome work to do.\n`,
-    );
-  };
+/** A minimal board with the given columns, each holding the listed card lines. */
+function boardWithColumns(columns: Array<[string, string[]]>): string {
+  const body = columns
+    .map(([name, cards]) => `## ${name}\n\n${cards.map((card) => `- [ ] ${card}\n`).join("")}`)
+    .join("\n");
+  return `---\n\nkanban-plugin: board\n\n---\n\n${body}`;
+}
 
-  const countTypes = (events: JfdiEvent[], type: string): number =>
-    events.filter((event) => event.type === type).length;
+async function writeNote(id: string, frontmatter: string): Promise<void> {
+  await fs.writeFile(
+    path.join(fixture.ticketsDir, `${id}.md`),
+    `---\n${frontmatter}\n---\n\n# ${id}\n\nSome work to do.\n`,
+  );
+}
 
-  it("holds a begin-column card while its blocker is undone, then dispatches it", async () => {
+function countTypes(events: JfdiEvent[], type: string): number {
+  return events.filter((event) => event.type === type).length;
+}
+
+/** Collect the whole event stream a coordinator emits, for per-episode counts. */
+function recordEvents(context: ReturnType<Fixture["context"]>): JfdiEvent[] {
+  const events: JfdiEvent[] = [];
+  context.log.on((event) => events.push(event));
+  return events;
+}
+
+describe("Coordinator — blocked-by gating", () => {
+  it("holds a begin-column card until its blocker reaches Done, then dispatches it", async () => {
     await writeNote("alpha", 'blocked-by:\n  - "[[blocker]]"');
     // The blocker's card is parked off the dispatch path; only reaching Done frees alpha.
     await fs.writeFile(
       boardPath(),
-      `---\n\nkanban-plugin: board\n\n---\n\n## Ready\n\n- [ ] work on alpha [[alpha]]\n\n## In Progress\n\n## Done\n\n## Backlog\n\n- [ ] the blocker [[blocker]]\n`,
+      boardWithColumns([
+        ["Ready", ["work on alpha [[alpha]]"]],
+        ["In Progress", []],
+        ["Done", []],
+        ["Backlog", ["the blocker [[blocker]]"]],
+      ]),
     );
     const context = fixture.context(countingHandler([]));
     fixture.config.integration.mode = "auto";
-    const events: JfdiEvent[] = [];
-    context.log.on((event) => events.push(event));
+    const events = recordEvents(context);
 
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
     await coordinator.start();
-    await coordinator.drain();
-    // Re-checked every scan, never dispatched, and only announced once.
-    await rescan(coordinator);
-    await rescan(coordinator);
+    // Held across several scans: never dispatched, and announced exactly once.
+    await coordinator.settleScan();
+    await coordinator.settleScan();
     expect(context.harness.calls).toHaveLength(0);
     expect(findColumn(await readBoard(), "Ready")?.cards.map((c) => c.text)).toEqual([
       "work on alpha [[alpha]]",
@@ -928,10 +949,11 @@ describe("Coordinator under a broken provider", () => {
     expect(countTypes(events, "blocked_by")).toBe(1);
     expect(countTypes(events, "unblocked")).toBe(0);
 
-    // The blocker lands in Done — the next scan frees alpha.
+    // The blocker lands in Done — the next scan frees alpha, which runs and merges.
     await moveCard(boardPath(), "- [ ] the blocker [[blocker]]", "Backlog", "Done");
-    await rescan(coordinator);
+    await coordinator.settleScan();
     await coordinator.drain();
+    await coordinator.settleScan();
     coordinator.stop();
 
     expect(findColumn(await readBoard(), "Done")?.cards.some((c) => c.text.includes("alpha"))).toBe(
@@ -945,15 +967,18 @@ describe("Coordinator under a broken provider", () => {
     await writeNote("alpha", 'blocked-by:\n  - "[[ghost]]"');
     await fs.writeFile(
       boardPath(),
-      `---\n\nkanban-plugin: board\n\n---\n\n## Ready\n\n- [ ] work on alpha [[alpha]]\n\n## In Progress\n\n## Done\n`,
+      boardWithColumns([
+        ["Ready", ["work on alpha [[alpha]]"]],
+        ["In Progress", []],
+        ["Done", []],
+      ]),
     );
     const context = fixture.context(countingHandler([]));
-    const events: JfdiEvent[] = [];
-    context.log.on((event) => events.push(event));
+    const events = recordEvents(context);
 
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
     await coordinator.start();
-    await coordinator.drain();
+    await coordinator.settleScan();
     coordinator.stop();
 
     expect(context.harness.calls).toHaveLength(0);
@@ -963,22 +988,48 @@ describe("Coordinator under a broken provider", () => {
     expect(skips[0]?.data?.missing).toEqual(["ghost"]);
   });
 
+  it("deduplicates a blocker listed twice into one skip-event entry", async () => {
+    // The shared unresolvedBlockers policy must dedupe on the coordinator path too.
+    await writeNote("alpha", 'blocked-by:\n  - "[[ghost]]"\n  - "[[ghost]]"');
+    await fs.writeFile(
+      boardPath(),
+      boardWithColumns([
+        ["Ready", ["work on alpha [[alpha]]"]],
+        ["In Progress", []],
+        ["Done", []],
+      ]),
+    );
+    const context = fixture.context(countingHandler([]));
+    const events = recordEvents(context);
+
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+    await coordinator.start();
+    coordinator.stop();
+
+    const skips = events.filter((event) => event.type === "blocked_by");
+    expect(skips).toHaveLength(1);
+    expect(skips[0]?.data?.blockers).toEqual(["ghost"]);
+    expect(skips[0]?.data?.missing).toEqual(["ghost"]);
+  });
+
   it("reports a blocked-by cycle once and dispatches neither member", async () => {
     await writeNote("a", 'blocked-by:\n  - "[[b]]"');
     await writeNote("b", 'blocked-by:\n  - "[[a]]"');
     await fs.writeFile(
       boardPath(),
-      `---\n\nkanban-plugin: board\n\n---\n\n## Ready\n\n- [ ] a [[a]]\n- [ ] b [[b]]\n\n## In Progress\n\n## Done\n`,
+      boardWithColumns([
+        ["Ready", ["a [[a]]", "b [[b]]"]],
+        ["In Progress", []],
+        ["Done", []],
+      ]),
     );
     const context = fixture.context(countingHandler([]));
-    const events: JfdiEvent[] = [];
-    context.log.on((event) => events.push(event));
+    const events = recordEvents(context);
 
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
     await coordinator.start();
-    await coordinator.drain();
     // A second scan must not re-report the same deadlock.
-    await rescan(coordinator);
+    await coordinator.settleScan();
     coordinator.stop();
 
     const cycleErrors = events.filter(

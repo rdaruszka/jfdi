@@ -70,11 +70,8 @@ export function blockedByCycles(nodes: BlockingNode[]): string[][] {
     }
     edges.set(node.id, targets);
   }
-  const components = stronglyConnectedComponents(
-    nodes.map((node) => node.id),
-    edges,
-  );
-  return components
+  return new StronglyConnectedComponents(edges)
+    .compute(nodes.map((node) => node.id))
     .filter((members) => members.length > 1 || members.some((member) => selfBlocked.has(member)))
     .map((members) => [...members].sort())
     .sort((a, b) => a.join(",").localeCompare(b.join(",")));
@@ -82,70 +79,71 @@ export function blockedByCycles(nodes: BlockingNode[]): string[][] {
 
 /**
  * Tarjan's strongly-connected-components. Each id is assigned an index exactly
- * once and each edge is followed once, so the traversal terminates in O(V+E);
- * recursion depth is bounded by the node count — a begin column, never deep.
- * Returns every component; the caller keeps the ones that are cycles.
+ * once and each edge is followed once, so `compute` terminates in O(V+E), with
+ * recursion depth bounded by the node count — a begin column, never deep. The
+ * traversal state is the instance's own, so nothing mutates a shared argument;
+ * a fresh instance is one run. Returns every component; the caller keeps the
+ * ones that are cycles.
  */
-function stronglyConnectedComponents(ids: string[], edges: Map<string, string[]>): string[][] {
-  const state: SccState = {
-    edges,
-    counter: 0,
-    index: new Map(),
-    lowlink: new Map(),
-    onStack: new Set(),
-    stack: [],
-    components: [],
-  };
-  for (const id of ids) if (!state.index.has(id)) sccVisit(id, state);
-  return state.components;
-}
+class StronglyConnectedComponents {
+  private counter = 0;
+  private readonly index = new Map<string, number>();
+  private readonly lowlink = new Map<string, number>();
+  private readonly onStack = new Set<string>();
+  private readonly stack: string[] = [];
+  private readonly components: string[][] = [];
 
-/** The running state one SCC traversal threads through its helpers. */
-interface SccState {
-  edges: Map<string, string[]>;
-  counter: number;
-  index: Map<string, number>;
-  lowlink: Map<string, number>;
-  onStack: Set<string>;
-  stack: string[];
-  components: string[][];
-}
+  constructor(private readonly edges: Map<string, string[]>) {}
 
-/** Visit one node, recurse into unvisited neighbours, then close its component. */
-function sccVisit(id: string, state: SccState): void {
-  state.index.set(id, state.counter);
-  state.lowlink.set(id, state.counter);
-  state.counter += 1;
-  state.stack.push(id);
-  state.onStack.add(id);
-  for (const neighbor of state.edges.get(id) ?? []) sccRelax(id, neighbor, state);
-  if (numberAt(state.lowlink, id) === numberAt(state.index, id)) sccPopComponent(id, state);
-}
-
-/** Fold a neighbour's reachability into this node's lowlink. */
-function sccRelax(id: string, neighbor: string, state: SccState): void {
-  if (!state.index.has(neighbor)) {
-    sccVisit(neighbor, state);
-    state.lowlink.set(id, Math.min(numberAt(state.lowlink, id), numberAt(state.lowlink, neighbor)));
-  } else if (state.onStack.has(neighbor)) {
-    state.lowlink.set(id, Math.min(numberAt(state.lowlink, id), numberAt(state.index, neighbor)));
+  compute(ids: string[]): string[][] {
+    for (const id of ids) if (!this.index.has(id)) this.visit(id);
+    return this.components;
   }
-}
 
-/** Pop the stack down to `root`, emitting those nodes as one component. */
-function sccPopComponent(root: string, state: SccState): void {
-  const component: string[] = [];
-  while (state.stack.length > 0) {
-    const member = state.stack.pop();
-    if (member === undefined) break;
-    state.onStack.delete(member);
-    component.push(member);
-    if (member === root) break;
+  /** Visit one node, recurse into unvisited neighbours, then close its root's component. */
+  private visit(id: string): void {
+    this.index.set(id, this.counter);
+    this.lowlink.set(id, this.counter);
+    this.counter += 1;
+    this.stack.push(id);
+    this.onStack.add(id);
+    for (const neighbor of this.edges.get(id) ?? []) this.relax(id, neighbor);
+    if (this.at(this.lowlink, id) === this.at(this.index, id)) this.popComponent(id);
   }
-  state.components.push(component);
-}
 
-/** A Map value the algorithm always sets before it reads; the floor is unreached. */
-function numberAt(map: Map<string, number>, key: string): number {
-  return map.get(key) ?? 0;
+  /** Fold a neighbour's reachability into this node's lowlink. */
+  private relax(id: string, neighbor: string): void {
+    if (!this.index.has(neighbor)) {
+      this.visit(neighbor);
+      this.lowlink.set(id, Math.min(this.at(this.lowlink, id), this.at(this.lowlink, neighbor)));
+    } else if (this.onStack.has(neighbor)) {
+      this.lowlink.set(id, Math.min(this.at(this.lowlink, id), this.at(this.index, neighbor)));
+    }
+  }
+
+  /** Pop the stack down to `root`, emitting those nodes as one component. */
+  private popComponent(root: string): void {
+    const component: string[] = [];
+    while (this.stack.length > 0) {
+      const member = this.stack.pop();
+      if (member === undefined) break;
+      this.onStack.delete(member);
+      component.push(member);
+      if (member === root) {
+        this.components.push(component);
+        return;
+      }
+    }
+    throw new Error(
+      `SCC traversal drained the stack without reaching root "${root}" — a component was left open`,
+    );
+  }
+
+  /** An index/lowlink value `visit` always sets before any read; its absence is a bug, not a value. */
+  private at(map: Map<string, number>, key: string): number {
+    const value = map.get(key);
+    if (value === undefined)
+      throw new Error(`SCC traversal read node "${key}" before assigning it an index`);
+    return value;
+  }
 }

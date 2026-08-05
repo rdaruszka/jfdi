@@ -1,7 +1,12 @@
 import { watch } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { type BlockingNode, blockedByCycles } from "./blocking.js";
+import {
+  type BlockingNode,
+  blockedByCycles,
+  type UnresolvedBlockers,
+  unresolvedBlockers,
+} from "./blocking.js";
 import {
   type Board,
   type Card,
@@ -20,7 +25,7 @@ import { loadReport, recordMergeReady, recordObservations, saveReport } from "./
 import { ensureJfdiGitignore } from "./scaffold.js";
 import { resolveTicket, type Ticket } from "./tickets.js";
 import { fileExists, readIfExists } from "./util/fsx.js";
-import { slugify, ticketIdFromCard } from "./util/ids.js";
+import { ticketIdFromCard } from "./util/ids.js";
 
 export interface CoordinatorOptions {
   /** Polling fallback interval for board changes (ms). */
@@ -118,6 +123,20 @@ export class Coordinator {
       await Promise.allSettled([...this.active.values()]);
     }
     await this.integrations.idle();
+  }
+
+  /**
+   * Request a scan and resolve once it — and any rescan it chains — has fully
+   * run. The deterministic seam tests drive dispatch through, in place of racing
+   * a fire-and-forget `requestScan` against a sleep. Production wakes scans
+   * through `requestScan` and never needs to await one. Terminates because every
+   * scan clears `isScanning` in its `finally`, and each pass yields the loop.
+   */
+  async settleScan(): Promise<void> {
+    this.requestScan();
+    while (this.isScanning) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
   }
 
   activeCount(): number {
@@ -319,32 +338,37 @@ export class Coordinator {
   private async dispatchableBeginCards(board: Board): Promise<Card[]> {
     const columns = this.context.config.board.columns;
     const ticketsDir = path.join(this.context.repoRoot, this.context.config.ticketsDir);
-    const nodes: Array<BlockingNode & { card: Card }> = [];
+    // One shared policy for the whole gate: `unresolvedBlockers` deduplicates
+    // links and computes the missing set, so dispatch, the event payload, and
+    // the cycle nodes all read the same answer as `jfdi run`.
+    const nodes: Array<{ card: Card; id: string; blockers: UnresolvedBlockers }> = [];
     for (const card of findColumn(board, columns.begin)?.cards ?? []) {
       const ticket = await resolveTicket(card.text, ticketsDir);
-      const blockedBy = ticket.links
-        .filter((link) => link.kind === "blocked-by")
-        .map((link) => slugify(link.target));
-      nodes.push({ card, id: ticketIdFromCard(card.text), blockedBy });
+      nodes.push({
+        card,
+        id: ticketIdFromCard(card.text),
+        blockers: unresolvedBlockers(ticket.links, board, columns.done),
+      });
     }
-    this.reportBlockedByCycles(nodes);
+    this.reportBlockedByCycles(
+      nodes.map((node) => ({ id: node.id, blockedBy: node.blockers.ids })),
+    );
 
     const dispatchable: Card[] = [];
     const blockedNow = new Set<string>();
     for (const node of nodes) {
-      const waiting = node.blockedBy.filter(
-        (blocker) => columnOfTicket(board, blocker) !== columns.done,
-      );
-      if (waiting.length === 0) {
+      if (node.blockers.ids.length === 0) {
         if (this.blockedByEpisodes.delete(node.id)) this.context.log.emit("unblocked", node.id);
         dispatchable.push(node.card);
         continue;
       }
       blockedNow.add(node.id);
       if (!this.blockedByEpisodes.has(node.id)) {
-        const missing = waiting.filter((blocker) => columnOfTicket(board, blocker) === null);
         this.blockedByEpisodes.add(node.id);
-        this.context.log.emit("blocked_by", node.id, { blockers: waiting, missing });
+        this.context.log.emit("blocked_by", node.id, {
+          blockers: node.blockers.ids,
+          missing: node.blockers.missing,
+        });
       }
     }
     // A card that left the begin column while blocked ends its episode silently:

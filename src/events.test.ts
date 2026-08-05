@@ -70,6 +70,34 @@ describe("EventLog", () => {
     expect(log.snapshot().tickets.x?.status).toBe("blocked");
   });
 
+  it("blocked_by parks a held card in a waiting state naming its blockers", () => {
+    const log = new EventLog(dir, false);
+    log.emit("blocked_by", "held", { blockers: ["dep-a", "dep-b"], missing: ["dep-b"] });
+    const ticket = log.snapshot().tickets.held;
+    expect(ticket?.status).toBe("waiting");
+    expect(ticket?.stage).toBeNull();
+    expect(ticket?.lastActivity).toBe("waiting on dep-a, dep-b");
+  });
+
+  it("blocked_by tolerates a malformed blocker payload", () => {
+    const log = new EventLog(dir, false);
+    // The payload is untyped and re-parsed from disk: a non-array must not throw.
+    log.emit("blocked_by", "held", { blockers: "not-an-array" });
+    const ticket = log.snapshot().tickets.held;
+    expect(ticket?.status).toBe("waiting");
+    expect(ticket?.lastActivity).toBe("waiting on blockers");
+  });
+
+  it("unblocked narrates without unwinding the waiting status before dispatch", () => {
+    const log = new EventLog(dir, false);
+    log.emit("blocked_by", "held", { blockers: ["dep-a"] });
+    log.emit("unblocked", "held");
+    const ticket = log.snapshot().tickets.held;
+    // Dispatch flips it to running next; until then it reads as freed, still waiting for a slot.
+    expect(ticket?.status).toBe("waiting");
+    expect(ticket?.lastActivity).toBe("blockers resolved");
+  });
+
   it("notifies in-process listeners (renderer contract)", () => {
     const log = new EventLog(dir, false);
     const seen: string[] = [];
