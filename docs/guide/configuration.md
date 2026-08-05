@@ -119,10 +119,10 @@ continued, and interactive agent session. `auto` is the safer default for
 unattended work; `bypass` is an opt-in for hosts whose isolation is managed
 outside JFDI.
 
-| JFDI mode | Claude Code | Codex |
-|---|---|---|
-| `auto` | `--permission-mode auto` | `-c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=true` |
-| `bypass` | `--permission-mode bypassPermissions` | `--dangerously-bypass-approvals-and-sandbox` |
+| JFDI mode | Claude Code (headless) | Claude Code (interactive) | Codex |
+|---|---|---|---|
+| `auto` | `--permission-mode acceptEdits --allowedTools Bash` | `--permission-mode auto` | `-c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=true` |
+| `bypass` | `--permission-mode bypassPermissions` | `--permission-mode bypassPermissions` | `--dangerously-bypass-approvals-and-sandbox` |
 
 Codex's `workspace-write` sandbox keeps filesystem writes inside the worktree.
 Network access is normally off in that sandbox, so JFDI enables it to keep
@@ -130,8 +130,16 @@ unattended sessions able to fetch and resolve packages. The sandbox is selected
 via `-c sandbox_mode=` rather than the equivalent `--sandbox` flag because
 `codex exec resume` (continuations) rejects `--sandbox`; the `-c` spelling is
 accepted by every spawn form. JFDI does not use the deprecated `--full-auto`
-compatibility flag. Claude Code's `auto` mode needs no separate network
-setting.
+compatibility flag.
+
+Claude Code's own `auto` mode is interactive-only: its classifier escalates
+blocked actions to a human, and a headless session has no one to ask, so it
+denies every write — the worktree included. Headless and continued sessions
+therefore run `acceptEdits` (edits auto-approved, confined to the session's
+working directories) with the Bash tool allowed, the documented spelling for an
+autonomous headless session that can still run builds, tests, and git;
+interactive launches (`jfdi init`, `jfdi convo`) keep `auto`, where the human
+at the terminal answers the classifier.
 
 ### `max_concurrent`
 

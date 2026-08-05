@@ -59,6 +59,20 @@ describe("prepareResume", () => {
     expect(resume?.commitCount).toBe(1);
   });
 
+  it("discards a stray agent verdict instead of checkpoint-committing run state", async () => {
+    // A run killed between the agent's in-worktree verdict write and the
+    // pipeline's collection leaves this file; it must never reach the branch.
+    await fs.writeFile(
+      path.join(worktree.path, "implementation.verdict.json"),
+      '{"status":"done"}',
+    );
+    const resume = await prepareResume(worktree.path, "main", "ticket");
+    expect(resume).toBeNull();
+    await expect(
+      fs.access(path.join(worktree.path, "implementation.verdict.json")),
+    ).rejects.toThrow();
+  });
+
   it("aborts a merge the interrupted run left in progress", async () => {
     await commitFile(worktree.path, "shared.txt", "branch version\n", "branch edit");
     await commitFile(fixture.repo, "shared.txt", "main version\n", "main edit");

@@ -49,7 +49,13 @@ import {
 import type { UsageRegistry, UsageRow } from "./usage.js";
 import { todayIsoDate } from "./util/dates.js";
 import { ensureDir, fileExists, readIfExists } from "./util/fsx.js";
-import { type ReviewVerdict, readImplementationVerdict, readReviewVerdict } from "./verdicts.js";
+import {
+  agentVerdictPath,
+  collectVerdict,
+  type ReviewVerdict,
+  readImplementationVerdict,
+  readReviewVerdict,
+} from "./verdicts.js";
 
 export interface PipelineContext {
   repoRoot: string;
@@ -357,6 +363,9 @@ async function runStageSession(
     { cwd: worktree.path, logPath, ...(continueSessionId ? { continueSessionId } : {}) },
     (event) => narrateSessionActivity(context, ticket.id, stage, event),
   );
+  // The agent wrote its verdict inside the worktree (the only place sandboxed
+  // permission modes allow); collect it before anything commits the tree.
+  await collectVerdict(agentVerdictPath(worktree.path, stage), verdictPath);
   return {
     ok: result.ok,
     resultText: result.text,
@@ -647,9 +656,8 @@ export async function runQaStage(
   options: QaStageOptions = {},
 ): Promise<{ verdict: ReviewVerdict | null; outcome: StageOutcome }> {
   const target = context.config.integration.target_branch;
-  const verdictPath = path.join(roundDir, "qa.verdict.json");
   const vars = {
-    ...commonVars(context, ticket, worktree, verdictPath),
+    ...commonVars(context, ticket, worktree, agentVerdictPath(worktree.path, "qa")),
     NOTE_PATH: notePath,
     GATE_RESULT: options.gateSummary ?? "",
   };
@@ -735,8 +743,12 @@ async function runImplementationStage(
   usage: SessionUsage;
 }> {
   const { roundDir, notePath, round, history, resume } = input;
-  const verdictPath = path.join(roundDir, "implementation.verdict.json");
-  const vars = commonVars(context, ticket, worktree, verdictPath);
+  const vars = commonVars(
+    context,
+    ticket,
+    worktree,
+    agentVerdictPath(worktree.path, "implementation"),
+  );
   const previousFailure = history.at(-1);
   const continuation =
     input.previousSession?.sessionId && previousFailure
@@ -825,9 +837,8 @@ async function runCodeReviewStage(
   input: CodeReviewStageInput,
 ): Promise<{ step: CodeReviewStep; sessionId: string | undefined }> {
   const target = context.config.integration.target_branch;
-  const verdictPath = path.join(input.roundDir, "code-review.verdict.json");
   const vars = {
-    ...commonVars(context, ticket, worktree, verdictPath),
+    ...commonVars(context, ticket, worktree, agentVerdictPath(worktree.path, "code-review")),
     NOTE_PATH: input.notePath,
     GATE_RESULT: formatGatePass(input.gate),
   };

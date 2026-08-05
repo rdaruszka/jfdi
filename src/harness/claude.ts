@@ -35,9 +35,25 @@ function claudeSelectionArgs(selection: HarnessSelection): string[] {
   ];
 }
 
-/** The instance-wide permission mode, as Claude Code spells it. */
-function claudePermissionArgs(permissionMode: PermissionMode): string[] {
-  return ["--permission-mode", permissionMode === "auto" ? "auto" : "bypassPermissions"];
+/**
+ * The instance-wide permission mode, as Claude Code spells it — differently per
+ * spawn form, because Claude's `auto` mode is interactive-only: its classifier
+ * escalates blocked actions to a human, and a headless `-p` session has no one
+ * to ask, so it denies every write — including inside the worktree (verified
+ * against Claude Code v2.1.220, Aug 2026). Headless sessions therefore run
+ * `acceptEdits` (edits auto-approved, confined to the session's working
+ * directories) with the Bash tool allowed — the documented spelling for an
+ * autonomous headless session that can still run builds, tests, and git.
+ * Interactive launches keep `auto`: there a human answers the classifier.
+ */
+function claudePermissionArgs(
+  permissionMode: PermissionMode,
+  form: "headless" | "interactive",
+): string[] {
+  if (permissionMode !== "auto") return ["--permission-mode", "bypassPermissions"];
+  return form === "interactive"
+    ? ["--permission-mode", "auto"]
+    : ["--permission-mode", "acceptEdits", "--allowedTools", "Bash"];
 }
 
 /** Longest tool-input excerpt shown as a progress detail. */
@@ -254,7 +270,7 @@ export class ClaudeHarness implements Harness {
       "--output-format",
       "stream-json",
       "--verbose",
-      ...claudePermissionArgs(this.permissionMode),
+      ...claudePermissionArgs(this.permissionMode, "headless"),
       ...claudeSelectionArgs(this.selection),
     ];
     if (options.continueSessionId) args.push("--resume", options.continueSessionId);
@@ -376,7 +392,7 @@ export class ClaudeHarness implements Harness {
     // Both flags are session-scoped on the interactive CLI too, so an
     // interactive launch runs the same agent the implementation stage would.
     const args = [
-      ...claudePermissionArgs(this.permissionMode),
+      ...claudePermissionArgs(this.permissionMode, "interactive"),
       ...claudeSelectionArgs(this.selection),
       ...(options.isSystemPrompt ? ["--append-system-prompt"] : []),
       promptSpec.prompt,

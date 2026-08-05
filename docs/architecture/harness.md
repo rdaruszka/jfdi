@@ -142,16 +142,27 @@ layer that wouldn't be.
 The instance-wide `permissions.mode` selects one of two unattended policies;
 the default is `auto`, while `bypass` is an explicit opt-in:
 
-| JFDI mode | Claude Code | Codex permission args |
-|---|---|---|
-| `auto` | `--permission-mode auto` | `-c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=true` |
-| `bypass` | `--permission-mode bypassPermissions` | `--dangerously-bypass-approvals-and-sandbox` |
+| JFDI mode | Claude Code (headless) | Claude Code (interactive) | Codex permission args |
+|---|---|---|---|
+| `auto` | `--permission-mode acceptEdits --allowedTools Bash` | `--permission-mode auto` | `-c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=true` |
+| `bypass` | `--permission-mode bypassPermissions` | `--permission-mode bypassPermissions` | `--dangerously-bypass-approvals-and-sandbox` |
+
+Claude's own `auto` mode is interactive-only — headless, its classifier has no
+human to escalate to and denies every write, worktree included — so the auto
+policy maps per spawn form: headless and continued sessions run `acceptEdits`
+with the Bash tool allowed, interactive launches keep `auto`.
 
 Codex network access is enabled under `workspace-write` so a headless session
 can fetch and resolve packages without weakening the worktree filesystem
 boundary. The sandbox is spelled as a `-c sandbox_mode=` override, not the
 equivalent `--sandbox` flag, because `codex exec resume` rejects `--sandbox`
-while every Codex spawn form accepts `-c`. JFDI deliberately does not use Codex's deprecated `--full-auto`
+while every Codex spawn form accepts `-c`.
+
+Both `auto` policies confine writes to the session's workspace. Anything the
+pipeline needs an agent to produce must therefore live inside the worktree —
+which is why verdict files are written at the worktree root and collected into
+the state directory by the pipeline afterward (see the pipeline guide's
+Verdicts section), rather than granted per-provider write exceptions. JFDI deliberately does not use Codex's deprecated `--full-auto`
 compatibility path. Interactive launches use the same permission mode as
 pipeline sessions. The neutral config value is passed separately from a
 stage's harness/model/effort selection, and each harness owns its provider

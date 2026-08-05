@@ -67,7 +67,9 @@ process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ 
 if (match) {
   const verdictPath = match[1];
   const stage = verdictPath.split("/").pop().replace(".verdict.json", "");
-  const ticketId = verdictPath.split("/runs/")[1].split("/")[0];
+  // The verdict path lives in the worktree (\`.jfdi/worktrees/<ticket-id>/\`),
+  // so the ticket id is the worktree directory's own name.
+  const ticketId = process.cwd().split("/").pop();
   let verdict;
   if (stage === "implementation") {
     if (/slow/i.test(prompt)) {

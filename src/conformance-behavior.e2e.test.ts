@@ -60,8 +60,10 @@ if (prompt.includes("Write the commit message")) {
 if (match) {
   const verdictPath = match[1];
   const stage = verdictPath.split("/").pop().replace(".verdict.json", "");
-  const roundMatch = /round-(\\d+)/.exec(verdictPath);
-  const roundNumber = roundMatch ? Number(roundMatch[1]) : 1;
+  // The verdict path lives in the worktree and no longer encodes the round;
+  // number this session by what earlier sessions left in the tree instead.
+  let roundNumber = 1;
+  while (fs.existsSync(process.cwd() + "/feature" + roundNumber + ".txt")) roundNumber += 1;
   let verdict;
   if (stage === "implementation") {
     fs.writeFileSync(process.cwd() + "/feature" + roundNumber + ".txt", "the feature\\n");
@@ -487,6 +489,48 @@ describe("pipeline behavior", () => {
       const again = await runCli(sandbox, ["merge", ticketId]);
       expect(again.code).toBe(1);
       expect(again.stderr).toContain("nothing to merge");
+    },
+    PIPELINE_TIMEOUT_MS,
+  );
+
+  it(
+    "asks agents to write verdicts inside the worktree, then collects them into the state directory",
+    async () => {
+      const sandbox = await makeSandbox();
+      await initProject(sandbox);
+
+      const run = await runCli(sandbox, ["run", "Add a greeting"]);
+      expect(run.code).toBe(0);
+      const ticketId = ticketIdOf(run);
+
+      // Every session's prompt names a verdict path inside the worktree — the
+      // only location both providers' sandboxed permission modes let an agent
+      // write. A state-directory path here is the regression that blocked
+      // every auto-mode run: the sandbox rejects the write, the pipeline sees
+      // invalid-verdict, and the card dies at max_rounds.
+      const prompts = (await fs.readFile(sandbox.argvLog, "utf8"))
+        .split("\n")
+        .filter((line) => line.trim() !== "")
+        .map((line) => JSON.parse(line) as { argv: string[] });
+      const verdictPaths = prompts.flatMap(({ argv }) =>
+        argv.flatMap((argument) => argument.match(/\/\S+\.verdict\.json/g) ?? []),
+      );
+      expect(verdictPaths.length).toBeGreaterThan(0);
+      for (const verdictPath of verdictPaths) {
+        expect(verdictPath).toContain(`/.jfdi/worktrees/${ticketId}/`);
+        expect(verdictPath).not.toContain("/runs/");
+      }
+
+      // Collected: each stage's verdict lands in the round directory as before…
+      const roundDir = path.join(sandbox.stateDir, "runs", ticketId, "run-1", "round-1");
+      for (const stage of ["implementation", "code-review", "qa"]) {
+        await fs.access(path.join(roundDir, `${stage}.verdict.json`));
+      }
+
+      // …and never in a commit: the landed tree holds no verdict file.
+      expect(await runCli(sandbox, ["merge", ticketId]).then((result) => result.code)).toBe(0);
+      const landedFiles = await git(sandbox.project, "ls-tree", "-r", "--name-only", "main");
+      expect(landedFiles).not.toContain(".verdict.json");
     },
     PIPELINE_TIMEOUT_MS,
   );

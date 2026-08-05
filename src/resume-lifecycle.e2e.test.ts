@@ -114,8 +114,9 @@ if (match) {
   } else if (stage === "code-review" && process.env.STUB_MODE === "review-fail") {
     verdict = { verdict: "fail", feedback: "the parser is wrong" };
   } else if (stage === "code-review" && process.env.STUB_MODE === "review-fail-round-1") {
-    const round = Number(/round-(\\d+)/.exec(verdictPath)[1]);
-    verdict = round === 1 ? { verdict: "fail", feedback: "still the wrong parser" } : { verdict: "pass" };
+    // This run's first review fails, later ones pass; the per-run prompt
+    // directory's index is the round counter (one review session per round).
+    verdict = index === 0 ? { verdict: "fail", feedback: "still the wrong parser" } : { verdict: "pass" };
   } else {
     verdict = { verdict: "pass" };
   }

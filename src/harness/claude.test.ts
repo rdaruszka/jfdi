@@ -386,11 +386,22 @@ describe("ClaudeHarness selection flags", () => {
   });
 
   it.each([
-    { permissionMode: "auto" as const, claudeMode: "auto" },
-    { permissionMode: "bypass" as const, claudeMode: "bypassPermissions" },
+    // Claude's `auto` is interactive-only — a headless session has no human for
+    // the classifier to escalate to and denies every write, worktree included —
+    // so headless auto runs acceptEdits with the Bash tool allowed instead.
+    {
+      permissionMode: "auto" as const,
+      headlessArgs: ["--permission-mode", "acceptEdits", "--allowedTools", "Bash"],
+      interactiveArgs: ["--permission-mode", "auto"],
+    },
+    {
+      permissionMode: "bypass" as const,
+      headlessArgs: ["--permission-mode", "bypassPermissions"],
+      interactiveArgs: ["--permission-mode", "bypassPermissions"],
+    },
   ])(
     "maps $permissionMode permissions across headless, resume, and interactive launches",
-    async ({ permissionMode, claudeMode }) => {
+    async ({ permissionMode, headlessArgs, interactiveArgs }) => {
       const headless = await argvRecorder(`${permissionMode}-headless`);
       await new ClaudeHarness(TEST_SELECTION, permissionMode, headless.executable).spawn(
         { prompt: "start" },
@@ -408,10 +419,16 @@ describe("ClaudeHarness selection flags", () => {
         interactive.executable,
       ).spawnInteractive({ prompt: "talk" }, { cwd: dir });
 
-      for (const argv of [await headless.argv(), await resume.argv(), await interactive.argv()]) {
+      for (const argv of [await headless.argv(), await resume.argv()]) {
         const flagIndex = argv.indexOf("--permission-mode");
-        expect(argv.slice(flagIndex, flagIndex + 2)).toEqual(["--permission-mode", claudeMode]);
+        expect(argv.slice(flagIndex, flagIndex + headlessArgs.length)).toEqual(headlessArgs);
+        expect(argv).not.toContain("auto");
       }
+      const interactiveArgv = await interactive.argv();
+      const flagIndex = interactiveArgv.indexOf("--permission-mode");
+      expect(interactiveArgv.slice(flagIndex, flagIndex + interactiveArgs.length)).toEqual(
+        interactiveArgs,
+      );
     },
   );
 

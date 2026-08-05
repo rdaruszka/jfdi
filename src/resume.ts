@@ -1,6 +1,23 @@
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { abortMerge, commitAllIfDirty, commitCount, git, isMergeInProgress } from "./git.js";
 import { atomicWrite, readIfExists } from "./util/fsx.js";
+
+/**
+ * A run killed between an agent's in-worktree verdict write and the pipeline's
+ * collection leaves `<stage>.verdict.json` at the worktree root; checkpoint-
+ * committing it would land run state in the branch. Removed before the dirty
+ * check, never preserved — an uncollected verdict belongs to a session whose
+ * round is already lost.
+ */
+async function removeStrayVerdicts(worktreePath: string): Promise<void> {
+  const entries = await fs.readdir(worktreePath);
+  await Promise.all(
+    entries
+      .filter((entry) => entry.endsWith(".verdict.json"))
+      .map((entry) => fs.rm(path.join(worktreePath, entry))),
+  );
+}
 
 /**
  * One round's feedback. Carried between rounds of a run and — persisted as
@@ -47,6 +64,7 @@ export async function prepareResume(
 ): Promise<ResumeState | null> {
   const hasAbortedMerge = await isMergeInProgress(worktreePath);
   if (hasAbortedMerge) await abortMerge(worktreePath);
+  await removeStrayVerdicts(worktreePath);
   const hasCheckpointedChanges = await commitAllIfDirty(
     worktreePath,
     `jfdi(${ticketId}): recovered from interrupted run`,

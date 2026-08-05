@@ -70,17 +70,23 @@ const match = prompt.match(/(\\/\\S+\\.verdict\\.json)/);
 if (match) {
   const verdictPath = match[1];
   const stage = verdictPath.split("/").pop().replace(".verdict.json", "");
-  const round = Number((/round-(\\d+)/.exec(verdictPath) || [])[1] || "1");
   const run = (args) => execFileSync("git", args, { cwd: process.cwd() });
   const capture = (args) => execFileSync("git", args, { cwd: process.cwd(), encoding: "utf8" }).trim();
+  // The verdict path lives in the worktree and no longer encodes the round;
+  // read it off the versioned file the implementation sessions write instead:
+  // the version already in the tree is the round under review, and one higher
+  // is the round the next implementation session is about to write.
+  const featureFile = process.cwd() + "/" + process.env.STUB_FILE;
+  const featureContent = fs.existsSync(featureFile) ? fs.readFileSync(featureFile, "utf8") : "";
+  const featureVersion = Number((/built v(\\d+)/.exec(featureContent) || [])[1] || "1");
   let verdict;
   if (stage === "implementation") {
     // One session, one change: the pipeline commits it. A branch of several
     // commits comes from several rounds, which the review below drives.
-    const file = process.env.STUB_FILE;
     const rounds = Number(process.env.STUB_ROUNDS || "1");
-    fs.writeFileSync(process.cwd() + "/" + file, rounds === 1 ? "built\\n" : "built v" + round + "\\n");
-    verdict = { status: "done", summary: "implemented " + file };
+    const round = featureContent === "" ? 1 : featureVersion + 1;
+    fs.writeFileSync(featureFile, rounds === 1 ? "built\\n" : "built v" + round + "\\n");
+    verdict = { status: "done", summary: "implemented " + process.env.STUB_FILE };
   } else if (stage === "integration") {
     const gitDir = capture(["rev-parse", "--absolute-git-dir"]);
     fs.appendFileSync(process.env.STUB_SESSION_LOG, JSON.stringify({
@@ -100,11 +106,12 @@ if (match) {
     } else {
       verdict = { resolution: "clean", notes: "took both sides" };
     }
-  } else if (stage === "code-review" && round < Number(process.env.STUB_ROUNDS || "1")) {
+  } else if (stage === "code-review" && featureVersion < Number(process.env.STUB_ROUNDS || "1")) {
     // Fail every round but the last, so the branch ends with one commit per round.
-    verdict = { verdict: "fail", feedback: "round " + round + " is not there yet" };
+    verdict = { verdict: "fail", feedback: "round " + featureVersion + " is not there yet" };
   } else {
-    if (process.env.STUB_LEFTOVERS && verdictPath.includes("requalify")) {
+    // The post-merge requalification QA announces itself in its gate summary.
+    if (process.env.STUB_LEFTOVERS && prompt.includes("just merged in with conflict resolutions")) {
       fs.writeFileSync(process.cwd() + "/requalify-note.txt", "re-verified\\n");
     }
     verdict = { verdict: "pass" };

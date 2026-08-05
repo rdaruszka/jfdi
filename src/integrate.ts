@@ -30,7 +30,12 @@ import { BLOCKED_ROUTING, recordTransition, shortSha, statusLine } from "./trans
 import { renderUsageTable, type UsageRow } from "./usage.js";
 import { todayIsoDate } from "./util/dates.js";
 import { ensureDir, fileExists } from "./util/fsx.js";
-import { type IntegrationVerdict, readIntegrationVerdict } from "./verdicts.js";
+import {
+  agentVerdictPath,
+  collectVerdict,
+  type IntegrationVerdict,
+  readIntegrationVerdict,
+} from "./verdicts.js";
 
 /** Git output quoted into a blocked reason when the merge fails outright. */
 const MAX_MERGE_ERROR_CHARS = 500;
@@ -57,6 +62,7 @@ async function runIntegrationAgent(
   worktree: Worktree,
   runDir: string,
 ): Promise<IntegrationVerdict | null> {
+  const stage: StageName = "integration";
   const verdictPath = path.join(runDir, "integration.verdict.json");
   const template = await loadPrompt(context.jfdiDir, "integration");
   const prompt = renderPrompt(template, {
@@ -65,9 +71,8 @@ async function runIntegrationAgent(
     BRANCH: worktree.branch,
     TARGET_BRANCH: context.config.integration.target_branch,
     GATE_COMMANDS: formatGateCommands(context.config.gate),
-    VERDICT_PATH: verdictPath,
+    VERDICT_PATH: agentVerdictPath(worktree.path, stage),
   });
-  const stage: StageName = "integration";
   context.log.emit("stage_start", ticket.id, {
     stage,
     ...sessionSelectionFields(context.config, stage),
@@ -83,6 +88,9 @@ async function runIntegrationAgent(
         context.log.emit("session_activity", ticket.id, { text: `integration: ${event.name}` });
     },
   );
+  // The agent wrote its verdict inside the worktree (the only place sandboxed
+  // permission modes allow); collect it before reading.
+  await collectVerdict(agentVerdictPath(worktree.path, stage), verdictPath);
   const verdict = await readIntegrationVerdict(verdictPath);
   // Only this session's own numbers: integration runs may be a separate process
   // whose ledger holds no pipeline stages, so it must not overwrite the run

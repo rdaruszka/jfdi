@@ -246,8 +246,12 @@ describe("permission mode, end to end", () => {
 
       for (const call of calls) {
         if (call.cli === "claude") {
-          expect(hasFlagValue(call.argv, "--permission-mode", "auto")).toBe(true);
+          // Claude's own `auto` is interactive-only: headless it denies every
+          // write, so pipeline sessions run acceptEdits with Bash allowed.
+          expect(hasFlagValue(call.argv, "--permission-mode", "acceptEdits")).toBe(true);
+          expect(hasFlagValue(call.argv, "--allowedTools", "Bash")).toBe(true);
           expect(call.argv).not.toContain("bypassPermissions");
+          expect(call.argv).not.toContain("auto");
         } else {
           expect(containsInOrder(call.argv, CODEX_AUTO_ARGS)).toBe(true);
           expect(call.argv).not.toContain(CODEX_BYPASS_ARG);
@@ -307,7 +311,8 @@ describe("permission mode, end to end", () => {
 
       for (const call of continuations) {
         if (call.cli === "claude") {
-          expect(hasFlagValue(call.argv, "--permission-mode", "auto")).toBe(true);
+          expect(hasFlagValue(call.argv, "--permission-mode", "acceptEdits")).toBe(true);
+          expect(hasFlagValue(call.argv, "--allowedTools", "Bash")).toBe(true);
         } else {
           expect(containsInOrder(call.argv, CODEX_AUTO_ARGS)).toBe(true);
           // Flags still precede the positional thread id on a resume.

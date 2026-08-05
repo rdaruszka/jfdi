@@ -90,8 +90,12 @@ collecting context:
 ### Verdicts
 
 Every session must end by writing a single JSON verdict file at a path the prompt
-names (`<state dir>/runs/<ticket-id>/run-<k>/round-<n>/<stage>.verdict.json`). The
-pipeline reads outcomes *only* from this file:
+names. That path is inside the worktree (`<worktree>/<stage>.verdict.json`) —
+the one location every provider's sandboxed permission mode lets an agent write —
+and the pipeline collects the file into the run's state directory
+(`<state dir>/runs/<ticket-id>/run-<k>/round-<n>/<stage>.verdict.json`) as soon
+as the session ends, before anything commits the tree. The pipeline reads
+outcomes *only* from the collected file:
 
 ```jsonc
 // Implementation

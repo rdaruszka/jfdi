@@ -65,7 +65,10 @@ if (prompt.includes("Write the commit message")) {
   if (match) {
     const verdictPath = match[1];
     const stage = verdictPath.split("/").pop().replace(".verdict.json", "");
-    const round = Number((/round-(\\d+)/.exec(verdictPath) || [])[1] || 1);
+    // The verdict path lives in the worktree and no longer encodes the round;
+    // number this session by what earlier sessions left in the tree instead.
+    let round = 1;
+    while (fs.existsSync(process.cwd() + "/feature" + round + ".txt")) round += 1;
     let verdict = null;
     if (stage === "implementation") {
       fs.writeFileSync(process.cwd() + "/feature" + round + ".txt", "the feature\\n");

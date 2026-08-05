@@ -1,4 +1,35 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { readIfExists } from "./util/fsx.js";
+
+/**
+ * Where a session's agent writes its verdict: the worktree root, the one
+ * location every provider's sandboxed permission mode lets an agent write
+ * (Claude's `auto` and Codex's `workspace-write` both confine writes to the
+ * workspace; no flag extends Claude's boundary). The pipeline collects the
+ * file into the run's state directory after the session ends — agents are
+ * never asked to write outside their workspace.
+ */
+export function agentVerdictPath(worktreePath: string, stage: string): string {
+  return path.join(worktreePath, `${stage}.verdict.json`);
+}
+
+/**
+ * Move the agent's in-worktree verdict to its state-directory home. A move,
+ * not a copy: a verdict left behind would be swept into the next handoff or
+ * checkpoint commit. An absent source is not an error — a session that wrote
+ * no verdict is the caller's invalid-verdict path. Copy-then-delete because
+ * the worktree and the state directory may sit on different filesystems.
+ */
+export async function collectVerdict(agentPath: string, destinationPath: string): Promise<void> {
+  try {
+    await fs.copyFile(agentPath, destinationPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  await fs.rm(agentPath);
+}
 
 export interface ImplementationVerdict {
   status: "done" | "escalate";
