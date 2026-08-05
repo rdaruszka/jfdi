@@ -156,6 +156,32 @@ describe("feedback history", () => {
     expect(await loadFeedbackHistory(fixture.stateDir)).toEqual(items);
   });
 
+  it("records feedback dropped by the carry cap and its originating run", async () => {
+    const cappedItems: FeedbackItem[] = [
+      { run: 7, round: 1, source: "qa", feedback: "oldest" },
+      { run: 7, round: 2, source: "gate", feedback: "second oldest" },
+      { run: 8, round: 1, source: "implementation", feedback: "third oldest" },
+      ...Array.from({ length: 10 }, (_, index) => ({
+        run: 9,
+        round: index + 1,
+        source: "code-review" as const,
+        feedback: `kept ${index + 1}`,
+      })),
+    ];
+
+    await saveFeedbackHistory(fixture.stateDir, cappedItems);
+
+    const saved = JSON.parse(
+      await fs.readFile(path.join(fixture.stateDir, "history.json"), "utf8"),
+    );
+    expect(saved).toEqual([
+      { type: "dropped-feedback", run: 7, droppedItemCount: 2 },
+      { type: "dropped-feedback", run: 8, droppedItemCount: 1 },
+      ...cappedItems.slice(3),
+    ]);
+    expect(await loadFeedbackHistory(fixture.stateDir)).toEqual(cappedItems.slice(3));
+  });
+
   it("reads as empty when absent", async () => {
     expect(await loadFeedbackHistory(path.join(fixture.stateDir, "never-ran"))).toEqual([]);
   });

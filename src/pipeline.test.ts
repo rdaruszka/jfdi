@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JfdiConfig } from "./config.js";
 import type { JfdiEvent, StageName } from "./events.js";
 import { createWorktree, git, isMergeInProgress, mergeTargetIntoBranch } from "./git.js";
@@ -524,6 +524,62 @@ describe("runPipeline", () => {
     });
     expect((await runPipeline(answering, ticket)).status).toBe("passed");
     expect(prompt).toContain("the parser is wrong");
+  });
+
+  it("carries inherited feedback across a retry interrupted before the next round", async () => {
+    let attempt = 0;
+    const firstRun = fixture.context(async (spec, options) => {
+      const stage = sessionKindOf(spec.prompt);
+      if (stage === "implementation") {
+        attempt += 1;
+        await commitFile(options.cwd, "impl.txt", `first run ${attempt}\n`, "partial attempt");
+        await writeVerdict(spec.prompt, { status: "done" });
+      } else if (stage === "code-review") {
+        await writeVerdict(spec.prompt, {
+          verdict: "fail",
+          feedback: "preserve this original review feedback",
+        });
+      }
+      return { ok: true, text: "" };
+    });
+    const ticket = await resolveTicket("Crash during inherited retry", fixture.ticketsDir);
+    expect((await runPipeline(firstRun, ticket)).status).toBe("blocked");
+
+    const interruptedRetry = fixture.context(async (spec, options) => {
+      const stage = sessionKindOf(spec.prompt);
+      if (stage === "implementation") {
+        await commitFile(options.cwd, "impl.txt", "second run retry\n", "retry inherited feedback");
+        await writeVerdict(spec.prompt, { status: "done" });
+      } else if (stage === "code-review") {
+        await writeVerdict(spec.prompt, { verdict: "fail", feedback: "new retry feedback" });
+      }
+      return { ok: true, text: "" };
+    });
+    const emit = interruptedRetry.log.emit.bind(interruptedRetry.log);
+    vi.spyOn(interruptedRetry.log, "emit").mockImplementation((type, ticketId, data) => {
+      if (type === "round_start" && data?.round === 2)
+        throw new Error("simulated coordinator interruption");
+      return emit(type, ticketId, data);
+    });
+    await expect(runPipeline(interruptedRetry, ticket)).rejects.toThrow(
+      "simulated coordinator interruption",
+    );
+
+    let resumedPrompt = "";
+    const resumed = fixture.context(async (spec, options) => {
+      const stage = sessionKindOf(spec.prompt);
+      if (stage === "implementation") {
+        resumedPrompt = spec.prompt;
+        await commitFile(options.cwd, "impl.txt", "finished\n", "finish after interruption");
+        await writeVerdict(spec.prompt, { status: "done" });
+      } else {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    });
+    expect((await runPipeline(resumed, ticket)).status).toBe("passed");
+    expect(resumedPrompt).toContain("preserve this original review feedback");
+    expect(resumedPrompt).toContain("new retry feedback");
   });
 
   it("sanitizes a worktree a killed session left dirty and mid-merge", async () => {

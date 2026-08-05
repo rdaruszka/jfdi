@@ -405,7 +405,9 @@ branch and resumes deliberately:
    continue the work, not start over.
 4. Unanswered feedback from the previous run (persisted as `history.json` in the
    run directory, capped at the 10 most recent items) is carried into the prompt
-   as well.
+   as well. Each retry save includes inherited feedback, so interruption between
+   rounds cannot strand it in an older run. If the cap discards items, the file
+   records the number discarded and the run that produced them.
 
 ## Outcomes
 
