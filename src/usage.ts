@@ -8,7 +8,6 @@
  * machine record and the fallback when no price is known — `unknown` there is a
  * deliberate signal, never a fabricated number.
  */
-import type { StageName } from "./events.js";
 import type { SessionKind, SessionUsage } from "./harness/types.js";
 
 /** The rows a usage table shows, in the order it shows them. */
@@ -231,9 +230,4 @@ export function formatRunningTotals(
   totalTokens: number,
 ): string {
   return `${formatCostUsd(costUsd, totalTokens)} · agent ${formatDurationMs(agentMs)}`;
-}
-
-/** The row label a session kind rolls into — exported for tests over the mapping. */
-export function usageRowFor(kind: StageName | "commit-message"): UsageRowLabel {
-  return SESSION_KIND_ROW[kind];
 }

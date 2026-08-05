@@ -142,7 +142,6 @@ export interface InteractiveSpawnOptions {
 }
 
 export interface Harness {
-  readonly name: string;
   spawn(promptSpec: PromptSpec, options: SpawnOptions): HarnessSession;
   spawnInteractive(promptSpec: PromptSpec, options: InteractiveSpawnOptions): Promise<number>;
 }

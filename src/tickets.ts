@@ -1,4 +1,3 @@
-import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { parseTicketNote, type TicketNote, ticketSpec } from "./ticket-note.js";
 import { atomicWrite, fileExists, readIfExists } from "./util/fsx.js";
@@ -90,8 +89,4 @@ export async function ensureTicketNote(ticket: Ticket, ticketsDir: string): Prom
     await atomicWrite(notePath, `# ${ticket.cardText}\n\n${ticket.spec}\n`);
   }
   return notePath;
-}
-
-export async function ensureTicketsDir(ticketsDir: string): Promise<void> {
-  await fs.mkdir(ticketsDir, { recursive: true });
 }

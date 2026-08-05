@@ -271,11 +271,6 @@ export async function fastForward(repo: string, target: string, commitish: strin
   }
 }
 
-/** Diff of the branch against its merge-base with target (what the reviews look at). */
-export function branchDiff(worktree: string, target: string): Promise<string> {
-  return git(worktree, "diff", `${target}...HEAD`);
-}
-
 export async function commitCount(worktree: string, target: string): Promise<number> {
   const output = await git(worktree, "rev-list", "--count", `${target}..HEAD`);
   const count = Number.parseInt(output, 10);

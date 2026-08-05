@@ -500,5 +500,3 @@ export class IntegrationQueue {
     await this.chain;
   }
 }
-
-export { worktreesDir };
