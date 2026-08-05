@@ -15,6 +15,7 @@ import type {
   HarnessSession,
   InteractiveSpawnOptions,
   PromptSpec,
+  SessionUsage,
   SpawnOptions,
 } from "./types.js";
 
@@ -49,8 +50,36 @@ interface ClaudeStreamLine {
   /** HTTP status behind an API-level failure; null for connection errors. */
   api_error_status?: number | null;
   session_id?: string;
+  /** Dollars the CLI computed for the whole session — used verbatim, never recomputed. */
+  total_cost_usd?: number;
+  /** Cumulative token usage the CLI reports on the result line. */
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  };
   message?: {
     content?: Array<{ type?: string; text?: string; name?: string; input?: unknown }>;
+  };
+}
+
+/**
+ * The provider-neutral usage for a Claude result line. Claude reports dollars
+ * directly, so `costUsd` is its `total_cost_usd` verbatim (§3 of the ticket);
+ * tokens ride along for the machine record and the price-unknown fallback.
+ * `durationMs` stays zero — agent time is pipeline-measured, not provider-read.
+ */
+function claudeUsage(parsed: ClaudeStreamLine): SessionUsage | undefined {
+  const usage = parsed.usage;
+  if (parsed.total_cost_usd === undefined && usage === undefined) return undefined;
+  return {
+    durationMs: 0,
+    costUsd: parsed.total_cost_usd ?? null,
+    inputTokens: usage?.input_tokens ?? 0,
+    cachedInputTokens: usage?.cache_read_input_tokens ?? 0,
+    outputTokens: usage?.output_tokens ?? 0,
+    reasoningTokens: 0,
   };
 }
 
@@ -146,6 +175,25 @@ function mapAssistantBlock(block: ClaudeContentBlock): HarnessEvent[] {
   return [];
 }
 
+/** The `result` line as a result event: ok/failure classification plus usage. */
+function mapResultLine(parsed: ClaudeStreamLine): HarnessEvent {
+  const text = parsed.result ?? "";
+  const isOk = parsed.subtype === "success" && !parsed.is_error;
+  // An API-level failure arrives as subtype "success" with is_error set — the
+  // subtype describes the CLI's turn, not the provider's answer.
+  const failure = isOk
+    ? undefined
+    : classifyClaudeFailure(text, parsed.api_error_status ?? null, Date.now());
+  const usage = claudeUsage(parsed);
+  return {
+    type: "result",
+    ok: isOk,
+    text,
+    ...(failure ? { failure } : {}),
+    ...(usage ? { usage } : {}),
+  };
+}
+
 /** Map one stream-json line to harness events. */
 export function mapClaudeLine(line: string): HarnessEvent[] {
   const parsed = parseStreamLine(line);
@@ -161,14 +209,7 @@ export function mapClaudeLine(line: string): HarnessEvent[] {
   if (parsed.type === "result") {
     const events: HarnessEvent[] = [];
     if (parsed.session_id) events.push({ type: "session", sessionId: parsed.session_id });
-    const text = parsed.result ?? "";
-    const isOk = parsed.subtype === "success" && !parsed.is_error;
-    // An API-level failure arrives as subtype "success" with is_error set — the
-    // subtype describes the CLI's turn, not the provider's answer.
-    const failure = isOk
-      ? undefined
-      : classifyClaudeFailure(text, parsed.api_error_status ?? null, Date.now());
-    events.push({ type: "result", ok: isOk, text, ...(failure ? { failure } : {}) });
+    events.push(mapResultLine(parsed));
     return events;
   }
   return [];
@@ -249,7 +290,12 @@ export class ClaudeHarness implements Harness {
       for (const event of mapClaudeLine(line)) {
         if (event.type === "session") sessionId = event.sessionId;
         if (event.type === "result") {
-          result = { ok: event.ok, text: event.text, exitCode: 0 };
+          result = {
+            ok: event.ok,
+            text: event.text,
+            exitCode: 0,
+            ...(event.usage ? { usage: event.usage } : {}),
+          };
           resultFailure = event.failure;
         }
         push(event);

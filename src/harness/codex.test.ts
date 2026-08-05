@@ -139,9 +139,29 @@ describe("CodexHarness subprocess", () => {
     const events: HarnessEvent[] = [];
     for await (const event of session.events) events.push(event);
 
-    await expect(session.done).resolves.toEqual({ ok: true, text: "all done", exitCode: 0 });
+    // The turn.completed usage rides out on the result; Codex reports no
+    // dollars and the test model is unpriced, so costUsd stays null.
+    const expectedUsage = {
+      durationMs: 0,
+      costUsd: null,
+      inputTokens: 1,
+      cachedInputTokens: 0,
+      outputTokens: 2,
+      reasoningTokens: 0,
+    };
+    await expect(session.done).resolves.toEqual({
+      ok: true,
+      text: "all done",
+      exitCode: 0,
+      usage: expectedUsage,
+    });
     expect(events).toContainEqual({ type: "tool", name: "command", detail: "pnpm test" });
-    expect(events).toContainEqual({ type: "result", ok: true, text: "all done" });
+    expect(events).toContainEqual({
+      type: "result",
+      ok: true,
+      text: "all done",
+      usage: expectedUsage,
+    });
   });
 
   it("captures raw output", async () => {

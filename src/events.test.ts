@@ -44,6 +44,54 @@ describe("EventLog", () => {
     expect(log.snapshot().tickets.a?.status).toBe("done");
   });
 
+  it("sets running cost/time totals from a stage_end, idempotent under re-folding", () => {
+    const log = new EventLog(dir, false);
+    log.emit("dispatch", "t1", { title: "Ticket One" });
+    // A stage_end carries the run's cumulative; the reducer sets, never adds.
+    const stageEnd = {
+      stage: "implementation",
+      verdict: "done",
+      runAgentMs: 120_000,
+      runCostUsd: 9,
+      runTokens: 1_000,
+    };
+    log.emit("stage_end", "t1", stageEnd);
+    expect(log.snapshot().tickets.t1?.totalAgentMs).toBe(120_000);
+    expect(log.snapshot().tickets.t1?.totalCostUsd).toBe(9);
+    expect(log.snapshot().tickets.t1?.totalTokens).toBe(1_000);
+
+    // Re-folding the same cumulative (as pullForeignEvents can) must not double it.
+    log.emit("stage_end", "t1", stageEnd);
+    expect(log.snapshot().tickets.t1?.totalAgentMs).toBe(120_000);
+    expect(log.snapshot().tickets.t1?.totalCostUsd).toBe(9);
+
+    // A later stage carries a higher cumulative; the total moves to it.
+    log.emit("stage_end", "t1", {
+      stage: "qa",
+      verdict: "pass",
+      runAgentMs: 200_000,
+      runCostUsd: 13.5,
+      runTokens: 5_000,
+    });
+    expect(log.snapshot().tickets.t1?.totalAgentMs).toBe(200_000);
+    expect(log.snapshot().tickets.t1?.totalCostUsd).toBe(13.5);
+  });
+
+  it("reads an absent run cost as unknown, never as zero dollars", () => {
+    const log = new EventLog(dir, false);
+    log.emit("dispatch", "t1", { title: "Ticket One" });
+    // runCostUsd null means a session had no known price — total cost is unknown.
+    log.emit("stage_end", "t1", {
+      stage: "qa",
+      verdict: "pass",
+      runAgentMs: 60_000,
+      runCostUsd: null,
+      runTokens: 2_000,
+    });
+    expect(log.snapshot().tickets.t1?.totalCostUsd).toBeNull();
+    expect(log.snapshot().tickets.t1?.totalTokens).toBe(2_000);
+  });
+
   it("shows a resumed ticket's prior work in the activity line", () => {
     const log = new EventLog(dir, false);
     log.emit("dispatch", "t1", { title: "Ticket One" });

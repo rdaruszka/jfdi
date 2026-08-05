@@ -175,11 +175,13 @@ The anatomy, part by part. Every part is optional; an absent one is simply empty
   (<stage>, round <n>)`), one per autonomous choice an agent logged. This is the
   decide-log-proceed audit trail, and the JIRA emulation: an agent's decisions
   land in the same chronological trail a human's comments would. Every transition
-  a run makes is here — dispatch, each commit's message verbatim, each review
-  verdict, exhausted rounds, and the run's close: on-approval, the ready-to-merge
-  entry (summary, rounds, commit, QA tests added, and the `jfdi merge` approval
-  line); either way, the merge entry that lands the branch. So the note tells the
-  whole story without `git log`, and `git log` tells it without the note. See
+  a run makes is here — dispatch, each commit's message verbatim (with its
+  `JFDI-Duration`/`JFDI-Cost` trailers), each review verdict, exhausted rounds,
+  and the run's close: on-approval, the ready-to-merge entry (summary, rounds,
+  commit, the per-stage [cost-and-time table](pipeline.md#cost-and-time), QA tests
+  added, and the `jfdi merge` approval line); either way, the merge entry that
+  lands the branch. So the note tells the whole story without `git log`, and `git
+  log` tells it without the note. See
   [Commits and the scribe](pipeline.md#commits-and-the-scribe).
 
 Sections JFDI does not recognize — your own, a legacy `## Decisions` block, or a

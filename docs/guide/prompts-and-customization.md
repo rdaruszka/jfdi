@@ -71,8 +71,8 @@ verdict) and the verdict **schema** the stage's parser expects (see
 
 `commit-message.md` is the exception to both: it names no verdict file, and its
 whole answer *is* the message. Retune its voice freely — the message shape it
-must not fight is the status line and the `JFDI-Round` trailer, which the
-pipeline appends under whatever the scribe wrote.
+must not fight is the status line and the `JFDI-Round`/`JFDI-Duration`/`JFDI-Cost`
+trailer block, which the pipeline appends under whatever the scribe wrote.
 
 The shared posture block in the three fresh-stage prompts encodes the system's
 values — decide-log-proceed, escalation as a last resort with a recommendation,

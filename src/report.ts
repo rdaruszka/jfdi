@@ -3,6 +3,7 @@ import { addCardIfAbsent } from "./board.js";
 import type { PipelineContext, RunReport } from "./pipeline.js";
 import { runsDir } from "./pipeline.js";
 import { recordTransition, shortSha } from "./transitions.js";
+import { renderUsageTable, usageTotals } from "./usage.js";
 import { atomicWrite, fileExists, readIfExists } from "./util/fsx.js";
 
 /** Persist the pipeline report so a later `jfdi merge` / restart can pick it up. */
@@ -20,11 +21,11 @@ export async function saveReport(
 /**
  * report.json is our own file, but a crashed write or a hand edit can leave
  * anything there — and callers dereference `decisions`/`observations` without
- * guarding. Check the shape before handing it over.
+ * guarding. Check the core shape before handing it over. The cost/time fields
+ * are checked leniently: a report written before this feature has none, and a
+ * merge should still proceed reading them as "no table" rather than refusing.
  */
-function isRunReport(value: unknown): value is RunReport {
-  if (typeof value !== "object" || value === null) return false;
-  const record = value as Record<string, unknown>;
+function hasCoreReportShape(record: Record<string, unknown>): boolean {
   return (
     typeof record.summary === "string" &&
     Array.isArray(record.decisions) &&
@@ -46,7 +47,15 @@ export async function loadReport(stateDir: string, ticketId: string): Promise<Ru
     // re-runs the pipeline rather than merging on a half-read record.
     return null;
   }
-  return isRunReport(parsed) ? parsed : null;
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const record = parsed as Record<string, unknown>;
+  if (!hasCoreReportShape(record)) return null;
+  // Backfill the cost/time fields so an older report loads as one without a table.
+  return {
+    ...(record as unknown as RunReport),
+    usageRows: Array.isArray(record.usageRows) ? (record.usageRows as RunReport["usageRows"]) : [],
+    elapsedMs: typeof record.elapsedMs === "number" ? record.elapsedMs : 0,
+  };
 }
 
 /**
@@ -95,8 +104,19 @@ export async function recordMergeReady(
     "",
     `**Rounds:** ${report.rounds} · **Commit:** \`${shortSha(report.commit)}\``,
   ];
+  // The whole run's cost and time — the integration row is still to come, so
+  // this table's elapsed runs to merge-ready only.
+  if (report.usageRows.length > 0)
+    lines.push("", renderUsageTable(report.usageRows, report.elapsedMs));
   if (report.testsAdded) lines.push("", `**QA tests added:**\n${report.testsAdded}`);
   lines.push("", `_Approve with \`jfdi merge ${ticketId}\`, or merge the branch by hand._`);
   await recordTransition(notePath, "pipeline", report.rounds, lines.join("\n"));
-  context.log.emit("merge_ready", ticketId);
+  // Carry the complete run total so the status/TUI snapshot lands the final
+  // figure — including this run's last scribe, which ran after the last stage_end.
+  const totals = usageTotals(report.usageRows);
+  context.log.emit("merge_ready", ticketId, {
+    runAgentMs: totals.durationMs,
+    runCostUsd: totals.costUsd,
+    runTokens: totals.totalTokens,
+  });
 }

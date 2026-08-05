@@ -9,6 +9,14 @@ const HANDOFF: SessionHandoff = {
   routing: "moving to the mechanical gate",
   summary: "Taught the parser to accept sha256 object names.",
   isInterrupted: false,
+  usage: {
+    durationMs: 7 * 60 * 1_000,
+    costUsd: 1.87,
+    inputTokens: 120_000,
+    cachedInputTokens: 0,
+    outputTokens: 8_000,
+    reasoningTokens: 0,
+  },
 };
 
 describe("assembleCommitMessage", () => {
@@ -28,9 +36,46 @@ describe("assembleCommitMessage", () => {
         "JFDI Implementation complete — moving to the mechanical gate",
         "",
         "JFDI-Round: 2/3",
+        "JFDI-Duration: 7m",
+        "JFDI-Cost: $1.87",
         "",
       ].join("\n"),
     );
+  });
+
+  it("renders a known cost as dollars and an unknown one as a token count in the trailer", () => {
+    const known = assembleCommitMessage("Body", "fix-object-names", HANDOFF);
+    expect(known).toContain("JFDI-Cost: $1.87");
+    expect(known).toContain("JFDI-Duration: 7m");
+
+    // A Codex model the price table does not carry: costUsd null → tokens shown,
+    // never a fabricated dollar figure.
+    const unknown = assembleCommitMessage("Body", "fix-object-names", {
+      ...HANDOFF,
+      usage: {
+        durationMs: 90_000,
+        costUsd: null,
+        inputTokens: 1_000_000,
+        cachedInputTokens: 0,
+        outputTokens: 200_000,
+        reasoningTokens: 50_000,
+      },
+    });
+    expect(unknown).toContain("JFDI-Cost: 1.2M tokens, price unavailable");
+    expect(unknown).toContain("JFDI-Duration: 2m");
+  });
+
+  it("marks a Codex table cost as an estimate, but leaves a provider-reported one alone", () => {
+    // Claude's cost is exact — no qualifier.
+    expect(assembleCommitMessage("Body", "fix-object-names", HANDOFF)).toContain(
+      "JFDI-Cost: $1.87\n",
+    );
+    // A Codex figure is a table estimate that runs low, and says so.
+    const estimated = assembleCommitMessage("Body", "fix-object-names", {
+      ...HANDOFF,
+      usage: { ...HANDOFF.usage, costUsd: 1.5, isCostEstimated: true },
+    });
+    expect(estimated).toContain("JFDI-Cost: $1.50 (estimate, runs low)");
   });
 
   it("marks an interrupted session's partial work in the subject", () => {
@@ -234,10 +279,12 @@ describe("assembleCommitMessage against hostile scribe output", () => {
     expect(messageLines[0]).toBe("fix-names: WIP — Implementation round 2");
     // One line for the status, then the trailer alone in its own paragraph —
     // git only parses an all-trailer last paragraph as a trailer block.
-    expect(messageLines.slice(-3)).toEqual([
+    expect(messageLines.slice(-5)).toEqual([
       "JFDI Implementation interrupted: killed mid-edit second line[0m — returning to Implementation for round 3",
       "",
       "JFDI-Round: 2/3",
+      "JFDI-Duration: 7m",
+      "JFDI-Cost: $1.87",
     ]);
   });
 
@@ -257,6 +304,8 @@ describe("assembleCommitMessage against hostile scribe output", () => {
         "JFDI Implementation complete — moving on",
         "",
         "JFDI-Round: 2/3",
+        "JFDI-Duration: 7m",
+        "JFDI-Cost: $1.87",
         "",
       ].join("\n"),
     );
@@ -273,10 +322,12 @@ describe("assembleCommitMessage against hostile scribe output", () => {
     for (const text of hostile) {
       const message = assembleCommitMessage(text, "fix-names", HANDOFF);
       expect(message.startsWith("fix-names: ")).toBe(true);
-      expect(message.trimEnd().split("\n").slice(-3)).toEqual([
+      expect(message.trimEnd().split("\n").slice(-5)).toEqual([
         "JFDI Implementation complete — moving to the mechanical gate",
         "",
         "JFDI-Round: 2/3",
+        "JFDI-Duration: 7m",
+        "JFDI-Cost: $1.87",
       ]);
       expect(message.endsWith("\n")).toBe(true);
     }

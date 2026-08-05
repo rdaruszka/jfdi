@@ -13,7 +13,9 @@ import {
   type Fixture,
   makeFixture,
   sessionKindOf,
+  steppingClock,
   TEST_PAUSE_DELAYS,
+  usageFor,
   writeVerdict,
 } from "./test-helpers.js";
 import { parseTicketNote } from "./ticket-note.js";
@@ -1190,12 +1192,14 @@ describe("pipeline-owned commits", () => {
       if (stage === "implementation") {
         await fs.writeFile(path.join(options.cwd, "impl.txt"), "the feature\n");
         await writeVerdict(spec.prompt, { status: "done", summary: "built the feature" });
-      } else {
-        if (stage === "code-review") reviewedCommit = await git(options.cwd, "rev-parse", "HEAD");
-        await writeVerdict(spec.prompt, { verdict: "pass" });
+        return { ok: true, text: "", usage: usageFor(2.0) };
       }
+      if (stage === "code-review") reviewedCommit = await git(options.cwd, "rev-parse", "HEAD");
+      await writeVerdict(spec.prompt, { verdict: "pass" });
       return { ok: true, text: "" };
     });
+    // A stepping clock so every session's measured duration is exactly one minute.
+    context.now = steppingClock(60 * 1_000);
 
     const ticket = await resolveTicket("One rendering", fixture.ticketsDir);
     const outcome = await runPipeline(context, ticket);
@@ -1211,6 +1215,8 @@ describe("pipeline-owned commits", () => {
       "JFDI Implementation complete — moving to the mechanical gate",
       "",
       "JFDI-Round: 1/3",
+      "JFDI-Duration: 1m",
+      "JFDI-Cost: $2.00",
     ]);
 
     // The note's entry is that message, byte for byte, under its own heading.

@@ -162,14 +162,28 @@ The shape:
 JFDI <Stage> <outcome> — <where the run actually went>
 
 JFDI-Round: <n>/<max>
+JFDI-Duration: <agent time, e.g. 7m>
+JFDI-Cost: <e.g. $1.87, or "1.2M tokens, price unavailable">
 ```
 
-The scribe writes the subject and body only. The status line and the trailer are
+The scribe writes the subject and body only. The status line and the trailers are
 appended by the pipeline, so they never depend on an agent getting a format
-right: `git log --format='%(trailers:key=JFDI-Round)'` always answers. The
-blank line above the trailer is load-bearing: git only reads a message's last
-paragraph as a trailer block when every line in it is trailer-shaped, so the
-trailer stands alone rather than sharing a paragraph with the status line.
+right: `git log --format='%(trailers:key=JFDI-Cost)'` always answers. The
+blank line above the trailer block is load-bearing: git only reads a message's
+last paragraph as a trailer block when every line in it is trailer-shaped, so the
+three `JFDI-*` trailers share one paragraph and the status line stands apart.
+
+`JFDI-Duration` is agent time — wall-clock the pipeline measures around the
+session, not anything the provider reports (Codex reports no duration at all).
+`JFDI-Cost` is dollars when the price is known: Claude reports its cost directly
+and JFDI uses it verbatim; Codex reports only tokens, so JFDI multiplies them by
+a maintained [price table](#cost-and-time) and shows `price unavailable` with a
+token count when the model is not in it. A Codex figure is a table estimate that
+runs low — cache writes and long-context tiers are unpriced because Codex reports
+no counts for them — so it carries a brief `(estimate, runs low)` qualifier;
+Claude's verbatim figure stands alone. Tokens are the machine record —
+diagnostics on the event stream and `report.json`, and the fallback in prose when
+no price is known — never shown beside a dollar figure.
 
 What comes back is subprocess output on its way into permanent history, so the
 pipeline enforces the rest of the shape rather than trusting it. A first line
@@ -204,6 +218,39 @@ not ticket history — and agents never write the note themselves. Every append 
 pipeline-owned and atomic (read → mtime check → temp-file rename, following
 symlinks to the real file), so a human editing the note in Obsidian mid-run
 loses nothing.
+
+### Cost and time
+
+Every session's cost and time ride its handoff commit as the `JFDI-Duration` and
+`JFDI-Cost` trailers (above), and a human should be able to see what a ticket
+cost from whichever surface they are looking at. Where more than one stage's
+numbers appear together, they appear as a table. The **ready-to-merge** comment
+(on-approval mode) and the **merged** comment both carry the whole run:
+
+| Stage | Sessions | Time | Cost |
+|---|---|---|---|
+| Implementation | 2 | 28m | $9.00 |
+| Code Review | 2 | 6m | $2.50 |
+| QA | 1 | 7m | $1.87 |
+| Scribe | 3 | 1m | $0.04 |
+| **Total** | **8** | **agent 42m · elapsed 3h 10m** | **$13.41** |
+
+Every session is counted, the scribe included — a total that omits sessions is a
+lie. Two clocks are labeled distinctly: **agent** time is the wall-clock summed
+around the sessions themselves; **elapsed** is dispatch → merge-ready, which
+includes everything the run waited on in between. A row (or the total) whose
+price is unknown shows a token count instead of dollars, never a guessed figure;
+when any dollars in the table are Codex table estimates, a one-line note under it
+says so (they run low).
+
+The price table lives in code (`src/harness/codex-pricing.ts`), not config:
+Claude reports its cost directly, Codex reports only tokens, so JFDI prices those
+from a small maintained table covering the models it ships. A stale table is a
+versioned fix, never a per-project chore — which is why `unknown` is deliberate,
+the signal to update it. `jfdi status` and the TUI show each ticket's running
+cost and agent time, read from `state.json` alone. There is no project-level
+rollup (no per-week spend, no `jfdi cost`) — the event stream carries everything
+needed to build one later.
 
 ## The mechanical gate
 

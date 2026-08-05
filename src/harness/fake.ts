@@ -5,13 +5,21 @@ import type {
   HarnessResult,
   HarnessSession,
   PromptSpec,
+  SessionUsage,
   SpawnOptions,
 } from "./types.js";
 
 export type FakeHandler = (
   promptSpec: PromptSpec,
   options: SpawnOptions,
-) => Promise<{ ok: boolean; text: string; sessionId?: string; failure?: HarnessFailure }>;
+) => Promise<{
+  ok: boolean;
+  text: string;
+  sessionId?: string;
+  failure?: HarnessFailure;
+  /** Optional usage a test can pin, so cost/token assertions stay deterministic. */
+  usage?: SessionUsage;
+}>;
 
 /**
  * In-process harness for tests: the handler plays the agent, performing side
@@ -34,7 +42,12 @@ export class FakeHarness implements Harness {
     const events: HarnessEvent[] = [];
     const run = this.handler(promptSpec, options)
       .then((result) => {
-        events.push({ type: "result", ok: result.ok, text: result.text });
+        events.push({
+          type: "result",
+          ok: result.ok,
+          text: result.text,
+          ...(result.usage ? { usage: result.usage } : {}),
+        });
         resolveDone({ ...result, exitCode: result.ok ? 0 : 1 });
       })
       .catch((error: Error) => {

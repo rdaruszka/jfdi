@@ -7,9 +7,10 @@ import { EventLog } from "./events.js";
 import { git } from "./git.js";
 import type { FakeHandler } from "./harness/fake.js";
 import { FakeHarness } from "./harness/fake.js";
-import type { SessionKind } from "./harness/index.js";
+import type { SessionKind, SessionUsage } from "./harness/index.js";
 import { PauseController, type PauseDelays } from "./pause.js";
 import type { PipelineContext } from "./pipeline.js";
+import { UsageRegistry } from "./usage.js";
 
 /**
  * Pause waits, shrunk to the millisecond scale. The real schedule is measured
@@ -106,9 +107,39 @@ export async function makeFixture(configOverrides: Partial<JfdiConfig> = {}): Pr
         scribe,
         log,
         pause: new PauseController(log, TEST_PAUSE_DELAYS),
+        usage: new UsageRegistry(),
       };
     },
     cleanup: () => fs.rm(root, { recursive: true, force: true }),
+  };
+}
+
+/**
+ * A `PipelineContext.now` that advances a fixed step on each call, so a session
+ * (one start read, one end read) always measures `stepMs` of wall-clock — time
+ * pinned without a real clock or a sleep.
+ */
+export function steppingClock(stepMs: number): () => number {
+  let ticks = 0;
+  return () => {
+    const value = ticks * stepMs;
+    ticks += 1;
+    return value;
+  };
+}
+
+/** A `SessionUsage` for a fake handler to return, so cost/token assertions are deterministic. */
+export function usageFor(
+  costUsd: number | null,
+  tokens: { input?: number; cachedInput?: number; output?: number; reasoning?: number } = {},
+): SessionUsage {
+  return {
+    durationMs: 0,
+    costUsd,
+    inputTokens: tokens.input ?? 0,
+    cachedInputTokens: tokens.cachedInput ?? 0,
+    outputTokens: tokens.output ?? 0,
+    reasoningTokens: tokens.reasoning ?? 0,
   };
 }
 

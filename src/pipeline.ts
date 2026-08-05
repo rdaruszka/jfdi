@@ -10,6 +10,7 @@ import type {
   PromptSpec,
   SessionHarnesses,
   SessionKind,
+  SessionUsage,
   SpawnOptions,
 } from "./harness/index.js";
 import type { PauseController } from "./pause.js";
@@ -45,6 +46,7 @@ import {
   shortSha,
   statusLine,
 } from "./transitions.js";
+import type { UsageRegistry, UsageRow } from "./usage.js";
 import { todayIsoDate } from "./util/dates.js";
 import { ensureDir, fileExists, readIfExists } from "./util/fsx.js";
 import { type ReviewVerdict, readImplementationVerdict, readReviewVerdict } from "./verdicts.js";
@@ -67,6 +69,22 @@ export interface PipelineContext {
   pause: PauseController;
   /** Live sessions register here so a shutdown can kill stray subprocesses. */
   sessions?: Set<{ kill(): void }>;
+  /**
+   * Per-ticket cost/time tallies. Every session adds itself as it ends, so the
+   * merge table and the running status totals both read from one place. Keyed by
+   * ticket because one context serves the coordinator's concurrent runs.
+   */
+  usage: UsageRegistry;
+  /**
+   * Wall-clock source for session timing, injectable so tests pin durations with
+   * a stepping clock instead of sleeping. Defaults to `Date.now`.
+   */
+  now?: () => number;
+}
+
+/** The context's clock, or the real one when none was injected. */
+function nowMs(context: PipelineContext): number {
+  return (context.now ?? Date.now)();
 }
 
 export interface RunReport {
@@ -77,6 +95,10 @@ export interface RunReport {
   testsAdded: string;
   rounds: number;
   commit: string;
+  /** Per-stage cost/time tally for this run's table. Scribe included; integration not yet. */
+  usageRows: UsageRow[];
+  /** Dispatch → merge-ready wall-clock, labeled `elapsed` beside agent time. */
+  elapsedMs: number;
 }
 
 export type PipelineOutcome =
@@ -151,6 +173,8 @@ interface StageOutcome {
    * makes "agents never commit" true rather than hoped for.
    */
   preSessionHead: string;
+  /** What this session cost and took — for its handoff commit's trailers. */
+  usage: SessionUsage;
 }
 
 /** Session progress → TUI activity line; session/result events carry no narration. */
@@ -191,6 +215,47 @@ export function sessionSelectionFields(
   };
 }
 
+/**
+ * The cost/time a `stage_end` carries: this session's own numbers, plus the
+ * run's cumulative totals so a renderer can show a running per-ticket figure
+ * from the stream alone. The cumulative is read after the session was tallied,
+ * so it includes it. `runCostUsd` is null when any session so far was unpriced.
+ */
+function stageUsageFields(
+  context: PipelineContext,
+  ticketId: string,
+  usage: SessionUsage,
+): Record<string, unknown> {
+  const totals = context.usage.of(ticketId).totals();
+  return {
+    durationMs: usage.durationMs,
+    costUsd: usage.costUsd,
+    tokens: usage.inputTokens + usage.outputTokens,
+    runAgentMs: totals.durationMs,
+    runCostUsd: totals.costUsd,
+    runTokens: totals.totalTokens,
+  };
+}
+
+/**
+ * Set a session's wall-clock on its usage, synthesizing a minimal usage when the
+ * provider reported none (an early crash still cost real time). Duration is the
+ * pipeline's own measure — never the provider's — so it is always present.
+ */
+function withDuration(result: HarnessResult, durationMs: number): HarnessResult {
+  const usage: SessionUsage = result.usage
+    ? { ...result.usage, durationMs }
+    : {
+        durationMs,
+        costUsd: null,
+        inputTokens: 0,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+      };
+  return { ...result, usage };
+}
+
 /** One session, start to finish, with its events narrated as they arrive. */
 async function runOneSession(
   context: PipelineContext,
@@ -201,9 +266,10 @@ async function runOneSession(
 ): Promise<HarnessResult> {
   const session = context.harnesses[sessionKind].spawn(promptSpec, options);
   context.sessions?.add(session);
+  const startedMs = nowMs(context);
   try {
     for await (const event of session.events) onEvent(event);
-    return await session.done;
+    return withDuration(await session.done, nowMs(context) - startedMs);
   } finally {
     context.sessions?.delete(session);
   }
@@ -232,12 +298,17 @@ export async function runHeldSession(
   onEvent: (event: HarnessEvent) => void,
 ): Promise<HarnessResult> {
   let attemptOptions = options;
+  // Provider-failure retries are one logical session: their wall-clock all
+  // counts as agent time, but the tokens/cost come from the attempt that
+  // actually answered (the last one), so only the returned result is tallied.
+  let accumulatedMs = 0;
   for (let attempt = 1; ; attempt++) {
     await context.pause.waitWhilePaused();
     const result = await runOneSession(context, sessionKind, promptSpec, attemptOptions, onEvent);
+    accumulatedMs += result.usage?.durationMs ?? 0;
     if (!result.failure) {
       context.pause.reportHealthy();
-      return result;
+      return tallied(context, ticketId, sessionKind, withDuration(result, accumulatedMs));
     }
     if (result.sessionId) attemptOptions = { ...options, continueSessionId: result.sessionId };
     context.log.emit("session_activity", ticketId, {
@@ -245,8 +316,20 @@ export async function runHeldSession(
     });
     // Shutting down is the one way out that is not a working provider; the
     // caller then sees the failed session exactly as it did before this hold.
-    if (!(await context.pause.holdAfterFailure(result.failure, attempt))) return result;
+    if (!(await context.pause.holdAfterFailure(result.failure, attempt)))
+      return tallied(context, ticketId, sessionKind, withDuration(result, accumulatedMs));
   }
+}
+
+/** Add a finished session to the ticket's ledger, then return it unchanged. */
+function tallied(
+  context: PipelineContext,
+  ticketId: string,
+  sessionKind: SessionKind,
+  result: HarnessResult,
+): HarnessResult {
+  if (result.usage) context.usage.add(ticketId, sessionKind, result.usage);
+  return result;
 }
 
 async function runStageSession(
@@ -279,7 +362,20 @@ async function runStageSession(
     resultText: result.text,
     verdictPath,
     preSessionHead,
+    usage: result.usage ?? zeroUsage(),
     ...(result.sessionId ? { sessionId: result.sessionId } : {}),
+  };
+}
+
+/** A usage with everything at zero — a defensive default; runHeldSession fills real duration. */
+function zeroUsage(): SessionUsage {
+  return {
+    durationMs: 0,
+    costUsd: null,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
   };
 }
 
@@ -584,6 +680,7 @@ export async function runQaStage(
   context.log.emit("stage_end", ticket.id, {
     stage: "qa",
     verdict: verdict?.verdict ?? (outcome.ok ? "invalid-verdict" : "session-failed"),
+    ...stageUsageFields(context, ticket.id, outcome.usage),
   });
   return { verdict, outcome };
 }
@@ -635,6 +732,7 @@ async function runImplementationStage(
   step: ImplementationStep;
   sessionId: string | undefined;
   preSessionHead: string;
+  usage: SessionUsage;
 }> {
   const { roundDir, notePath, round, history, resume } = input;
   const verdictPath = path.join(roundDir, "implementation.verdict.json");
@@ -673,11 +771,13 @@ async function runImplementationStage(
     step,
     sessionId: outcome.sessionId,
     preSessionHead: outcome.preSessionHead,
+    usage: outcome.usage,
   });
   const verdict = await readImplementationVerdict(outcome.verdictPath);
   context.log.emit("stage_end", ticket.id, {
     stage: "implementation",
     verdict: verdict?.status ?? (outcome.ok ? "invalid-verdict" : "session-failed"),
+    ...stageUsageFields(context, ticket.id, outcome.usage),
   });
   if (!verdict) {
     return staged({
@@ -772,6 +872,7 @@ async function runCodeReviewStage(
   context.log.emit("stage_end", ticket.id, {
     stage: "code-review",
     verdict: verdict?.verdict ?? (outcome.ok ? "invalid-verdict" : "session-failed"),
+    ...stageUsageFields(context, ticket.id, outcome.usage),
   });
   if (!verdict || verdict.verdict === "fail") {
     const feedback =
@@ -984,7 +1085,7 @@ async function runImplementationGateCycle(
         worktree,
         notePath,
         roundDir: sessionDir,
-        handoff: implementationHandoff(implementation.step, round, maxRounds),
+        handoff: implementationHandoff(implementation.step, round, maxRounds, implementation.usage),
         preSessionHead: implementation.preSessionHead,
       })) ?? lastHandoffCommit;
     const exitStep = await implementationExitStep(context, ticket, notePath, implementation.step);
@@ -1113,7 +1214,7 @@ async function runQaPhase(
     previousFailure: input.previousFailure,
   });
   const step = await judgeQa(context, ticket, notePath, qa);
-  const handoff = qaHandoff(step, qa.verdict, round, maxRounds);
+  const handoff = qaHandoff(step, qa.verdict, round, maxRounds, qa.outcome.usage);
   const qaCommit = await commitSessionHandoff(context, ticket, {
     worktree,
     notePath,
@@ -1162,8 +1263,9 @@ function implementationHandoff(
   step: ImplementationStep,
   round: number,
   maxRounds: number,
+  usage: SessionUsage,
 ): SessionHandoff {
-  const base = { stage: "implementation" as const, round, maxRounds };
+  const base = { stage: "implementation" as const, round, maxRounds, usage };
   switch (step.kind) {
     case "done":
       return {
@@ -1198,8 +1300,9 @@ function qaHandoff(
   verdict: ReviewVerdict | null,
   round: number,
   maxRounds: number,
+  usage: SessionUsage,
 ): SessionHandoff {
-  const base = { stage: "qa" as const, round, maxRounds };
+  const base = { stage: "qa" as const, round, maxRounds, usage };
   if (step.kind === "passed")
     return {
       ...base,
@@ -1287,6 +1390,9 @@ export async function runPipeline(
     target,
   );
   const runDirs = await nextRunDir(context.stateDir, ticket.id);
+  // A fresh tally per run, and the clock the ticket-level elapsed measures from.
+  context.usage.start(ticket.id);
+  const runStartedMs = nowMs(context);
   context.log.emit("dispatch", ticket.id, { title: ticket.cardText, branch: worktree.branch });
   await recordTransition(
     notePath,
@@ -1369,6 +1475,8 @@ export async function runPipeline(
         testsAdded: result.step.testsAdded,
         rounds: round,
         commit: finalCommit,
+        usageRows: context.usage.of(ticket.id).snapshot(),
+        elapsedMs: nowMs(context) - runStartedMs,
       },
     };
   }

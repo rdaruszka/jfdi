@@ -3,6 +3,7 @@ import { createWriteStream, mkdirSync } from "node:fs";
 import * as path from "node:path";
 import * as readline from "node:readline";
 import { EXIT_COMMAND_NOT_EXECUTABLE } from "../util/exit-codes.js";
+import { codexCostUsd } from "./codex-pricing.js";
 import { parseResetTime } from "./reset-time.js";
 import { spawnFailureText } from "./spawn-failure.js";
 import type {
@@ -15,6 +16,7 @@ import type {
   HarnessSession,
   InteractiveSpawnOptions,
   PromptSpec,
+  SessionUsage,
   SpawnOptions,
 } from "./types.js";
 
@@ -100,6 +102,19 @@ export function classifyCodexFailure(text: string, nowMs: number): HarnessFailur
   };
 }
 
+/**
+ * Cumulative token counts as Codex reports them. `output_tokens` already
+ * includes `reasoning_output_tokens` (a diagnostic subset, not added on top —
+ * see the reasoning-token decision on the ticket). `cached_input_tokens` is a
+ * subset of `input_tokens`. Version-volatile field names, so read defensively.
+ */
+interface CodexTokenCounts {
+  input_tokens?: number;
+  cached_input_tokens?: number;
+  output_tokens?: number;
+  reasoning_output_tokens?: number;
+}
+
 interface CodexStreamLine {
   type?: string;
   message?: string;
@@ -112,6 +127,32 @@ interface CodexStreamLine {
     server?: string;
     tool?: string;
     query?: string;
+  };
+  /** `token_count` events nest cumulative usage under `info.total_token_usage`. */
+  info?: { total_token_usage?: CodexTokenCounts };
+  /** `turn.completed` (newer exec JSON) carries usage here instead. */
+  usage?: CodexTokenCounts;
+}
+
+/**
+ * The cumulative token counts a Codex line carries, or null when it carries
+ * none. Codex emits these on `token_count` events and `turn.completed`; the
+ * counts are cumulative, so the last one seen is the session total. Cost is
+ * left null here — the harness computes it from the price table at close, once
+ * it knows the model.
+ */
+export function codexUsageTokens(line: string): SessionUsage | null {
+  const parsed = parseStreamLine(line);
+  if (parsed === null) return null;
+  const counts = parsed.info?.total_token_usage ?? parsed.usage;
+  if (counts === undefined) return null;
+  return {
+    durationMs: 0,
+    costUsd: null,
+    inputTokens: counts.input_tokens ?? 0,
+    cachedInputTokens: counts.cached_input_tokens ?? 0,
+    outputTokens: counts.output_tokens ?? 0,
+    reasoningTokens: counts.reasoning_output_tokens ?? 0,
   };
 }
 
@@ -128,6 +169,42 @@ function truncateDetail(detail: string): string {
   return detail.length > MAX_TOOL_DETAIL_CHARS
     ? `${detail.slice(0, MAX_TOOL_DETAIL_CHARS - ELLIPSIS.length)}${ELLIPSIS}`
     : detail;
+}
+
+/**
+ * Fill a session's cost from the price table, once the model is known. Codex
+ * reports no dollars, so an unpriced model leaves `costUsd` null (unknown).
+ * Returns undefined when the session reported no token usage at all.
+ */
+function pricedUsage(
+  tokens: SessionUsage | null,
+  model: string | undefined,
+): SessionUsage | undefined {
+  if (tokens === null) return undefined;
+  const costUsd = codexCostUsd(model, tokens);
+  return {
+    ...tokens,
+    ...(model ? { model } : {}),
+    costUsd,
+    // A dollar figure here is always a table estimate (Codex reports no cost);
+    // flag it so the dollars carry an "estimate, runs low" note downstream. An
+    // unpriced model has no dollars to qualify, so it carries no flag.
+    ...(costUsd !== null ? { isCostEstimated: true } : {}),
+  };
+}
+
+/** Assemble the final result at close: fold in usage, classify a failure, attach the session id. */
+function finalizeClose(
+  closed: HarnessResult,
+  usage: SessionUsage | undefined,
+  resultFailure: HarnessFailure | undefined,
+  sessionId: string | undefined,
+): HarnessResult {
+  const failure = closed.ok
+    ? undefined
+    : (resultFailure ?? closeFailure(closed.text, sessionId !== undefined));
+  const withUsage = usage ? { ...closed, usage } : closed;
+  return withSession(failure ? { ...withUsage, failure } : withUsage, sessionId);
 }
 
 /** Map one `codex exec --json` line to provider-neutral progress events. */
@@ -252,6 +329,8 @@ export class CodexHarness implements Harness {
     let failureText: string | null = null;
     let resultFailure: HarnessFailure | undefined;
     let sessionId: string | undefined;
+    // Codex reports cumulative token counts, so the last one seen is the total.
+    let latestUsage: SessionUsage | null = null;
     const push = (event: HarnessEvent) => {
       queue.push(event);
       notify?.();
@@ -262,6 +341,8 @@ export class CodexHarness implements Harness {
       : null;
     stdoutLines?.on("line", (line) => {
       log?.write(`${line}\n`);
+      const usage = codexUsageTokens(line);
+      if (usage) latestUsage = usage;
       for (const event of mapCodexLine(line)) {
         if (event.type === "session") sessionId = event.sessionId;
         if (event.type === "text") finalText = event.text;
@@ -288,11 +369,10 @@ export class CodexHarness implements Harness {
         hasEnded = true;
         log?.end();
         const closed = closedResult(code, finalText, failureText, stderrTail);
-        if (closed.ok) push({ type: "result", ok: true, text: closed.text });
-        const failure = closed.ok
-          ? undefined
-          : (resultFailure ?? closeFailure(closed.text, sessionId !== undefined));
-        resolve(withSession(failure ? { ...closed, failure } : closed, sessionId));
+        const usage = closed.ok ? pricedUsage(latestUsage, this.selection.model) : undefined;
+        if (closed.ok)
+          push({ type: "result", ok: true, text: closed.text, ...(usage ? { usage } : {}) });
+        resolve(finalizeClose(closed, usage, resultFailure, sessionId));
         notify?.();
       });
     });

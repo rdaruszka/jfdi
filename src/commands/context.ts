@@ -6,6 +6,7 @@ import { createSessionHarnesses } from "../harness/index.js";
 import { PauseController } from "../pause.js";
 import type { PipelineContext } from "../pipeline.js";
 import { projectStateDir } from "../state-dir.js";
+import { UsageRegistry } from "../usage.js";
 
 export interface CliContext extends PipelineContext {
   repoRoot: string;
@@ -34,6 +35,7 @@ export async function buildContext(cwd: string = process.cwd()): Promise<CliCont
     harnesses: createSessionHarnesses(config),
     log,
     pause: new PauseController(log),
+    usage: new UsageRegistry(),
   };
 }
 

@@ -15,6 +15,7 @@ import { PauseController } from "./pause.js";
 import { type PipelineContext, runPipeline } from "./pipeline.js";
 import { DEFAULT_SCRIBE_HANDLER, sessionKindOf, writeVerdict } from "./test-helpers.js";
 import { resolveTicket } from "./tickets.js";
+import { UsageRegistry } from "./usage.js";
 
 const TEMPLATE = fileURLToPath(new URL("../fixtures/half-app", import.meta.url));
 const BACKLOG_SIZE = 7;
@@ -162,6 +163,7 @@ describe("half-app end-to-end (fake harness)", () => {
       },
       log,
       pause: new PauseController(log),
+      usage: new UsageRegistry(),
     };
     const ticket = await resolveTicket(
       "Add a category filter to penny list [[filter-by-category]]",
