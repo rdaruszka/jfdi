@@ -1358,7 +1358,10 @@ describe("pipeline-owned commits", () => {
       implementationCalls += 1;
       // Work on disk, then death: no verdict, no commit of its own.
       await fs.writeFile(path.join(options.cwd, "impl.txt"), `attempt ${implementationCalls}\n`);
-      return { ok: false, text: "the session was killed mid-edit" };
+      return {
+        ok: false,
+        text: "the session was killed mid-edit\r\nsubprocess cleanup also failed",
+      };
     });
     const ticket = await resolveTicket("Killed mid-edit", fixture.ticketsDir);
     expect((await runPipeline(dying, ticket)).status).toBe("blocked");
@@ -1371,6 +1374,7 @@ describe("pipeline-owned commits", () => {
     expect(message).toContain(
       "JFDI Implementation interrupted: The previous implementation session failed: the session was killed mid-edit",
     );
+    expect(message).not.toContain("subprocess cleanup also failed");
     expect(message).toContain("JFDI-Round: 3/3");
 
     // The next dispatch finds that work on the branch, not thrown away.

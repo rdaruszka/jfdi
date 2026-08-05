@@ -1294,7 +1294,7 @@ async function runQaPhase(
 const MAX_OUTCOME_REASON_CHARS = 100;
 
 function firstLine(text: string): string {
-  return (text.split("\n")[0] ?? "").slice(0, MAX_OUTCOME_REASON_CHARS);
+  return (text.split(/\r\n?|\n/)[0] ?? "").slice(0, MAX_OUTCOME_REASON_CHARS);
 }
 
 /** What the Implementation session's commit says happened, and where the run went. */
