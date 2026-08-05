@@ -892,4 +892,101 @@ describe("Coordinator under a broken provider", () => {
 
     expect(findColumn(await readBoard(), "Ready to Merge")?.cards).toHaveLength(2);
   });
+
+  const writeNote = async (id: string, frontmatter: string): Promise<void> => {
+    await fs.writeFile(
+      path.join(fixture.ticketsDir, `${id}.md`),
+      `---\n${frontmatter}\n---\n\n# ${id}\n\nSome work to do.\n`,
+    );
+  };
+
+  const countTypes = (events: JfdiEvent[], type: string): number =>
+    events.filter((event) => event.type === type).length;
+
+  it("holds a begin-column card while its blocker is undone, then dispatches it", async () => {
+    await writeNote("alpha", 'blocked-by:\n  - "[[blocker]]"');
+    // The blocker's card is parked off the dispatch path; only reaching Done frees alpha.
+    await fs.writeFile(
+      boardPath(),
+      `---\n\nkanban-plugin: board\n\n---\n\n## Ready\n\n- [ ] work on alpha [[alpha]]\n\n## In Progress\n\n## Done\n\n## Backlog\n\n- [ ] the blocker [[blocker]]\n`,
+    );
+    const context = fixture.context(countingHandler([]));
+    fixture.config.integration.mode = "auto";
+    const events: JfdiEvent[] = [];
+    context.log.on((event) => events.push(event));
+
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+    await coordinator.start();
+    await coordinator.drain();
+    // Re-checked every scan, never dispatched, and only announced once.
+    await rescan(coordinator);
+    await rescan(coordinator);
+    expect(context.harness.calls).toHaveLength(0);
+    expect(findColumn(await readBoard(), "Ready")?.cards.map((c) => c.text)).toEqual([
+      "work on alpha [[alpha]]",
+    ]);
+    expect(countTypes(events, "blocked_by")).toBe(1);
+    expect(countTypes(events, "unblocked")).toBe(0);
+
+    // The blocker lands in Done — the next scan frees alpha.
+    await moveCard(boardPath(), "- [ ] the blocker [[blocker]]", "Backlog", "Done");
+    await rescan(coordinator);
+    await coordinator.drain();
+    coordinator.stop();
+
+    expect(findColumn(await readBoard(), "Done")?.cards.some((c) => c.text.includes("alpha"))).toBe(
+      true,
+    );
+    expect(countTypes(events, "blocked_by")).toBe(1);
+    expect(countTypes(events, "unblocked")).toBe(1);
+  });
+
+  it("holds a card with a dangling blocker and names the missing ticket by id", async () => {
+    await writeNote("alpha", 'blocked-by:\n  - "[[ghost]]"');
+    await fs.writeFile(
+      boardPath(),
+      `---\n\nkanban-plugin: board\n\n---\n\n## Ready\n\n- [ ] work on alpha [[alpha]]\n\n## In Progress\n\n## Done\n`,
+    );
+    const context = fixture.context(countingHandler([]));
+    const events: JfdiEvent[] = [];
+    context.log.on((event) => events.push(event));
+
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+    await coordinator.start();
+    await coordinator.drain();
+    coordinator.stop();
+
+    expect(context.harness.calls).toHaveLength(0);
+    expect(findColumn(await readBoard(), "Ready")?.cards).toHaveLength(1);
+    const skips = events.filter((event) => event.type === "blocked_by");
+    expect(skips).toHaveLength(1);
+    expect(skips[0]?.data?.missing).toEqual(["ghost"]);
+  });
+
+  it("reports a blocked-by cycle once and dispatches neither member", async () => {
+    await writeNote("a", 'blocked-by:\n  - "[[b]]"');
+    await writeNote("b", 'blocked-by:\n  - "[[a]]"');
+    await fs.writeFile(
+      boardPath(),
+      `---\n\nkanban-plugin: board\n\n---\n\n## Ready\n\n- [ ] a [[a]]\n- [ ] b [[b]]\n\n## In Progress\n\n## Done\n`,
+    );
+    const context = fixture.context(countingHandler([]));
+    const events: JfdiEvent[] = [];
+    context.log.on((event) => events.push(event));
+
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+    await coordinator.start();
+    await coordinator.drain();
+    // A second scan must not re-report the same deadlock.
+    await rescan(coordinator);
+    coordinator.stop();
+
+    const cycleErrors = events.filter(
+      (event) => event.type === "error" && Array.isArray(event.data?.cycle),
+    );
+    expect(cycleErrors).toHaveLength(1);
+    expect(cycleErrors[0]?.data?.cycle).toEqual(["a", "b"]);
+    expect(context.harness.calls).toHaveLength(0);
+    expect(findColumn(await readBoard(), "Ready")?.cards).toHaveLength(2);
+  });
 });

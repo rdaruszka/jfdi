@@ -40,18 +40,26 @@ to Done (auto mode, merged), Ready to Merge (on-approval), or Blocked. It also
 as the coordinator does, printing the reason and the resume time and taking `R`
 on its terminal to retry now.
 
+A ticket [blocked by another](board-and-tickets.md#blocked-by-gating) that is not
+yet done is refused before the pipeline starts: the run exits non-zero naming the
+unresolved blockers. `jfdi run --force <ticket>` prints them and runs anyway —
+blocking means blocked on every path, so the override has to be spelled out.
+
 | Exit code | Meaning |
 |---|---|
 | 0 | Pipeline passed (and merged, in auto mode) |
 | 1 | Error (not a repo, bad config, unexpected failure) |
-| 2 | Blocked — escalation, exhausted rounds, or blocked integration; see the ticket note |
+| 2 | Blocked — unresolved `blocked-by` tickets (run `--force` to override), escalation, exhausted rounds, or blocked integration; see the ticket note |
 
 ## `jfdi start`
 
 Coordinator multi-mode: watches the board (file-watch with a 2-second polling
 fallback), dispatches cards from the begin column top-first up to
 `max_concurrent`, runs pipelines concurrently, owns the serialized integration
-queue, and presents a live full-screen TUI.
+queue, and presents a live full-screen TUI. A begin-column card whose ticket is
+[blocked by another](board-and-tickets.md#blocked-by-gating) not yet done is
+skipped over — left in place, re-checked each scan, and dispatched once its
+blockers reach Done.
 
 The TUI shows the board name and target branch, active tickets with their
 current stage and round, tickets needing attention (blocked / ready to merge /

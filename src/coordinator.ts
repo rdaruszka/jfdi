@@ -1,7 +1,15 @@
 import { watch } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { type Board, type Card, ensureColumns, findColumn, parseBoard } from "./board.js";
+import { type BlockingNode, blockedByCycles } from "./blocking.js";
+import {
+  type Board,
+  type Card,
+  columnOfTicket,
+  ensureColumns,
+  findColumn,
+  parseBoard,
+} from "./board.js";
 import { boardPath, moveCardSafe } from "./cards.js";
 import { mergedTicketIds } from "./events.js";
 import { branchExists, isAncestor, revParse, ticketBranch } from "./git.js";
@@ -12,17 +20,7 @@ import { loadReport, recordMergeReady, recordObservations, saveReport } from "./
 import { ensureJfdiGitignore } from "./scaffold.js";
 import { resolveTicket, type Ticket } from "./tickets.js";
 import { fileExists, readIfExists } from "./util/fsx.js";
-import { ticketIdFromCard } from "./util/ids.js";
-
-/** Name of the column holding this ticket's card, or null if the board has none. */
-function columnOfTicket(board: Board, ticketId: string): string | null {
-  for (const column of board.columns) {
-    for (const card of column.cards) {
-      if (ticketIdFromCard(card.text) === ticketId) return column.name;
-    }
-  }
-  return null;
-}
+import { slugify, ticketIdFromCard } from "./util/ids.js";
 
 export interface CoordinatorOptions {
   /** Polling fallback interval for board changes (ms). */
@@ -39,6 +37,18 @@ const DEFAULT_POLL_INTERVAL_MS = 2_000;
  */
 export class Coordinator {
   private readonly active = new Map<string, Promise<void>>();
+  /**
+   * Begin-column tickets currently held back for unresolved blockers, so a skip
+   * announces once per episode rather than once per scan. Bounded to the begin
+   * column: pruned each scan as cards unblock or move away.
+   */
+  private readonly blockedByEpisodes = new Set<string>();
+  /**
+   * Signatures of blocked-by cycles already reported, so each deadlock errors
+   * once. Pruned each scan to the cycles the board still holds, so an untied and
+   * re-formed cycle reports again.
+   */
+  private readonly reportedCycles = new Set<string>();
   private readonly integrations = new IntegrationQueue();
   private readonly pollMs: number;
   private isStopped = false;
@@ -182,7 +192,7 @@ export class Coordinator {
     this.acknowledgeApprovals(board);
     // Paused means the provider under the harness is down: a new dispatch
     // would spawn straight into the same wall. The resume triggers a rescan.
-    if (!this.context.pause.isPaused()) this.dispatchReadyCards(board);
+    if (!this.context.pause.isPaused()) await this.dispatchReadyCards(board);
   }
 
   /**
@@ -277,12 +287,12 @@ export class Coordinator {
    * done — a coordinator died, or one was stopped mid-run — and continuing it
    * is what the resume machinery is for. Begin-column cards follow.
    */
-  private dispatchReadyCards(board: Board): void {
+  private async dispatchReadyCards(board: Board): Promise<void> {
     const columns = this.context.config.board.columns;
     const stranded = (findColumn(board, columns.inProgress)?.cards ?? [])
       .filter((card) => !this.hasRunHere(ticketIdFromCard(card.text)))
       .map((card) => ({ card, isAlreadyInProgress: true }));
-    const ready = (findColumn(board, columns.begin)?.cards ?? []).map((card) => ({
+    const ready = (await this.dispatchableBeginCards(board)).map((card) => ({
       card,
       isAlreadyInProgress: false,
     }));
@@ -299,15 +309,88 @@ export class Coordinator {
   }
 
   /**
+   * The begin-column cards clear to dispatch: those whose ticket has no
+   * unresolved blocked-by link. A card blocked by a ticket not yet in the done
+   * column is left exactly where the human put it — skipping is not an
+   * escalation and moves no card — and is re-checked every scan; it dispatches
+   * on the first scan after the last blocker's card reaches done. The skip, the
+   * unblock, and any deadlock each announce once per episode, not per scan.
+   */
+  private async dispatchableBeginCards(board: Board): Promise<Card[]> {
+    const columns = this.context.config.board.columns;
+    const ticketsDir = path.join(this.context.repoRoot, this.context.config.ticketsDir);
+    const nodes: Array<BlockingNode & { card: Card }> = [];
+    for (const card of findColumn(board, columns.begin)?.cards ?? []) {
+      const ticket = await resolveTicket(card.text, ticketsDir);
+      const blockedBy = ticket.links
+        .filter((link) => link.kind === "blocked-by")
+        .map((link) => slugify(link.target));
+      nodes.push({ card, id: ticketIdFromCard(card.text), blockedBy });
+    }
+    this.reportBlockedByCycles(nodes);
+
+    const dispatchable: Card[] = [];
+    const blockedNow = new Set<string>();
+    for (const node of nodes) {
+      const waiting = node.blockedBy.filter(
+        (blocker) => columnOfTicket(board, blocker) !== columns.done,
+      );
+      if (waiting.length === 0) {
+        if (this.blockedByEpisodes.delete(node.id)) this.context.log.emit("unblocked", node.id);
+        dispatchable.push(node.card);
+        continue;
+      }
+      blockedNow.add(node.id);
+      if (!this.blockedByEpisodes.has(node.id)) {
+        const missing = waiting.filter((blocker) => columnOfTicket(board, blocker) === null);
+        this.blockedByEpisodes.add(node.id);
+        this.context.log.emit("blocked_by", node.id, { blockers: waiting, missing });
+      }
+    }
+    // A card that left the begin column while blocked ends its episode silently:
+    // the human moved it, it did not unblock. This also keeps the set bounded to
+    // the begin column.
+    for (const id of [...this.blockedByEpisodes])
+      if (!blockedNow.has(id)) this.blockedByEpisodes.delete(id);
+    return dispatchable;
+  }
+
+  /**
+   * A blocked-by cycle among begin-column cards is a deadlock: every member
+   * waits on another that will never reach done, so none dispatch. The tool
+   * does not untie it — it names it once, as an error for the human, and forgets
+   * a cycle the board no longer holds so a re-formed one reports again.
+   */
+  private reportBlockedByCycles(nodes: BlockingNode[]): void {
+    const live = new Set<string>();
+    for (const cycle of blockedByCycles(nodes)) {
+      const signature = cycle.join(",");
+      live.add(signature);
+      if (this.reportedCycles.has(signature)) continue;
+      this.reportedCycles.add(signature);
+      this.context.log.emit("error", undefined, {
+        message: `blocked-by cycle among begin-column tickets: ${cycle.join(", ")} — none will dispatch until it is untied`,
+        cycle,
+      });
+    }
+    for (const signature of [...this.reportedCycles])
+      if (!live.has(signature)) this.reportedCycles.delete(signature);
+  }
+
+  /**
    * Whether this process has already run this ticket. A scan decides from a
    * board it read before awaiting git, so a run that finished in the meantime
    * can still appear in the in-progress column with `active` already cleared —
    * and dispatching from that stale line would run the ticket twice. Nothing
    * this coordinator dispatched ever needs dispatching again: a stranded card
    * is by definition one an earlier process left, and this log starts empty.
+   * A `waiting` ticket is the exception the log alone would get wrong — a
+   * blocked-by skip records ticket state without ever running the ticket — so a
+   * stranded card carrying that id is still a genuine resume.
    */
   private hasRunHere(ticketId: string): boolean {
-    return this.context.log.snapshot().tickets[ticketId] !== undefined;
+    const ticket = this.context.log.snapshot().tickets[ticketId];
+    return ticket !== undefined && ticket.status !== "waiting";
   }
 
   private async dispatch(card: Card, id: string, isAlreadyInProgress: boolean): Promise<void> {

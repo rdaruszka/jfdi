@@ -71,8 +71,9 @@ flowchart TB
   mtime poll), dispatches ready cards into pipelines up to `max_concurrent`,
   owns the single-file integration queue, continues cards an earlier coordinator
   left in the in-progress column, detects hand-merged work, and folds in events
-  written by other JFDI processes. It dispatches nothing while the harness is
-  paused.
+  written by other JFDI processes. It skips a begin-column card whose ticket is
+  [blocked by another](../guide/board-and-tickets.md#blocked-by-gating) not yet
+  done, and dispatches nothing while the harness is paused.
 - **Pipeline** ([src/pipeline.ts](../../src/pipeline.ts)) — one ticket's trip:
   worktree setup (serialized per repo — `git worktree add` reads the entries a
   sibling `add` is still writing, so concurrent dispatches would otherwise kill

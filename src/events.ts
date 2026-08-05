@@ -17,6 +17,10 @@ export type EventType =
   | "escalation"
   /** A ticket note's `blocks`/`blocked-by` link names no note in ticketsDir. */
   | "unresolved_link"
+  /** A begin-column card is held back: its ticket's blocked-by tickets are not yet done. */
+  | "blocked_by"
+  /** A held-back card's blockers all reached done; it is free to dispatch. */
+  | "unblocked"
   | "blocked"
   | "merge_queued"
   | "merge_start"
@@ -48,6 +52,8 @@ export interface JfdiEvent {
 
 export type TicketStatus =
   | "running"
+  /** Held at dispatch for unresolved blocked-by tickets; never ran this run. */
+  | "waiting"
   | "blocked"
   | "merge-queued"
   | "merging"
@@ -112,6 +118,13 @@ function numberField(data: Record<string, unknown> | undefined, key: string): nu
   return typeof value === "number" ? value : undefined;
 }
 
+function stringArrayField(data: Record<string, unknown> | undefined, key: string): string[] {
+  const value = data?.[key];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
 function stageField(data: Record<string, unknown> | undefined): StageName | undefined {
   const value = data?.stage;
   // `hasOwn`, not `in`: `in` walks the prototype chain, so a corrupt event
@@ -164,6 +177,8 @@ function narrate(event: JfdiEvent, ticket: TicketState): string {
     // getting a wording decision. With no `default`, tsc (TS2366) agrees.
     case "dispatch":
     case "round_start":
+    case "blocked_by":
+    case "unblocked":
     case "blocked":
     case "merge_queued":
     case "merge_start":
@@ -216,6 +231,17 @@ function applyTicketEvent(
     case "escalation":
     case "unresolved_link":
       ticket.lastActivity = narrate(event, ticket);
+      break;
+    case "blocked_by": {
+      ticket.status = "waiting";
+      ticket.stage = null;
+      const blockers = stringArrayField(event.data, "blockers");
+      ticket.lastActivity =
+        blockers.length > 0 ? `waiting on ${blockers.join(", ")}` : "waiting on blockers";
+      break;
+    }
+    case "unblocked":
+      ticket.lastActivity = "blockers resolved";
       break;
     case "blocked":
       ticket.status = "blocked";

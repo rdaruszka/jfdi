@@ -67,6 +67,8 @@ One JSON object per line:
 | `session_activity` | `text` | Live narration (tool use, gate step names) |
 | `escalation` | `stage`, `question`, `recommendation` | An agent escalated |
 | `unresolved_link` | `kind`, `target` | A ticket note's `blocks`/`blocked-by` link names no note in the tickets directory |
+| `blocked_by` | `blockers`, `missing` | A begin-column card was held back at dispatch: its `blocked-by` tickets are not yet done (`missing` names blockers with no card at all). One per episode, not per scan |
+| `unblocked` | — | A held-back card's blockers all reached done; it is free to dispatch. One per episode |
 | `blocked` | `reason` | The run (or integration) blocked |
 | `merge_ready` | — | Passed pipeline awaiting approval (`on-approval`) |
 | `merge_queued` | — | Entered the serialized integration queue |
@@ -79,7 +81,7 @@ One JSON object per line:
 | `card_moved` | `from`, `to` | A board card was moved by JFDI |
 | `harness_paused` | `kind`, `detail`, `resumesAt?` | The provider under the harness is down; every session is held. No `ticketId` — the pause is tool-wide. `resumesAt` is absent when only a human can end it |
 | `harness_resumed` | `kind`, `detail`, `trigger` | …and it lifted, by `timer` or by `human` |
-| `error` | `message` | A non-fatal problem (board write failure, bad stream line) |
+| `error` | `message`, `cycle?` | A non-fatal problem (board write failure, bad stream line, or a `blocked-by` cycle among begin-column cards — `cycle` names the deadlocked ids) |
 
 The two `harness_*` events are the only ticket-less ones, and they fold into no
 ticket state: a pause says nothing about any one ticket's status, only that
@@ -100,7 +102,7 @@ interface CoordinatorState {
 }
 interface TicketState {
   id: string; title: string;
-  status: "running" | "blocked" | "merge-queued" | "merging"
+  status: "running" | "waiting" | "blocked" | "merge-queued" | "merging"
         | "merge-ready" | "done" | "failed";
   stage: "implementation" | "code-review" | "qa" | "integration" | null;
   round: number; branch: string;
@@ -108,9 +110,16 @@ interface TicketState {
 }
 ```
 
+A ticket first seen as a begin-column skip enters at `waiting` (`blocked_by`)
+rather than `running`; when its blockers clear (`unblocked`) it dispatches like
+any other card. `waiting` records the skip in derived state without ever running
+the ticket, so a stranded card carrying that id is still a genuine resume.
+
 ```mermaid
 stateDiagram-v2
     [*] --> running: dispatch
+    [*] --> waiting: blocked_by
+    waiting --> running: unblocked → dispatch
     running --> blocked: blocked
     running --> merge_ready: merge_ready
     running --> merge_queued: merge_queued

@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { findColumn, moveCard, parseBoard } from "../board.js";
 import {
   commitFile,
@@ -163,5 +163,83 @@ describe("jfdi run — board card", () => {
     expect(await runTicketInline(fixture.context(passingHandler()), CARD)).toBe(0);
 
     await expect(fs.access(boardPath())).rejects.toThrow();
+  });
+});
+
+const BLOCKED_TICKET_CARD = "Add feature alpha [[alpha]]";
+
+/** A board carrying only the blocker card, so a run reads its column for done-ness. */
+function boardWithBlocker(column: string): string {
+  return `---
+
+kanban-plugin: board
+
+---
+
+## Ready
+
+## Done
+
+## ${column}
+
+- [ ] fix the blocker [[blocker]]
+`;
+}
+
+async function writeNote(id: string, frontmatter: string): Promise<void> {
+  await fs.writeFile(
+    path.join(fixture.ticketsDir, `${id}.md`),
+    `---\n${frontmatter}\n---\n\n# ${id}\n\nSome work to do.\n`,
+  );
+}
+
+describe("jfdi run — blocked-by", () => {
+  it("refuses a ticket whose blocker is not done, naming it and running nothing", async () => {
+    await writeNote("alpha", 'blocked-by:\n  - "[[blocker]]"');
+    await writeBoard(boardWithBlocker("Ready"));
+    const context = fixture.context(passingHandler());
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runTicketInline(context, BLOCKED_TICKET_CARD)).toBe(2);
+
+    expect(context.harness.calls).toHaveLength(0);
+    expect(errors.mock.calls.flat().join("\n")).toContain("blocker");
+    errors.mockRestore();
+  });
+
+  it("names a dangling blocker that has no card at all", async () => {
+    await writeNote("alpha", 'blocked-by:\n  - "[[ghost]]"');
+    await writeBoard(boardWithBlocker("Ready"));
+    const context = fixture.context(passingHandler());
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runTicketInline(context, BLOCKED_TICKET_CARD)).toBe(2);
+
+    expect(errors.mock.calls.flat().join("\n")).toContain("ghost (no card on the board)");
+    errors.mockRestore();
+  });
+
+  it("runs a ticket whose blocker sits in Done", async () => {
+    await writeNote("alpha", 'blocked-by:\n  - "[[blocker]]"');
+    await writeBoard(boardWithBlocker("Done"));
+    fixture.config.integration.mode = "on-approval";
+    const context = fixture.context(passingHandler());
+
+    expect(await runTicketInline(context, BLOCKED_TICKET_CARD)).toBe(0);
+    expect(context.harness.calls.length).toBeGreaterThan(0);
+  });
+
+  it("--force runs a blocked ticket anyway, still printing the blockers", async () => {
+    await writeNote("alpha", 'blocked-by:\n  - "[[blocker]]"');
+    await writeBoard(boardWithBlocker("Ready"));
+    fixture.config.integration.mode = "on-approval";
+    const context = fixture.context(passingHandler());
+    const warnings = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    expect(await runTicketInline(context, BLOCKED_TICKET_CARD, { isForced: true })).toBe(0);
+
+    expect(context.harness.calls.length).toBeGreaterThan(0);
+    expect(warnings.mock.calls.flat().join("\n")).toContain("blocker");
+    warnings.mockRestore();
   });
 });
