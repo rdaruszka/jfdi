@@ -167,6 +167,96 @@ describe("runPipeline", () => {
     if (outcome.status === "passed") expect(outcome.report.rounds).toBe(2);
   });
 
+  it("feeds a failed implementation session's full result text into the retry", async () => {
+    const failureTail = "implementation failure tail";
+    const failureText = `implementation failed\n${"x".repeat(4_100)}\n${failureTail}`;
+    let implementationSessions = 0;
+    const context = fixture.context(async (spec, options) => {
+      const stage = sessionKindOf(spec.prompt);
+      if (stage === "implementation") {
+        implementationSessions += 1;
+        if (implementationSessions === 1) return { ok: false, text: failureText };
+        expect(spec.prompt).toContain(failureTail);
+        await commitFile(options.cwd, "impl.txt", "fixed\n", "fix implementation");
+        await writeVerdict(spec.prompt, { status: "done", summary: "fixed the failure" });
+      } else {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    });
+
+    const ticket = await resolveTicket("Retry failed implementation", fixture.ticketsDir);
+    expect((await runPipeline(context, ticket)).status).toBe("passed");
+  });
+
+  it("feeds a failed code review session's full result text into the retry", async () => {
+    const failureTail = "code review failure tail";
+    const failureText = `code review failed\n${"x".repeat(4_100)}\n${failureTail}`;
+    let implementationSessions = 0;
+    let codeReviewSessions = 0;
+    const context = fixture.context(async (spec, options) => {
+      const stage = sessionKindOf(spec.prompt);
+      if (stage === "implementation") {
+        implementationSessions += 1;
+        if (implementationSessions === 2) expect(spec.prompt).toContain(failureTail);
+        await commitFile(
+          options.cwd,
+          "impl.txt",
+          `version ${implementationSessions}\n`,
+          `implementation ${implementationSessions}`,
+        );
+        await writeVerdict(spec.prompt, {
+          status: "done",
+          summary: `implementation ${implementationSessions}`,
+        });
+      } else if (stage === "code-review") {
+        codeReviewSessions += 1;
+        if (codeReviewSessions === 1) return { ok: false, text: failureText };
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      } else {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    });
+
+    const ticket = await resolveTicket("Retry failed code review", fixture.ticketsDir);
+    expect((await runPipeline(context, ticket)).status).toBe("passed");
+  });
+
+  it("feeds a failed QA session's full result text into the retry", async () => {
+    const failureTail = "QA failure tail";
+    const failureText = `QA failed\n${"x".repeat(4_100)}\n${failureTail}`;
+    let implementationSessions = 0;
+    let qaSessions = 0;
+    const context = fixture.context(async (spec, options) => {
+      const stage = sessionKindOf(spec.prompt);
+      if (stage === "implementation") {
+        implementationSessions += 1;
+        if (implementationSessions === 2) expect(spec.prompt).toContain(failureTail);
+        await commitFile(
+          options.cwd,
+          "impl.txt",
+          `version ${implementationSessions}\n`,
+          `implementation ${implementationSessions}`,
+        );
+        await writeVerdict(spec.prompt, {
+          status: "done",
+          summary: `implementation ${implementationSessions}`,
+        });
+      } else if (stage === "qa") {
+        qaSessions += 1;
+        if (qaSessions === 1) return { ok: false, text: failureText };
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      } else {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    });
+
+    const ticket = await resolveTicket("Retry failed QA", fixture.ticketsDir);
+    expect((await runPipeline(context, ticket)).status).toBe("passed");
+  });
+
   it("gate failure feeds back into a fix session without consuming the round", async () => {
     let implementationSessions = 0;
     const stages: string[] = [];

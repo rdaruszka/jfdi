@@ -110,11 +110,6 @@ export type PipelineOutcome =
 const MAX_ACTIVITY_CHARS = 120;
 /** Blocked/escalation reasons carried on an event, trimmed for the same reason. */
 const MAX_REASON_CHARS = 120;
-/** Session output quoted back to the next round when a stage crashed outright. */
-const MAX_SESSION_ERROR_CHARS = 2_000;
-/** Session output quoted back when a stage ran but produced no valid verdict. */
-const MAX_VERDICT_ERROR_CHARS = 1_000;
-
 export function worktreesDir(jfdiDir: string): string {
   return path.join(jfdiDir, "worktrees");
 }
@@ -784,7 +779,7 @@ async function runImplementationStage(
       kind: "retry",
       feedback: outcome.ok
         ? "The previous implementation session ended without writing a valid verdict file. Re-verify the work is complete, then write the verdict file as instructed."
-        : `The previous implementation session failed: ${outcome.resultText.slice(0, MAX_SESSION_ERROR_CHARS)}`,
+        : `The previous implementation session failed: ${outcome.resultText}`,
     });
   }
   const decisions = await recordDecisions(notePath, "implementation", round, verdict.decisions);
@@ -879,7 +874,7 @@ async function runCodeReviewStage(
       verdict?.feedback ??
       (verdict
         ? "Code review failed without specific feedback."
-        : `Code review session did not produce a valid verdict${outcome.ok ? "" : `: ${outcome.resultText.slice(0, MAX_VERDICT_ERROR_CHARS)}`}.`);
+        : `Code review session did not produce a valid verdict${outcome.ok ? "" : `: ${outcome.resultText}`}.`);
     await recordReviewTransition(input.notePath, "code-review", input.round, {
       outcome: "FAILED",
       routing: retryRouting(input.round, context.config.pipeline.max_rounds),
@@ -1360,7 +1355,7 @@ async function judgeQa(
       source: "qa",
       feedback:
         qa.verdict?.feedback ??
-        `QA session did not produce a valid verdict${qa.outcome.ok ? "" : `: ${qa.outcome.resultText.slice(0, MAX_VERDICT_ERROR_CHARS)}`}.`,
+        `QA session did not produce a valid verdict${qa.outcome.ok ? "" : `: ${qa.outcome.resultText}`}.`,
     };
   }
   return { kind: "passed", testsAdded: qa.verdict.testsAdded ?? "" };

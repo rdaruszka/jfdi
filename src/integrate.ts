@@ -32,9 +32,6 @@ import { todayIsoDate } from "./util/dates.js";
 import { ensureDir, fileExists } from "./util/fsx.js";
 import { type IntegrationVerdict, readIntegrationVerdict } from "./verdicts.js";
 
-/** Git output quoted into a blocked reason when the merge fails outright. */
-const MAX_MERGE_ERROR_CHARS = 500;
-
 /**
  * Integration is coordinator-owned and runs outside the round loop, so its
  * comments carry no round of their own — the same zero its QA re-run uses.
@@ -271,7 +268,7 @@ export async function integrateTicket(
   let resolutionNote = "";
   if (!merge.ok) {
     if (!merge.hasConflict) {
-      const reason = `merging ${target} into ${worktree.branch} failed: ${merge.output.slice(0, MAX_MERGE_ERROR_CHARS)}`;
+      const reason = `merging ${target} into ${worktree.branch} failed: ${merge.output}`;
       return blocked(context, ticket, notePath, reason);
     }
     // 2–4. Conflicts — agent resolution, gate, and re-QA if it got complicated.
