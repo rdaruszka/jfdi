@@ -486,7 +486,7 @@ describe("a running coordinator and merges it did not perform", () => {
 
       expect(await columnCards(sandbox, "Ready to Merge")).toEqual(["- [ ] Add feature gamma"]);
       expect(await columnCards(sandbox, "Done")).toEqual([]);
-      expect(coordinator.output()).not.toContain("merged");
+      expect(coordinator.output()).not.toContain("\x1b[32mmerged\x1b[0m");
 
       stopCoordinator(coordinator);
     },

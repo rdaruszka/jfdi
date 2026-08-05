@@ -556,6 +556,71 @@ describe("integrateTicket", () => {
     expect(await git(fixture.repo, "rev-parse", "HEAD")).toBe(headBefore);
   });
 
+  it("closes an already-merged branch after the human removed its worktree", async () => {
+    const context = fixture.context(passingHandler("human-cleanup.txt"));
+    const ticket = await resolveTicket("Human cleanup", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    if (outcome.status !== "passed") throw new Error("pipeline should pass");
+
+    await git(fixture.repo, "merge", "--ff-only", outcome.worktree.branch);
+    await git(fixture.repo, "worktree", "remove", "--force", outcome.worktree.path);
+
+    const result = await integrateTicket(context, ticket, outcome.worktree);
+
+    expect(result.status).toBe("already-merged");
+  });
+
+  it("checkpoints a dirty worktree after a hand merge before cleaning it up", async () => {
+    const context = fixture.context(passingHandler("hand-merged.txt"));
+    const ticket = await resolveTicket("Dirty hand merge", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    if (outcome.status !== "passed") throw new Error("pipeline should pass");
+
+    await git(fixture.repo, "merge", "--ff-only", outcome.worktree.branch);
+    await fs.writeFile(path.join(outcome.worktree.path, "scratch.txt"), "keep me\n");
+
+    const result = await integrateTicket(context, ticket, outcome.worktree);
+
+    expect(result.status).toBe("merged");
+    expect(await fs.readFile(path.join(fixture.repo, "scratch.txt"), "utf8")).toBe("keep me\n");
+    expect(await git(fixture.repo, "log", "-1", "--format=%s", "main^2")).toBe(
+      `jfdi(${ticket.id}): integration leftovers`,
+    );
+    await expect(fs.access(outcome.worktree.path)).rejects.toThrow();
+  });
+
+  /**
+   * The ticket's own example of the hazard is "a half-done manual conflict
+   * resolution" — an *edit to a tracked file*, not just an untracked scratch
+   * file. The clean-close path force-removes the worktree, so a modification
+   * left in the working tree after a hand merge must be checkpointed onto the
+   * branch and land, never be discarded by `--force`.
+   */
+  it("preserves an uncommitted edit to a tracked file after a hand merge", async () => {
+    const context = fixture.context(passingHandler("edited.txt"));
+    const ticket = await resolveTicket("Dirty tracked edit", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    if (outcome.status !== "passed") throw new Error("pipeline should pass");
+
+    await git(fixture.repo, "merge", "--ff-only", outcome.worktree.branch);
+    // The session was mid-edit on a file it had already committed — the exact
+    // "half-done manual resolution" the ticket names.
+    await fs.writeFile(path.join(outcome.worktree.path, "edited.txt"), "half-done edit\n");
+
+    const result = await integrateTicket(context, ticket, outcome.worktree);
+
+    // It fell through to a real integration rather than the clean-close path —
+    // proof the dirty branch was not treated as "already merged, nothing to do".
+    expect(result.status).toBe("merged");
+    // The edit reached the target, reachable via the checkpoint on the sign-off side.
+    expect(await fs.readFile(path.join(fixture.repo, "edited.txt"), "utf8")).toBe(
+      "half-done edit\n",
+    );
+    expect(await git(fixture.repo, "show", "main^2:edited.txt")).toBe("half-done edit");
+    // And the worktree that held the only copy is gone only after it landed.
+    await expect(fs.access(outcome.worktree.path)).rejects.toThrow();
+  });
+
   /**
    * Integration's selection prices conflict resolution alone, and its output
    * lands on the target branch — so it has to be the integration entry's own

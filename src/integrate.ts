@@ -226,6 +226,51 @@ async function clearStaleMerge(worktree: Worktree): Promise<StaleMergeOutcome> {
   return { status: "clear", note: "aborted a stale merge left in the worktree" };
 }
 
+type AlreadyMergedResolution =
+  | { status: "continue"; leftoverNote: string }
+  | { status: "complete"; outcome: IntegrateOutcome };
+
+/** Close a clean hand-merge, or checkpoint dirty work before normal integration. */
+async function resolveAlreadyMergedBranch(
+  context: PipelineContext,
+  ticket: Ticket,
+  worktree: Worktree,
+  notePath: string,
+  target: string,
+): Promise<AlreadyMergedResolution> {
+  if (!(await isAncestor(context.repoRoot, worktree.branch, target)))
+    return { status: "continue", leftoverNote: "" };
+
+  let leftoverNote = "";
+  if (await fileExists(worktree.path)) {
+    try {
+      leftoverNote = await captureLeftovers(context, ticket, worktree);
+    } catch (error) {
+      return {
+        status: "complete",
+        outcome: await blocked(
+          context,
+          ticket,
+          notePath,
+          `checkpointing uncommitted changes before cleanup failed: ${(error as Error).message}`,
+        ),
+      };
+    }
+  }
+  if (leftoverNote) return { status: "continue", leftoverNote };
+
+  context.log.emit("merged", ticket.id, { note: "already contained in target" });
+  await recordTransition(
+    notePath,
+    "integration",
+    INTEGRATION_ROUND,
+    `Branch already contained in \`${target}\` — closed without re-merging.`,
+  );
+  context.usage.finish(ticket.id);
+  await cleanup(context, worktree);
+  return { status: "complete", outcome: { status: "already-merged" } };
+}
+
 /**
  * Integrate one finished ticket: merge the target branch into the ticket
  * branch in its own worktree, resolve conflicts via the Integration agent,
@@ -253,19 +298,18 @@ export async function integrateTicket(
   // sweep can mistake this integration for a hand-merge and narrate it twice.
   await context.log.flush();
 
-  // Human may have merged by hand (on-approval mode) — never double-merge.
-  if (await isAncestor(context.repoRoot, worktree.branch, target)) {
-    context.log.emit("merged", ticket.id, { note: "already contained in target" });
-    await recordTransition(
-      notePath,
-      "integration",
-      INTEGRATION_ROUND,
-      `Branch already contained in \`${target}\` — closed without re-merging.`,
-    );
-    context.usage.finish(ticket.id);
-    await cleanup(context, worktree);
-    return { status: "already-merged" };
-  }
+  // Human may have merged by hand (on-approval mode) — never double-merge a
+  // clean branch. Dirty work advances the branch when checkpointed, so it must
+  // fall through and land through the normal merge path instead of being lost.
+  const alreadyMerged = await resolveAlreadyMergedBranch(
+    context,
+    ticket,
+    worktree,
+    notePath,
+    target,
+  );
+  if (alreadyMerged.status === "complete") return alreadyMerged.outcome;
+  let { leftoverNote } = alreadyMerged;
 
   // Both parents of the landing commit, read before the merge moves either.
   const signedOffCommit = await revParse(context.repoRoot, worktree.branch);
@@ -300,10 +344,10 @@ export async function integrateTicket(
 
   // 5. Land it: the tree the gate just ran against, under a merge commit that
   //    keeps the target's line first and the signed-off commit reachable.
-  let leftoverNote = "";
   let landingCommit = "";
   try {
-    leftoverNote = await captureLeftovers(context, ticket, worktree);
+    const latestLeftoverNote = await captureLeftovers(context, ticket, worktree);
+    if (latestLeftoverNote) leftoverNote = latestLeftoverNote;
     landingCommit = await commitMerge(
       worktree.path,
       { firstParent: targetHead, secondParent: signedOffCommit },
@@ -314,21 +358,12 @@ export async function integrateTicket(
     return blocked(context, ticket, notePath, `merge failed: ${(error as Error).message}`);
   }
   context.log.emit("merged", ticket.id);
-  // The closing entry on the trail. Its whole body is blockquoted as one
-  // comment, so the Integration agent's resolution notes ride in raw rather
-  // than pre-quoted the way a standalone note append would need.
-  const mergedNarration = [
-    statusLine(
-      "integration",
-      "merged",
-      `landed on \`${target}\` as \`${shortSha(landingCommit)}\``,
-    ),
-  ];
-  const table = await mergedUsageTable(context, ticket.id);
-  if (table) mergedNarration.push("", table);
-  if (leftoverNote) mergedNarration.push("", leftoverNote.trim());
-  if (resolutionNote) mergedNarration.push("", "Conflict resolution:", resolutionNote);
-  await recordTransition(notePath, "integration", INTEGRATION_ROUND, mergedNarration.join("\n"));
+  await recordMergedTransition(context, ticket, notePath, {
+    target,
+    landingCommit,
+    leftoverNote,
+    resolutionNote,
+  });
   context.usage.finish(ticket.id);
   await cleanup(context, worktree);
   await deleteBranch(context.repoRoot, worktree.branch);
@@ -353,6 +388,37 @@ async function mergedUsageTable(
   const rows = [...(report?.usageRows ?? []), ...(integrationRow ? [integrationRow] : [])];
   if (rows.length === 0) return null;
   return renderUsageTable(rows, report?.elapsedMs ?? null);
+}
+
+interface MergedTransitionDetails {
+  target: string;
+  landingCommit: string;
+  leftoverNote: string;
+  resolutionNote: string;
+}
+
+/** Record the closing comment, including any usage, leftovers, and conflict notes. */
+async function recordMergedTransition(
+  context: PipelineContext,
+  ticket: Ticket,
+  notePath: string,
+  details: MergedTransitionDetails,
+): Promise<void> {
+  // The whole body is blockquoted as one comment, so the Integration agent's
+  // resolution notes ride in raw rather than pre-quoted like a standalone append.
+  const mergedNarration = [
+    statusLine(
+      "integration",
+      "merged",
+      `landed on \`${details.target}\` as \`${shortSha(details.landingCommit)}\``,
+    ),
+  ];
+  const table = await mergedUsageTable(context, ticket.id);
+  if (table) mergedNarration.push("", table);
+  if (details.leftoverNote) mergedNarration.push("", details.leftoverNote.trim());
+  if (details.resolutionNote)
+    mergedNarration.push("", "Conflict resolution:", details.resolutionNote);
+  await recordTransition(notePath, "integration", INTEGRATION_ROUND, mergedNarration.join("\n"));
 }
 
 async function cleanup(context: PipelineContext, worktree: Worktree): Promise<void> {
