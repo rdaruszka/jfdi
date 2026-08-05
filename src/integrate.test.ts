@@ -115,6 +115,31 @@ describe("integrateTicket", () => {
     ).toBe("1");
   });
 
+  it("keeps the full git failure output in the blocked reason", async () => {
+    const context = fixture.context(passingHandler("feature.txt"));
+    const ticket = await resolveTicket("Blocked merge output", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    if (outcome.status !== "passed") throw new Error("pipeline should pass");
+
+    const collisionFiles = Array.from(
+      { length: 30 },
+      (_, index) => `collision-${index.toString().padStart(2, "0")}-${"x".repeat(30)}.txt`,
+    );
+    const failureTail = collisionFiles.at(-1);
+    if (!failureTail) throw new Error("collision fixture should not be empty");
+    for (const file of collisionFiles)
+      await fs.writeFile(path.join(fixture.repo, file), "target\n");
+    await git(fixture.repo, "add", "-A");
+    await git(fixture.repo, "commit", "-m", "add colliding target files");
+    for (const file of collisionFiles)
+      await fs.writeFile(path.join(outcome.worktree.path, file), "worktree\n");
+
+    const result = await integrateTicket(context, ticket, outcome.worktree);
+
+    expect(result.status).toBe("blocked");
+    if (result.status === "blocked") expect(result.reason).toContain(failureTail);
+  });
+
   /**
    * The gate runs against the *working tree*; the landing commit is built from
    * a git *tree*. Whatever a session leaves uncommitted — the re-QA valve's own
