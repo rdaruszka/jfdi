@@ -358,21 +358,12 @@ export async function integrateTicket(
     return blocked(context, ticket, notePath, `merge failed: ${(error as Error).message}`);
   }
   context.log.emit("merged", ticket.id);
-  // The closing entry on the trail. Its whole body is blockquoted as one
-  // comment, so the Integration agent's resolution notes ride in raw rather
-  // than pre-quoted the way a standalone note append would need.
-  const mergedNarration = [
-    statusLine(
-      "integration",
-      "merged",
-      `landed on \`${target}\` as \`${shortSha(landingCommit)}\``,
-    ),
-  ];
-  const table = await mergedUsageTable(context, ticket.id);
-  if (table) mergedNarration.push("", table);
-  if (leftoverNote) mergedNarration.push("", leftoverNote.trim());
-  if (resolutionNote) mergedNarration.push("", "Conflict resolution:", resolutionNote);
-  await recordTransition(notePath, "integration", INTEGRATION_ROUND, mergedNarration.join("\n"));
+  await recordMergedTransition(context, ticket, notePath, {
+    target,
+    landingCommit,
+    leftoverNote,
+    resolutionNote,
+  });
   context.usage.finish(ticket.id);
   await cleanup(context, worktree);
   await deleteBranch(context.repoRoot, worktree.branch);
@@ -397,6 +388,37 @@ async function mergedUsageTable(
   const rows = [...(report?.usageRows ?? []), ...(integrationRow ? [integrationRow] : [])];
   if (rows.length === 0) return null;
   return renderUsageTable(rows, report?.elapsedMs ?? null);
+}
+
+interface MergedTransitionDetails {
+  target: string;
+  landingCommit: string;
+  leftoverNote: string;
+  resolutionNote: string;
+}
+
+/** Record the closing comment, including any usage, leftovers, and conflict notes. */
+async function recordMergedTransition(
+  context: PipelineContext,
+  ticket: Ticket,
+  notePath: string,
+  details: MergedTransitionDetails,
+): Promise<void> {
+  // The whole body is blockquoted as one comment, so the Integration agent's
+  // resolution notes ride in raw rather than pre-quoted like a standalone append.
+  const mergedNarration = [
+    statusLine(
+      "integration",
+      "merged",
+      `landed on \`${details.target}\` as \`${shortSha(details.landingCommit)}\``,
+    ),
+  ];
+  const table = await mergedUsageTable(context, ticket.id);
+  if (table) mergedNarration.push("", table);
+  if (details.leftoverNote) mergedNarration.push("", details.leftoverNote.trim());
+  if (details.resolutionNote)
+    mergedNarration.push("", "Conflict resolution:", details.resolutionNote);
+  await recordTransition(notePath, "integration", INTEGRATION_ROUND, mergedNarration.join("\n"));
 }
 
 async function cleanup(context: PipelineContext, worktree: Worktree): Promise<void> {
