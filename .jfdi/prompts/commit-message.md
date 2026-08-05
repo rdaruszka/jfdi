@@ -31,9 +31,8 @@ just ended, and the pipeline is committing what it left behind.
 - Write the summary alone as your first line — the pipeline prefixes
   `{{TICKET_ID}}: ` itself. Imperative, 72 characters or fewer, no trailing
   period. Verb semantics: "add" = new, "update" = enhancement, "fix" = bug fix.
-  A longer first line is not used as a subject at all: the pipeline keeps it as
-  body text and writes a plain subject of its own, so your summary lands only
-  if it fits.
+  The length is guidance: the pipeline uses your first line as the subject
+  verbatim even when it is longer.
 - Then a blank line, then the body: written for a reader with zero context who was
   not part of the session. Say what the change is in plain words before any
   mechanism, one idea per sentence, as long as the change needs and no longer.

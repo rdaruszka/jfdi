@@ -150,14 +150,10 @@ describe("assembleCommitMessage", () => {
 
 /**
  * The scribe's answer is subprocess output on its way into permanent repository
- * history: a trust boundary, and the shipped contract's limits are enforced
- * here rather than asked for in the prompt. These are the shapes a session that
- * ignores its instructions — or is having a bad day — actually produces.
+ * history: a trust boundary. These are the shapes a session that ignores its
+ * instructions — or is having a bad day — actually produces.
  */
 describe("assembleCommitMessage against hostile scribe output", () => {
-  /** The contract's bound, as the prompt states it. */
-  const MaxSubjectSummaryChars = 72;
-
   const subjectOf = (message: string) => message.split("\n")[0] ?? "";
 
   /** Anything git or a terminal would choke on; tabs and newlines are text. */
@@ -167,29 +163,24 @@ describe("assembleCommitMessage against hostile scribe output", () => {
       return (code < 0x20 && character !== "\n" && character !== "\t") || code === 0x7f;
     });
 
-  it("never lets a subject past the contract's bound, however long the first line", () => {
+  it("passes a first line longer than the suggested 72 characters through as the subject", () => {
     const overrun = `Rework ${"the object-name pattern ".repeat(20)}everywhere`;
-    expect(overrun.length).toBeGreaterThan(MaxSubjectSummaryChars);
+    expect(overrun.length).toBeGreaterThan(72);
     const message = assembleCommitMessage(`${overrun}\n\nAnd some body.`, "fix-names", HANDOFF);
 
-    // The subject is the pipeline's own, inside the bound; the overrun line is
-    // kept as body rather than thrown away or silently chopped mid-word.
-    expect(subjectOf(message)).toBe("fix-names: Implementation round 2");
-    expect(subjectOf(message).length).toBeLessThanOrEqual(
-      "fix-names: ".length + MaxSubjectSummaryChars,
-    );
-    expect(message).toContain(overrun);
-    expect(message).toContain("And some body.");
+    expect(subjectOf(message)).toBe(`fix-names: ${overrun}`);
+    expect(message).toContain(`\n\nAnd some body.`);
+    expect(message).not.toContain(`\n\n${overrun}`);
     expect(message).toContain("JFDI-Round: 2/3");
   });
 
-  it("keeps a summary that sits exactly on the bound, and rejects one character more", () => {
-    const exact = "x".repeat(MaxSubjectSummaryChars);
+  it("treats the suggested 72-character length as guidance, not a threshold", () => {
+    const exact = "x".repeat(72);
     expect(subjectOf(assembleCommitMessage(exact, "fix-names", HANDOFF))).toBe(
       `fix-names: ${exact}`,
     );
     expect(subjectOf(assembleCommitMessage(`${exact}y`, "fix-names", HANDOFF))).toBe(
-      "fix-names: Implementation round 2",
+      `fix-names: ${exact}y`,
     );
   });
 

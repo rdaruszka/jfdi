@@ -15,9 +15,8 @@
  * summary is agent verdict text, and an interrupted session's outcome quotes
  * that session's own output back. All of it is about to become permanent
  * repository history, so `assembleCommitMessage` treats the lot as a trust
- * boundary: the shipped contract's limits are enforced here, not asked for in
- * the prompt and hoped for. Every bound below is a rule the message must
- * satisfy no matter what came back.
+ * boundary: it enforces the message's structural requirements and strips only
+ * characters that git rejects or that would poison later terminal output.
  */
 import type { StageName } from "./events.js";
 import { git } from "./git.js";
@@ -62,16 +61,6 @@ const HOUSE_STYLE_COMMIT_COUNT = 5;
 
 /** Longest excerpt of a session's own account quoted into the scribe's prompt. */
 const MAX_SUMMARY_CHARS = 4_000;
-
-/**
- * Longest summary the shipped contract allows in a subject — git's own
- * convention, and what the commit-message template asks for. The pipeline adds
- * the `<ticket-id>: ` prefix on top, so this bounds the scribe's half alone.
- * A longer first line is not a subject the scribe shortened badly; it is a
- * scribe that ignored the format, so the whole answer is treated as body text
- * and the subject falls back to the pipeline's own.
- */
-const MAX_SUBJECT_SUMMARY_CHARS = 72;
 
 /**
  * A commit message's own trailing metadata, which the pipeline owns and the
@@ -145,10 +134,6 @@ export function assembleCommitMessage(
   const subject = `${ticketId}: ${handoff.isInterrupted ? "WIP — " : ""}${
     summary ?? `${STAGE_LABELS[handoff.stage]} round ${handoff.round}`
   }`;
-  // A first line the scribe overran is not a subject it wrote badly; it is
-  // prose that landed where the subject belongs. It stays, as body, under the
-  // pipeline's own subject — dropping it would throw away the only account of
-  // the change there is.
   const writtenBody = summary === null ? written : lines.slice(1).join("\n");
   const fallbackBody = scrubControlCharacters(handoff.summary);
   const body = (writtenBody.trim() !== "" ? writtenBody : fallbackBody).trim();
@@ -196,13 +181,12 @@ function flattenToLine(text: string): string {
 }
 
 /**
- * The scribe's subject, or null when what it wrote cannot be one: empty, or
- * longer than the contract's bound. The `<ticket-id>: ` prefix is the
- * pipeline's to add, so a scribe that added it too is not punished for it.
+ * The scribe's subject, or null when it is empty. The `<ticket-id>: ` prefix is
+ * the pipeline's to add, so a scribe that added it too is not punished for it.
  */
 function subjectSummary(ticketId: string, written: string): string | null {
   const stripped = written.trim().replace(new RegExp(`^${escapeForRegExp(ticketId)}:\\s*`), "");
-  if (stripped === "" || stripped.length > MAX_SUBJECT_SUMMARY_CHARS) return null;
+  if (stripped === "") return null;
   return stripped;
 }
 
