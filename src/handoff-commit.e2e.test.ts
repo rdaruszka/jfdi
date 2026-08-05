@@ -11,11 +11,10 @@
  * repository, so these tests drive the built CLI in a scratch repo and then
  * ask git, never the source.
  *
- * They also push the scribe's answer past every bound the shipped contract
- * sets — control characters, an overlong first line, an answer that is nothing
- * but the metadata the pipeline owns — because a message only has to survive
- * `git commit` once to be permanent, and a NUL byte makes `git commit -m` fail
- * outright.
+ * They also exercise hostile or unguided scribe answers — control characters,
+ * an overlong first line, an answer that is nothing but the metadata the
+ * pipeline owns — because a message only has to survive `git commit` once to
+ * be permanent, and a NUL byte makes `git commit -m` fail outright.
  *
  * `JFDI_HOME`/`HOME` always point inside the scratch tree — nothing here can
  * reach the real `~/.jfdi`.
@@ -365,13 +364,13 @@ describe("handoff commit messages, as git reads them", () => {
           },
         },
         {
-          // Past the bound the shipped template states, the first line is prose
-          // that landed in the subject's place: kept as body, never truncated.
+          // The suggested length is not an enforcement threshold: git accepts
+          // the first line as the subject without truncation or demotion.
           name: "overlong-first-line",
           answer: `${"x".repeat(200)}\n\nthe prose account`,
-          subject: (id) => `${id}: Implementation round 1`,
+          subject: (id) => `${id}: ${"x".repeat(200)}`,
           body: (message) => {
-            expect(message).toContain("x".repeat(200));
+            expect(message).not.toContain(`\n\n${"x".repeat(200)}`);
             expect(message).toContain("the prose account");
           },
         },
