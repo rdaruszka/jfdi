@@ -56,7 +56,9 @@ pnpm test:watch    # watch mode
 
 Unit tests sit next to their modules (`*.test.ts`); end-to-end suites
 (`*.e2e.test.ts`) drive the built behavior — card moves, merge detection, state
-location, resume lifecycle — against scratch repos.
+location, resume lifecycle — against scratch repos. Vitest's global setup runs
+`pnpm build` once before workers start, so every end-to-end suite uses the same
+fresh `dist/` while file parallelism remains enabled.
 
 ### The self-hosting hazards
 

@@ -3,20 +3,15 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { defaultConfig } from "./config.js";
 import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.dirname(import.meta.dirname);
 const cliPath = path.join(repoRoot, "dist", "index.js");
-const BUILD_TIMEOUT_MS = 180_000;
 
 const sandboxRoots: string[] = [];
-
-beforeAll(async () => {
-  await execFileAsync("pnpm", ["build"], { cwd: repoRoot, timeout: BUILD_TIMEOUT_MS });
-});
 
 afterEach(async () => {
   await Promise.all(

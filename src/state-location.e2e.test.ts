@@ -14,7 +14,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
@@ -172,11 +172,6 @@ async function pathExists(target: string): Promise<boolean> {
     return false;
   }
 }
-
-beforeAll(async () => {
-  // Always rebuild: a stale dist/ would let these pass against old behavior.
-  await execFileAsync("pnpm", ["build"], { cwd: repoRoot });
-}, 180_000);
 
 afterEach(async () => {
   await Promise.all(sandboxes.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
