@@ -18,6 +18,7 @@
   ],
   "pipeline": { "max_rounds": 3 },
   "integration": { "target_branch": "main", "mode": "auto" },
+  "permissions": { "mode": "auto" },
   "max_concurrent": 2,
   "stages": {
     "implementation": { "harness": "codex", "model": "gpt-5.6-sol", "effort": "high" },
