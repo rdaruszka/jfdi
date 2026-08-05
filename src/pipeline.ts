@@ -53,9 +53,9 @@ import {
   agentVerdictPath,
   collectVerdict,
   type ReviewVerdict,
-  type VerdictReadResult,
   readImplementationVerdict,
   readReviewVerdict,
+  type VerdictReadResult,
 } from "./verdicts.js";
 
 export interface PipelineContext {
@@ -963,6 +963,12 @@ interface CodeReviewStageInput {
   previousFailure: FeedbackItem | undefined;
 }
 
+function codeReviewFailureFeedback(verdict: ReviewVerdict | null, outcome: StageOutcome): string {
+  if (verdict?.feedback) return verdict.feedback;
+  if (verdict) return "Code review failed without specific feedback.";
+  return `Code review session did not produce a valid verdict${outcome.ok ? "" : `: ${outcome.resultText}`}.`;
+}
+
 async function runCodeReviewStage(
   context: PipelineContext,
   ticket: Ticket,
@@ -1036,11 +1042,7 @@ async function runCodeReviewStage(
       step: { kind: "blocked", reason: result.invalidVerdictFailure, observations: [] },
     };
   if (!verdict || verdict.verdict === "fail") {
-    const feedback =
-      verdict?.feedback ??
-      (verdict
-        ? "Code review failed without specific feedback."
-        : `Code review session did not produce a valid verdict${outcome.ok ? "" : `: ${outcome.resultText}`}.`);
+    const feedback = codeReviewFailureFeedback(verdict, outcome);
     await recordReviewTransition(input.notePath, "code-review", input.round, {
       outcome: "FAILED",
       routing: retryRouting(input.round, context.config.pipeline.max_rounds),
