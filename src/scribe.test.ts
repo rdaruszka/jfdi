@@ -91,6 +91,18 @@ describe("assembleCommitMessage", () => {
     );
   });
 
+  it("preserves status line content as the pipeline produced it", () => {
+    const message = assembleCommitMessage("Half of the parser", "fix-object-names", {
+      ...HANDOFF,
+      outcome: "interrupted: session  stopped\tbefore edit",
+      routing: "returning to Implementation  for round 3",
+      isInterrupted: true,
+    });
+    expect(message).toContain(
+      "JFDI Implementation interrupted: session  stopped\tbefore edit — returning to Implementation  for round 3",
+    );
+  });
+
   it("does not repeat a ticket id the scribe already wrote", () => {
     const message = assembleCommitMessage(
       "fix-object-names: Accept sha256 object names",
@@ -236,7 +248,7 @@ describe("assembleCommitMessage against hostile scribe output", () => {
     expect(message).toContain("Because sha256.");
   });
 
-  it("scrubs the stage's own summary before it stands in for a missing answer", () => {
+  it("scrubs the stage's own summary when the assembled message reaches history", () => {
     // The summary comes out of an agent's verdict JSON: external text, and the
     // path an empty scribe answer falls back to.
     const hostileSummary =
@@ -255,51 +267,15 @@ describe("assembleCommitMessage against hostile scribe output", () => {
     }
   });
 
-  it("scrubs and flattens an interrupted session's outcome into one status line", () => {
-    // `outcome` quotes the dead session's own output — subprocess text, and it
-    // has to stay on one line or the trailer below it stops being a trailer.
-    const message = assembleCommitMessage("", "fix-names", {
-      ...HANDOFF,
-      isInterrupted: true,
-      outcome: "interrupted: killed\u0000 mid-edit\nsecond line\u001b[0m",
-      routing: "returning to\nImplementation for round 3",
-      summary: "Half a parser\u0007",
-    });
-    expect(hasControlCharacters(message)).toBe(false);
-    const messageLines = message.trimEnd().split("\n");
-    expect(messageLines[0]).toBe("fix-names: WIP — Implementation round 2");
-    // One line for the status, then the trailer alone in its own paragraph —
-    // git only parses an all-trailer last paragraph as a trailer block.
-    expect(messageLines.slice(-5)).toEqual([
-      "JFDI Implementation interrupted: killed mid-edit second line[0m — returning to Implementation for round 3",
-      "",
-      "JFDI-Round: 2/3",
-      "JFDI-Duration: 7m",
-      "JFDI-Cost: $1.87",
-    ]);
-  });
-
-  it("still produces a well-formed message when every external fragment is hostile", () => {
-    const message = assembleCommitMessage("\u0000\u0007\u001b", "fix-names", {
-      ...HANDOFF,
-      outcome: "\u0000complete",
-      routing: "\u0007moving on",
-      summary: "\u0000\u0007",
-    });
-    expect(hasControlCharacters(message)).toBe(false);
-    // A summary that scrubs away to nothing leaves subject and trailers only.
-    expect(message).toBe(
-      [
-        "fix-names: Implementation round 2",
-        "",
-        "JFDI Implementation complete — moving on",
-        "",
-        "JFDI-Round: 2/3",
-        "JFDI-Duration: 7m",
-        "JFDI-Cost: $1.87",
-        "",
-      ].join("\n"),
-    );
+  it("asserts that pipeline-produced status fragments stay on one line", () => {
+    for (const handoff of [
+      { ...HANDOFF, outcome: "complete\ncontinued" },
+      { ...HANDOFF, routing: "moving to the mechanical gate\rcontinued" },
+    ]) {
+      expect(() => assembleCommitMessage("", "fix-names", handoff)).toThrow(
+        "Cannot assemble commit message: pipeline-produced status line contains a line break",
+      );
+    }
   });
 
   it("always ends with the status line and the round trailer, whatever came back", () => {

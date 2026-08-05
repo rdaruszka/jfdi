@@ -10,14 +10,16 @@
  * depend on an agent getting a format right. The same rendered text goes to
  * the commit and to the ticket note's `## Comments` trail.
  *
- * Everything that reaches a commit message here comes from outside the
- * pipeline: the scribe's answer is subprocess output, the completing stage's
- * summary is agent verdict text, and an interrupted session's outcome quotes
- * that session's own output back. All of it is about to become permanent
- * repository history, so `assembleCommitMessage` treats the lot as a trust
- * boundary: it enforces the message's structural requirements and strips only
- * characters that git rejects or that would poison later terminal output.
+ * The scribe's answer is subprocess output and the completing stage's summary
+ * is agent verdict text — both are about to become permanent repository
+ * history, so `assembleCommitMessage` treats the assembled message as a trust
+ * boundary. It enforces the message's structural requirements and strips only
+ * characters that git rejects or that would poison later terminal output, once,
+ * over the whole assembled message. The status line's outcome and routing are
+ * pipeline-produced and single-line by construction; assembly asserts that
+ * invariant rather than coercing their content.
  */
+import assert from "node:assert/strict";
 import type { StageName } from "./events.js";
 import { git } from "./git.js";
 import type { SessionUsage } from "./harness/types.js";
@@ -116,26 +118,24 @@ export function scribeVariables(
  * The final message: the scribe's subject and body under a ticket-id subject
  * prefix, over the status line and the round trailer.
  *
- * Three of the fragments here are external, not just the scribe's answer: the
- * handoff's `summary` is agent verdict text, and its `outcome` can quote a dead
- * session's own output. All three are scrubbed, the ones that must stay on one
- * line are flattened to one, and the assembled message is scrubbed once more at
- * the end — so the guarantee is about the message, not about remembering to
- * treat each new fragment as external.
+ * The scribe's answer and the handoff's `summary` are external text. The
+ * pipeline-produced status fragments are single-line by construction. The
+ * assembled message is scrubbed once at the end, so this boundary remains the
+ * one choke point as fragments are added.
  */
 export function assembleCommitMessage(
   scribeText: string,
   ticketId: string,
   handoff: SessionHandoff,
 ): string {
-  const written = withoutPipelineMetadata(stripFences(scrubControlCharacters(scribeText)));
+  const written = withoutPipelineMetadata(stripFences(scribeText));
   const lines = written.length > 0 ? written.split("\n") : [];
   const summary = subjectSummary(ticketId, lines[0] ?? "");
   const subject = `${ticketId}: ${handoff.isInterrupted ? "WIP — " : ""}${
     summary ?? `${STAGE_LABELS[handoff.stage]} round ${handoff.round}`
   }`;
   const writtenBody = summary === null ? written : lines.slice(1).join("\n");
-  const fallbackBody = scrubControlCharacters(handoff.summary);
+  const fallbackBody = handoff.summary;
   const body = (writtenBody.trim() !== "" ? writtenBody : fallbackBody).trim();
   // The status line is one line by definition: a reason quoted from a dead
   // session's output would otherwise wrap onto a line of its own. It is NOT
@@ -143,10 +143,10 @@ export function assembleCommitMessage(
   // trailer block when every line in it is trailer-shaped, so the status line
   // sharing a paragraph with `JFDI-Round:` would make the trailer invisible
   // to `git log --format='%(trailers:…)'`.
-  const status = statusLine(
-    handoff.stage,
-    flattenToLine(handoff.outcome),
-    flattenToLine(handoff.routing),
+  const status = statusLine(handoff.stage, handoff.outcome, handoff.routing);
+  assert(
+    !/[\r\n]/.test(status),
+    "Cannot assemble commit message: pipeline-produced status line contains a line break",
   );
   // One all-trailer paragraph, every line trailer-shaped, so git parses the
   // block: JFDI-Cost/JFDI-Duration join JFDI-Round here, never in the prose.
@@ -156,9 +156,8 @@ export function assembleCommitMessage(
     `JFDI-Cost: ${trailerCost(handoff.usage)}`,
   ].join("\n");
   const message = `${[subject, body, status, trailers].filter((part) => part !== "").join("\n\n")}\n`;
-  // Belt and braces over every fragment at once: newlines survive this, so the
-  // shape above is untouched and a fragment nobody scrubbed still cannot put a
-  // NUL — which `git commit -m` rejects outright — into repository history.
+  // Scrub once at the history boundary: NUL makes `git commit -m` fail, while
+  // terminal escapes in the message would poison every later `git log`.
   return scrubControlCharacters(message);
 }
 
@@ -170,14 +169,6 @@ export function assembleCommitMessage(
 function trailerCost(usage: SessionUsage): string {
   const cost = formatCostUsd(usage.costUsd, usage.inputTokens + usage.outputTokens);
   return usage.isCostEstimated ? `${cost} (${COST_ESTIMATE_NOTE})` : cost;
-}
-
-/**
- * One line, whatever came in: control characters gone and every run of
- * whitespace — newlines included — collapsed to a single space.
- */
-function flattenToLine(text: string): string {
-  return scrubControlCharacters(text).replace(/\s+/g, " ").trim();
 }
 
 /**

@@ -75,6 +75,13 @@ if (prompt.includes("Write the commit message")) {
       execFileSync("git", ["commit", "-m", "AGENT SELF COMMIT " + round], { cwd: process.cwd() });
       // A session that dies before its verdict: work on disk, nothing to read.
       if (mode === "impl-dies") return "the session died mid-edit";
+      // A session that fails outright (is_error). Its own result text becomes
+      // the status line's outcome, so a case can hand it whitespace and line
+      // breaks the pipeline must carry as produced, not collapse.
+      if (mode === "impl-fails") {
+        isError = true;
+        return process.env.STUB_DEATH_TEXT || "the session failed mid-edit";
+      }
       verdict = { status: "done", summary: "wrote the greeting template", decisions: [], observations: [] };
     } else if (stage === "integration") {
       verdict = { resolution: "clean" };
@@ -98,20 +105,23 @@ const STUB_CLAUDE = `#!/usr/bin/env node
 const argv = process.argv.slice(2);
 const prompt = argv[argv.indexOf("-p") + 1] || "";
 process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "stub" }] } }) + "\\n");
+let isError = false;
 const text = (function () {${STUB_BODY}
 return resultText;
 })();
-process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: text }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: isError, result: text }) + "\\n");
 `;
 
 const STUB_CODEX = `#!/usr/bin/env node
 const argv = process.argv.slice(2);
 const prompt = argv[argv.length - 1] || "";
 process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "stub-thread" }) + "\\n");
+let isError = false;
 const text = (function () {${STUB_BODY}
 return resultText;
 })();
-process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text } }) + "\\n");
+if (isError) process.stdout.write(JSON.stringify({ type: "turn.failed", error: { message: text } }) + "\\n");
+else process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text } }) + "\\n");
 `;
 
 interface Sandbox {
@@ -158,6 +168,7 @@ interface RunOptions {
   stubMode?: string;
   scribeFile?: string;
   scribePromptDump?: string;
+  deathText?: string;
 }
 
 async function runCli(
@@ -176,6 +187,7 @@ async function runCli(
   if (options.scribeFile !== undefined) env.STUB_SCRIBE_FILE = options.scribeFile;
   if (options.scribePromptDump !== undefined)
     env.STUB_SCRIBE_PROMPT_DUMP = options.scribePromptDump;
+  if (options.deathText !== undefined) env.STUB_DEATH_TEXT = options.deathText;
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
       cwd: sandbox.project,
@@ -333,6 +345,101 @@ describe("handoff commit messages, as git reads them", () => {
       const resumed = await runCli(sandbox, ["run", "Add a greeting"], { stubMode: "impl-dies" });
       expect(ticketIdOf(resumed)).toBe(ticketId);
       expect(resumed.stdout).toContain("resuming 3 commits of prior work");
+    },
+    PIPELINE_TIMEOUT_MS,
+  );
+
+  it(
+    "carries a dead session's outcome into the status line as produced, not collapsed",
+    async () => {
+      const sandbox = await makeSandbox();
+      await initProject(sandbox);
+      // The dead session's own result text becomes the status line's outcome.
+      // It is pipeline-built (never re-scrubbed), so its internal whitespace —
+      // a doubled space and a tab — must reach the commit untouched, and only
+      // its first line survives: the CRLF-delimited second line is dropped by
+      // the pipeline's firstLine, never wrapped onto a line of its own below
+      // the status where it would break the trailer block.
+      const deathText = "killed  at\tstep three\r\nSECONDLINEMARKER cleanup also failed";
+      const run = await runCli(sandbox, ["run", "Add a greeting"], {
+        stubMode: "impl-fails",
+        deathText,
+      });
+      // The assert on the one-line invariant did not fire: assembly succeeded,
+      // the run exhausted its rounds cleanly, and the WIP work was committed.
+      expect(run.code).toBe(2);
+      const branch = `jfdi/${ticketIdOf(run)}`;
+
+      const message = await git(sandbox.project, "log", "-1", "--format=%B", branch);
+      // The status line is the one that carries the pipeline-built outcome. It
+      // is exactly one line: firstLine took only the outcome's first line, so
+      // the CRLF-delimited second line never wrapped below it and broke the
+      // trailer block. Its internal whitespace — a doubled space and a tab —
+      // reaches the commit verbatim, with no collapsing to single spaces.
+      const statusLines = message
+        .split("\n")
+        .filter((line) => line.startsWith("JFDI Implementation interrupted:"));
+      expect(statusLines).toHaveLength(1);
+      expect(statusLines[0]).toBe(
+        "JFDI Implementation interrupted: The previous implementation session failed: killed  at\tstep three — moving to Blocked for human review",
+      );
+      expect(statusLines[0]).not.toContain("SECONDLINEMARKER");
+      // A tab is legitimate text the scrub keeps; every real control character
+      // and any stray CR is still gone at the history boundary.
+      expect(message).not.toContain("\r");
+      expect(message).not.toContain(NUL);
+      expect(message).not.toContain(ESCAPE);
+      // The trailer block below the status line is still machine-readable, so
+      // the status line did not bleed into it.
+      expect(await trailerValue(sandbox.project, branch, "JFDI-Round")).toBe("3/3");
+    },
+    PIPELINE_TIMEOUT_MS,
+  );
+
+  it(
+    "scrubs a control character out of the pipeline-built outcome without collapsing its whitespace",
+    async () => {
+      const sandbox = await makeSandbox();
+      await initProject(sandbox);
+      // The dead session's own result text becomes the status line's outcome —
+      // a pipeline-built fragment that once carried its own per-fragment scrub.
+      // With that gone, the single whole-message scrub is now the *only* thing
+      // between a genuine control character here and permanent history. This
+      // hands the outcome an escape sequence and a bell (real C0 controls, not
+      // the CR the CRLF branch normalizes) wrapped around a doubled space and a
+      // tab, and asserts the one remaining scrub does both its jobs at once:
+      // the controls are gone, the legitimate whitespace reaches the commit
+      // verbatim — no collapsing to single spaces.
+      const deathText = `killed  at${ESCAPE}[31m\tstep${BELL} three\r\nSECONDLINEMARKER also failed`;
+      const run = await runCli(sandbox, ["run", "Add a greeting"], {
+        stubMode: "impl-fails",
+        deathText,
+      });
+      expect(run.code).toBe(2);
+      const branch = `jfdi/${ticketIdOf(run)}`;
+
+      const message = await git(sandbox.project, "log", "-1", "--format=%B", branch);
+      const statusLines = message
+        .split("\n")
+        .filter((line) => line.startsWith("JFDI Implementation interrupted:"));
+      expect(statusLines).toHaveLength(1);
+      // The escape and bell are stripped mid-outcome; the printable "[31m" that
+      // trailed the escape stays (it is text once the escape byte is gone), and
+      // the doubled space and tab either side of it are untouched.
+      expect(statusLines[0]).toBe(
+        "JFDI Implementation interrupted: The previous implementation session failed: killed  at[31m\tstep three — moving to Blocked for human review",
+      );
+      expect(statusLines[0]).toContain("killed  at");
+      expect(statusLines[0]).toContain("\tstep");
+      expect(statusLines[0]).not.toContain("SECONDLINEMARKER");
+      // Not one control character survived the single boundary scrub.
+      expect(message).not.toContain(ESCAPE);
+      expect(message).not.toContain(BELL);
+      expect(message).not.toContain(NUL);
+      expect(message).not.toContain("\r");
+      // The trailer block below stays machine-readable: the outcome did not
+      // bleed a stray newline into it.
+      expect(await trailerValue(sandbox.project, branch, "JFDI-Round")).toBe("3/3");
     },
     PIPELINE_TIMEOUT_MS,
   );
