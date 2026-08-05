@@ -97,6 +97,9 @@ export async function runTicketInline(
 
   try {
     const outcome = await runPipeline(context, ticket);
+    const observations =
+      outcome.status === "passed" ? outcome.report.observations : outcome.observations;
+    await surfaceObservations(context, ticket.id, observations);
     if (outcome.status === "blocked") {
       await settleCard(columns.blocked);
       console.error(`\nBlocked: ${outcome.reason}`);
@@ -109,7 +112,6 @@ export async function runTicketInline(
       return 1;
     }
 
-    await recordObservations(context, ticket.id, outcome.report.observations);
     if (context.config.integration.mode === "auto") {
       const merged = await integrateTicket(context, ticket, outcome.worktree);
       if (merged.status === "blocked") {
@@ -136,6 +138,19 @@ export async function runTicketInline(
     });
     throw error;
   }
+}
+
+/** Send proposals to the inbox, or keep them visible in a boardless run's summary. */
+async function surfaceObservations(
+  context: PipelineContext,
+  ticketId: string,
+  observations: string[],
+): Promise<void> {
+  if (observations.length === 0) return;
+  const hasObservationInbox = await recordObservations(context, ticketId, observations);
+  if (hasObservationInbox) return;
+  console.log("\nObservations:");
+  for (const observation of observations) console.log(`- ${observation}`);
 }
 
 /** The board a run should read blocker done-ness from; empty when none exists. */

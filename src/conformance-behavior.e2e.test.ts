@@ -72,6 +72,8 @@ if (match) {
     verdict = { status: "done", summary: "implemented", decisions: ["chose A"], observations: ["stray TODO in foo.ts"], testsAdded: "unit tests" };
   } else if (stage === "integration") {
     verdict = { resolution: "clean" };
+  } else if (stage === "code-review" && mode === "review-fail-observed") {
+    verdict = { verdict: "fail", feedback: "needs work", observations: ["reviewer-flagged: unchecked auth on the legacy endpoint"] };
   } else if (stage === "code-review" && mode === "review-fail") {
     verdict = { verdict: "fail", feedback: "needs work" };
   } else {
@@ -552,10 +554,15 @@ describe("pipeline behavior", () => {
       expect(shapes.filter((shape) => shape === "round_start")).toHaveLength(3);
       expect(shapes.filter((shape) => shape === "gate_start")).toHaveLength(3);
       expect(shapes.filter((shape) => shape.startsWith("stage_start:qa"))).toHaveLength(0);
-      expect(shapes.at(-1)).toBe("blocked");
+      // The pipeline records the blocked transition, then its caller flushes
+      // this run's deduplicated observations. Observation events are
+      // state-neutral, so the ticket remains blocked after this tail.
+      expect(shapes.slice(-2)).toEqual(["blocked", "observation"]);
 
       const blocked = events.find((event) => event.type === "blocked");
       expect(blocked?.data?.reason).toBe("retries exhausted after 3 rounds");
+      const board = await fs.readFile(path.join(sandbox.project, ".jfdi", "board.md"), "utf8");
+      expect(board).toContain(`stray TODO in foo.ts *(from ${ticketIdOf(run)})*`);
 
       // Nothing reached the target branch.
       expect(await git(sandbox.project, "log", "--oneline", "main")).not.toContain("implement");
@@ -571,6 +578,76 @@ describe("pipeline behavior", () => {
       expect(note).toContain(
         "> JFDI run exhausted its 3 rounds — moving to Blocked for human review",
       );
+    },
+    PIPELINE_TIMEOUT_MS,
+  );
+
+  it(
+    "surfaces an observation carried by a failing code-review verdict, even when the run blocks",
+    async () => {
+      const sandbox = await makeSandbox();
+      await initProject(sandbox);
+
+      // Every round's code review fails (blocking the run at max_rounds) and
+      // carries its own observation in the same verdict. The observation
+      // channel's contract says every proposal reaches a human via the inbox,
+      // so the reviewer's flag must land there despite the failing outcome —
+      // the drop this ticket fixes.
+      const run = await runCli(sandbox, ["run", "Add a greeting"], {
+        stubMode: "review-fail-observed",
+      });
+      expect(run.code).toBe(2);
+
+      const board = await fs.readFile(path.join(sandbox.project, ".jfdi", "board.md"), "utf8");
+      const ticketId = ticketIdOf(run);
+      // The failing reviewer's own flag reached the inbox…
+      expect(board).toContain(
+        `reviewer-flagged: unchecked auth on the legacy endpoint *(from ${ticketId})*`,
+      );
+      // …and it is proposed once, not once per failed round, despite being
+      // re-reported across all three rounds (within-run deduplication).
+      const inbox = board.slice(board.indexOf("## Inbox"));
+      expect(inbox.match(/reviewer-flagged: unchecked auth/g)).toHaveLength(1);
+    },
+    PIPELINE_TIMEOUT_MS,
+  );
+
+  it(
+    "prints observations in the run summary when boardless, on both the pass and blocked exits, deduplicated",
+    async () => {
+      const sandbox = await makeSandbox();
+      await initProject(sandbox);
+
+      // A boardless run: delete the scaffolded board and drop into on-approval
+      // so nothing needs an inbox to succeed. There is no board to receive
+      // proposals, so the only place a parsed observation can still surface is
+      // the run summary the operator reads on stdout — the boardless drop this
+      // ticket fixes ("observations land nowhere at all").
+      const jfdiDir = path.join(sandbox.project, ".jfdi");
+      await fs.rm(path.join(jfdiDir, "board.md"));
+      const configPath = path.join(jfdiDir, "config.json");
+      const config = JSON.parse(await fs.readFile(configPath, "utf8"));
+      config.integration = { ...config.integration, mode: "on-approval" };
+      await fs.writeFile(configPath, JSON.stringify(config));
+
+      // Pass path: the implementation's observation reaches the summary even
+      // though every stage passed and there is no board.
+      const passed = await runCli(sandbox, ["run", "Add a greeting"]);
+      expect(passed.code).toBe(0);
+      await expect(fs.access(path.join(jfdiDir, "board.md"))).rejects.toThrow();
+      expect(passed.stdout).toContain("Observations:");
+      expect(passed.stdout).toContain("stray TODO in foo.ts");
+
+      // Blocked path: the run exits non-zero after exhausting its rounds, yet
+      // the observation reported in every one of those rounds still surfaces —
+      // exactly once, proving the run-scoped deduplication holds even when the
+      // run never passes.
+      const blocked = await runCli(sandbox, ["run", "Add a farewell"], {
+        stubMode: "review-fail",
+      });
+      expect(blocked.code).toBe(2);
+      expect(blocked.stdout).toContain("Observations:");
+      expect(blocked.stdout.match(/stray TODO in foo\.ts/g)).toHaveLength(1);
     },
     PIPELINE_TIMEOUT_MS,
   );

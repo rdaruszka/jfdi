@@ -127,9 +127,11 @@ pass/fail:
   round. This is the audit trail for the decide-log-proceed posture, and the one
   part of the trail later stages read back.
 - **`observations`** — out-of-scope issues the agent noticed (pre-existing bugs,
-  dead code, tooling gaps). Never fixed inline; after a passing run they become
-  proposal cards in the board's **Inbox** column, deduplicated by text and tagged
-  `*(from <ticket-id>)*`. Agents propose; humans promote.
+  dead code, tooling gaps). Never fixed inline; every valid verdict contributes
+  them regardless of pass/fail/escalate outcome. They become proposal cards in
+  the board's **Inbox** column on every run exit, deduplicated by text and tagged
+  `*(from <ticket-id>)*`. A boardless direct run prints them in its summary.
+  Agents propose; humans promote.
 
 ## Commits and the scribe
 

@@ -220,8 +220,8 @@ description or the questions section.
 
 Agents are prompted never to fix out-of-scope issues inline. Instead each stage
 reports them as `observations` in its verdict — pre-existing bugs, dead code,
-tooling gaps — and after a passing run the coordinator materializes each one as a
-card in the inbox column with provenance:
+tooling gaps — and whenever a run exits, the coordinator materializes each one
+as a card in the inbox column with provenance:
 
 ```markdown
 ## Inbox
@@ -234,6 +234,9 @@ by the human (promote a card to the begin column, or delete it), and **never
 dispatched from** — a card there is inert by definition. Agents propose; humans
 promote. Cards are deduplicated by exact text, so a re-run of the same ticket
 won't double-file the same observation.
+
+A boardless `jfdi run` has no inbox, so its run summary prints the deduplicated
+observations instead.
 
 ## Co-editing: how writes stay safe
 

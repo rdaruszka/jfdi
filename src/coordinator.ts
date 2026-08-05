@@ -461,6 +461,9 @@ export class Coordinator {
       }
 
       const outcome = await runPipeline(this.context, ticket);
+      const observations =
+        outcome.status === "passed" ? outcome.report.observations : outcome.observations;
+      await recordObservations(this.context, id, observations);
       if (outcome.status === "blocked") {
         await moveCardSafe(this.context, card, columns.inProgress, columns.blocked, false);
         return;
@@ -472,7 +475,6 @@ export class Coordinator {
       }
 
       await saveReport(this.context.stateDir, id, outcome.report);
-      await recordObservations(this.context, id, outcome.report.observations);
       if (this.context.config.integration.mode === "on-approval") {
         const notePath = ticket.notePath ?? path.join(ticketsDir, `${ticket.id}.md`);
         await recordMergeReady(this.context, id, notePath, outcome.report);

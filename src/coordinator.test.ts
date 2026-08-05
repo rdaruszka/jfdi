@@ -234,6 +234,21 @@ function autoHandler() {
   };
 }
 
+/** The feature suffix carried in the fixture ticket's prompt. */
+function featureName(prompt: string): string {
+  return /feature (\w+)/.exec(prompt)?.[1] ?? "unknown";
+}
+
+/** Fail the first review with an observation, then approve the fix round. */
+function observedReviewVerdict(implementationAttempt: number | undefined): Record<string, unknown> {
+  if (implementationAttempt !== 1) return { verdict: "pass" };
+  return {
+    verdict: "fail",
+    feedback: "fix the ticket code",
+    observations: ["Security headers are missing from the legacy server"],
+  };
+}
+
 /** One card left mid-flight by a coordinator that died, and nothing else. */
 const ORPHANED_BOARD = `---
 
@@ -800,6 +815,64 @@ describe("Coordinator", () => {
     // Proposals are inert: nothing ran for them, both real tickets are Done.
     expect(findColumn(board, "Done")?.cards).toHaveLength(2);
     expect(coordinator.activeCount()).toBe(0);
+  });
+
+  it("materializes an observation from a failing code review verdict", async () => {
+    const implementationAttempts = new Map<string, number>();
+    const context = fixture.context(async (spec, options) => {
+      const stage = sessionKindOf(spec.prompt);
+      const name = featureName(spec.prompt);
+      if (stage === "implementation") {
+        const attempt = (implementationAttempts.get(name) ?? 0) + 1;
+        implementationAttempts.set(name, attempt);
+        await commitFile(options.cwd, `${name}.txt`, `${attempt}\n`, `implement ${name}`);
+        await writeVerdict(spec.prompt, { status: "done", summary: `built ${name}` });
+      } else if (stage === "code-review") {
+        await writeVerdict(spec.prompt, observedReviewVerdict(implementationAttempts.get(name)));
+      } else if (stage === "integration") {
+        await writeVerdict(spec.prompt, { resolution: "clean" });
+      } else {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    });
+    fixture.config.integration.mode = "auto";
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+    await startCoordinator(coordinator);
+    await coordinator.drain();
+    coordinator.stop();
+
+    const inbox = findColumn(await readBoard(), "Inbox")?.cards ?? [];
+    expect(inbox).toHaveLength(2);
+    expect(inbox.every((card) => card.text.includes("Security headers are missing"))).toBe(true);
+  });
+
+  it("materializes earlier-round observations when the run blocks", async () => {
+    fixture.config.pipeline.max_rounds = 1;
+    const context = fixture.context(async (spec, options) => {
+      const stage = sessionKindOf(spec.prompt);
+      if (stage === "implementation") {
+        const name = featureName(spec.prompt);
+        await commitFile(options.cwd, `${name}.txt`, `${name}\n`, `implement ${name}`);
+        await writeVerdict(spec.prompt, {
+          status: "done",
+          observations: ["The legacy command still uses an obsolete flag"],
+        });
+      } else if (stage === "code-review") {
+        await writeVerdict(spec.prompt, { verdict: "fail", feedback: "ticket work is incomplete" });
+      }
+      return { ok: true, text: "" };
+    });
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+    await startCoordinator(coordinator);
+    await coordinator.drain();
+    coordinator.stop();
+
+    const board = await readBoard();
+    const inbox = findColumn(board, "Inbox")?.cards ?? [];
+    expect(inbox).toHaveLength(2);
+    expect(inbox.every((card) => card.text.includes("legacy command"))).toBe(true);
+    expect(findColumn(board, "Blocked")?.cards).toHaveLength(2);
   });
 
   it("re-dispatch skips to integration when the branch still matches the report", async () => {
