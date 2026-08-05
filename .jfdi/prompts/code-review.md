@@ -40,11 +40,17 @@ Diffstat:
 ## Checklist — answer each about this diff
 
 - **Scope:** does every changed line trace to the ticket? Anything speculative —
-  unrequested features, configurability, abstractions with one caller — fails.
+  unrequested features, configurability, abstractions with one caller, or a line of
+  defense with no failure to point to (see Assertions) — fails.
 - **Termination:** for each loop/recursion, what provably shrinks? An intentionally
   unbounded loop must yield every iteration AND check a reachable exit condition.
-- **Assertions:** are trust boundaries (parsed files, subprocess output, external
-  data) checked? Flag assertions that merely restate what the type system proves.
+- **Assertions:** for each assertion, validation, or scrub, name the concrete,
+  reachable failure it prevents (a NUL that breaks `git commit`, a missing field the
+  next step reads). Fail both directions: defense with no failure to point to — or
+  that scrubs a value the code itself produced, or a format merely requested of an
+  agent (over-engineering; also a Scope failure) — AND missing defense for a failure
+  the sink does impose. Assertions that merely restate what the type system proves
+  fail too.
 - **Suppressions:** every lint/type suppression needs a real reason at the site —
   "function is long" is not a reason. Gaming a mechanical tripwire (splitting a
   function artificially to duck a length rule) is itself a failure.

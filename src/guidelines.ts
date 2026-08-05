@@ -50,9 +50,9 @@ JFDI wires these tiers in for you: the gate is tier M, the Code Review stage pro
 
 ## Errors, assertions, and the type checker
 
-6. **Assert what the checker cannot prove.** [P + R]
-   High assertion density at trust boundaries: parsed files, network/subprocess output, anything a human co-edits. Assert cross-call invariants and exhaustiveness. An assertion the type system already guarantees is noise (\`assert(true)\` in modern dress). Impossible states get an assertion, not a recovery path — one line that documents the impossibility beats a handler branch for a state that can't occur.
-   *Check:* is every trust boundary in the diff asserted? Does any assertion merely restate a type?
+6. **Assert what the operation needs; sanitize only what the sink can't survive.** [P + R]
+   At a boundary — parsed files, network/subprocess output, anything a human co-edits — assert what the *downstream operation* cannot proceed without: presence, a value in the range the operation requires (a count that can't be negative), cross-call invariants, exhaustiveness (\`never\` checks). Size any cleanup by what the *destination* cannot survive — a value the sink rejects (a NUL byte that \`commit -m\` refuses) or is harmed by (a terminal escape sequence in a log) earns sanitizing at that sink; a format you merely *requested* (a length, a punctuation rule) is a steer, not a law — when the output misses it the default is to pass it through unchanged, neither rejecting it nor coercing it into shape (truncating, padding, reformatting is itself unrequested defense — rule 23); reshape only when the *sink* structurally needs it, and then the sink is your reason, not the number you asked for. A stochastic source (an LLM) raises how *likely* you are to need that fallback — never how much you are entitled to reject. An assertion the type system already guarantees is noise (\`assert(true)\` in modern dress); scrubbing a value your own code just produced, or normalizing input the request never told you to touch, is defensive over-engineering (rule 23). Impossible states get an assertion, not a recovery path — one line that documents the impossibility beats a handler branch for a state that can't occur.
+   *Check:* for each assertion, validation, or scrub in the diff, name the concrete, reachable failure it prevents. No named failure — or a sink that survives without it — fails the check; so does missing defense for a failure the sink *does* impose. Does any assertion merely restate a type?
 
 7. **Every asynchronous result is handled.** [M]
    Awaited, or explicitly and visibly detached. No fire-and-forget.
@@ -125,9 +125,9 @@ JFDI wires these tiers in for you: the gate is tier M, the Code Review stage pro
     *Why:* the log replaces the conversation — the human still sees every judgment call, just asynchronously.
     *Check:* does the diff match the stated assumptions?
 
-23. **Simplicity first.** [P + R]
-    Minimum code that solves the stated problem. No speculative features, no abstractions for single-use code, no unrequested configurability, no handling for impossible scenarios (those get assertions — rule 6).
-    *Check:* identify anything in this diff not required by the request. Anything found fails.
+23. **Simplicity first — including defensively.** [P + R]
+    Minimum code that solves the stated problem. No speculative features, no abstractions for single-use code, no unrequested configurability, no handling for impossible scenarios (those get assertions — rule 6). Speculation wears defensive costumes too: an unrequested normalization, a scrub with no failure to point to, a validation the operation never needed. Unasked-for defense is scope creep like any feature — the minimum work that satisfies the request is the whole job.
+    *Check:* identify anything in this diff not required by the request — a feature, an abstraction, *or* a line of defense with no named, reachable failure (rule 6). Anything found fails.
 
 24. **Surgical changes.** [P + R]
     Every changed line traces to the request. Clean up orphans *your* change created (now-unused imports, variables, functions); don't touch pre-existing mess — flag it through the project's proposal channel instead. Exception: docs your change falsified are your mess (rule 32).
