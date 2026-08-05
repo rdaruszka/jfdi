@@ -233,11 +233,7 @@ function runHistoryPath(sandbox: Sandbox, ticketId: string, runNumber: number): 
   return path.join(sandbox.stateDir, "runs", ticketId, `run-${runNumber}`, "history.json");
 }
 
-async function readRunHistory(
-  sandbox: Sandbox,
-  ticketId: string,
-  runNumber: number,
-): Promise<string> {
+function readRunHistory(sandbox: Sandbox, ticketId: string, runNumber: number): Promise<string> {
   return fs.readFile(runHistoryPath(sandbox, ticketId, runNumber), "utf8").catch(() => "");
 }
 
