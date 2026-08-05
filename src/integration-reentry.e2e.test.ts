@@ -24,6 +24,7 @@ import * as path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { git } from "./git.js";
+import { waitFor } from "./test-helpers.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -34,8 +35,7 @@ const SCENARIO_TIMEOUT_MS = 180_000;
 /** How long one coordinator scan gets to reach the state a scenario waits for. */
 const COORDINATOR_TIMEOUT_MS = 90_000;
 const POLL_INTERVAL_MS = 200;
-/** Let the coordinator finish its last board write before the process is killed. */
-const SETTLE_MS = 400;
+const SHUTDOWN_TIMEOUT_MS = 5_000;
 
 const CARD_TEXT = "Add a feature";
 const CARD_LINE = `- [ ] ${CARD_TEXT}`;
@@ -192,19 +192,51 @@ async function runCli(sandbox: Sandbox, args: string[]): Promise<CliResult> {
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+interface CoordinatorPostCondition {
+  status: "blocked" | "done" | "merge-ready";
+  isReady: () => boolean | Promise<boolean>;
+  description: string;
+}
+
+function signalProcessGroup(child: ReturnType<typeof spawn>, signal: NodeJS.Signals): void {
+  if (child.pid === undefined) return;
+  try {
+    process.kill(-child.pid, signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
+}
+
+async function stopCoordinator(
+  child: ReturnType<typeof spawn>,
+  exited: Promise<void>,
+): Promise<void> {
+  if (child.exitCode === null && child.signalCode === null) {
+    signalProcessGroup(child, "SIGTERM");
+    try {
+      await waitFor(() => child.exitCode !== null || child.signalCode !== null, {
+        timeoutMs: SHUTDOWN_TIMEOUT_MS,
+        intervalMs: POLL_INTERVAL_MS,
+        describe: () => "the coordinator to exit after SIGTERM",
+      });
+    } catch {
+      // SIGTERM is cooperative; SIGKILL is the bounded backstop for a stuck process group.
+      signalProcessGroup(child, "SIGKILL");
+    }
+  }
+  await exited;
 }
 
 /**
  * Run `jfdi start` until the board reaches `isSettled`, then stop it. The
- * coordinator is a watcher, so nothing else ends it: the whole process group is
- * killed once the scenario's outcome is on the board (or the wait times out, in
- * which case the collected output explains the failing assertion that follows).
+ * coordinator is a watcher, so nothing else ends it: once both the board and
+ * the persisted scenario artifacts settle, SIGTERM stops the process group,
+ * with SIGKILL reserved for a coordinator that does not exit in time.
  */
 async function runCoordinatorUntil(
   sandbox: Sandbox,
   isSettled: (board: string) => boolean,
+  postCondition: CoordinatorPostCondition,
 ): Promise<string> {
   const child = spawn(process.execPath, [cliPath, "start"], {
     cwd: sandbox.project,
@@ -219,28 +251,56 @@ async function runCoordinatorUntil(
   child.stderr?.on("data", collect);
   const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
 
-  const deadline = Date.now() + COORDINATOR_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    if (isSettled(await readBoard(sandbox))) break;
-    // The coordinator can end on its own; give the board one last look.
-    if (child.exitCode !== null || child.signalCode !== null) break;
-    await sleep(POLL_INTERVAL_MS);
-  }
-  await sleep(SETTLE_MS);
-  if (child.exitCode === null && child.signalCode === null) {
-    // Negative pid: the stub sessions are in the same group and must not outlive it.
-    try {
-      process.kill(-(child.pid ?? 0), "SIGKILL");
-    } catch {
-      // Already gone between the check and the signal — nothing to stop.
+  try {
+    await waitFor(
+      async () =>
+        isSettled(await readBoard(sandbox)) || child.exitCode !== null || child.signalCode !== null,
+      {
+        timeoutMs: COORDINATOR_TIMEOUT_MS,
+        intervalMs: POLL_INTERVAL_MS,
+        describe: () => `the board post-condition; coordinator output:\n${output}`,
+      },
+    );
+    if (isSettled(await readBoard(sandbox))) {
+      await waitFor(
+        async () =>
+          (await hasPersistedTicketStatus(sandbox, postCondition.status)) &&
+          (await postCondition.isReady()),
+        {
+          timeoutMs: COORDINATOR_TIMEOUT_MS,
+          intervalMs: POLL_INTERVAL_MS,
+          describe: () => `${postCondition.description}; coordinator output:\n${output}`,
+        },
+      );
     }
+  } catch (error) {
+    output += `\n${(error as Error).message}`;
+  } finally {
+    await stopCoordinator(child, exited);
   }
-  await exited;
   return output;
 }
 
 function readBoard(sandbox: Sandbox): Promise<string> {
   return fs.readFile(sandbox.boardPath, "utf8");
+}
+
+function isMissingPath(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+async function hasPersistedTicketStatus(
+  sandbox: Sandbox,
+  status: CoordinatorPostCondition["status"],
+): Promise<boolean> {
+  try {
+    const raw = await fs.readFile(path.join(sandbox.stateDir, "state.json"), "utf8");
+    const parsed = JSON.parse(raw) as { tickets?: Record<string, { status?: unknown }> };
+    return Object.values(parsed.tickets ?? {}).some((ticket) => ticket.status === status);
+  } catch (error) {
+    if (isMissingPath(error)) return false;
+    throw error;
+  }
 }
 
 /** The cards a column holds, as raw lines. */
@@ -283,6 +343,22 @@ async function ticketIdOf(sandbox: Sandbox): Promise<string> {
   return ticketId;
 }
 
+async function savedReportCommitIfReady(sandbox: Sandbox): Promise<string | null> {
+  try {
+    const runs = await fs.readdir(path.join(sandbox.stateDir, "runs"));
+    if (runs.length !== 1 || runs[0] === undefined) return null;
+    const raw = await fs.readFile(
+      path.join(sandbox.stateDir, "runs", runs[0], "report.json"),
+      "utf8",
+    );
+    const commit = (JSON.parse(raw) as { commit?: unknown }).commit;
+    return typeof commit === "string" ? commit : null;
+  } catch (error) {
+    if (isMissingPath(error)) return null;
+    throw error;
+  }
+}
+
 async function savedReportCommit(sandbox: Sandbox, ticketId: string): Promise<string> {
   const raw = await fs.readFile(
     path.join(sandbox.stateDir, "runs", ticketId, "report.json"),
@@ -307,6 +383,11 @@ async function runToMergeReady(sandbox: Sandbox): Promise<string> {
   const output = await runCoordinatorUntil(
     sandbox,
     (board) => columnCards(board, "Ready to Merge").length === 1,
+    {
+      status: "merge-ready",
+      isReady: async () => (await savedReportCommitIfReady(sandbox)) !== null,
+      description: "one run with a readable saved report",
+    },
   );
   expect(columnCards(await readBoard(sandbox), "Ready to Merge"), output).toHaveLength(1);
   return await ticketIdOf(sandbox);
@@ -350,6 +431,11 @@ describe("re-entering integration from the begin column", () => {
       const abandoned = await runCoordinatorUntil(
         sandbox,
         (board) => columnCards(board, "Blocked").length === 1,
+        {
+          status: "blocked",
+          isReady: () => isMidMerge(sandbox, ticketId),
+          description: "the abandoned integration's MERGE_HEAD",
+        },
       );
       expect(columnCards(await readBoard(sandbox), "Blocked"), abandoned).toHaveLength(1);
       expect(await isMidMerge(sandbox, ticketId)).toBe(true);
@@ -366,6 +452,13 @@ describe("re-entering integration from the begin column", () => {
       const retried = await runCoordinatorUntil(
         sandbox,
         (board) => columnCards(board, "Done").length === 1,
+        {
+          status: "done",
+          isReady: async () =>
+            (await git(sandbox.project, "show", "main:feature.txt")) === "reconciled" &&
+            (await stagesRun(sandbox, "implementation")) === 1,
+          description: "the reconciled target and single implementation run",
+        },
       );
 
       expect(columnCards(await readBoard(sandbox), "Done"), retried).toEqual([
@@ -435,6 +528,14 @@ describe("re-entering integration from the begin column", () => {
       const output = await runCoordinatorUntil(
         sandbox,
         (board) => columnCards(board, "Ready to Merge").length === 1,
+        {
+          status: "merge-ready",
+          isReady: async () =>
+            (await savedReportCommitIfReady(sandbox)) ===
+              (await git(sandbox.project, "rev-parse", `jfdi/${ticketId}`)) &&
+            (await stagesRun(sandbox, "implementation")) === 2,
+          description: "the refreshed sign-off and second implementation run",
+        },
       );
 
       // The pipeline ran again, and nothing was merged behind the human's back.
@@ -462,6 +563,13 @@ describe("re-entering integration from the begin column", () => {
       const output = await runCoordinatorUntil(
         sandbox,
         (board) => columnCards(board, "Done").length === 1,
+        {
+          status: "done",
+          isReady: async () =>
+            (await git(sandbox.project, "branch", "--list", `jfdi/${ticketId}`)) === "" &&
+            (await stagesRun(sandbox, "implementation")) === 1,
+          description: "the removed ticket branch and single implementation run",
+        },
       );
 
       // Approval, not a rebuild: no second pipeline, and the exact commit the

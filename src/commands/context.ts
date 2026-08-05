@@ -14,7 +14,10 @@ export interface CliContext extends PipelineContext {
   stateDir: string;
 }
 
-export async function buildContext(cwd: string = process.cwd()): Promise<CliContext> {
+export async function buildContext(
+  cwd: string = process.cwd(),
+  injectedStateDir?: string,
+): Promise<CliContext> {
   let root: string;
   try {
     root = await repoRoot(cwd);
@@ -25,7 +28,7 @@ export async function buildContext(cwd: string = process.cwd()): Promise<CliCont
   }
   const config = await loadConfig(root);
   const jfdiDir = path.join(root, JFDI_DIR);
-  const stateDir = projectStateDir(root);
+  const stateDir = injectedStateDir ?? projectStateDir(root);
   const log = new EventLog(stateDir);
   return {
     repoRoot: root,

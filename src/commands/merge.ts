@@ -7,6 +7,11 @@ import { resolveTicket } from "../tickets.js";
 import { fileExists } from "../util/fsx.js";
 import { attachInlinePrinter, buildContext, type CliContext } from "./context.js";
 
+export interface MergeOptions {
+  cwd?: string;
+  stateDir?: string;
+}
+
 /**
  * The board bookkeeping the coordinator would have done for a card it dispatched:
  * an approval typed by hand has to close its own card. The card may be anywhere
@@ -30,8 +35,8 @@ async function moveTicketCard(
  * double-merging, then moves the ticket's card itself rather than leaving it
  * for a running coordinator's sweep to notice later.
  */
-export async function mergeCommand(ticketId: string): Promise<number> {
-  const context = await buildContext();
+export async function mergeCommand(ticketId: string, options: MergeOptions = {}): Promise<number> {
+  const context = await buildContext(options.cwd, options.stateDir);
   const detach = attachInlinePrinter(context.log);
   try {
     const branch = ticketBranch(ticketId);
