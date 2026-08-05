@@ -69,9 +69,9 @@ export interface BillableTokens {
  */
 export function codexCostUsd(model: string | undefined, tokens: BillableTokens): number | null {
   if (model === undefined) return null;
-  const rates = CODEX_RATES[model.toLowerCase()];
+  const rates = CODEX_RATES[model];
   if (rates === undefined) return null;
-  const uncachedInput = Math.max(0, tokens.inputTokens - tokens.cachedInputTokens);
+  const uncachedInput = tokens.inputTokens - tokens.cachedInputTokens;
   const dollars =
     (uncachedInput * rates.inputPerMillion +
       tokens.cachedInputTokens * rates.cachedInputPerMillion +
