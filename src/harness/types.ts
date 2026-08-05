@@ -51,12 +51,48 @@ export type HarnessFailure =
 
 export type HarnessFailureKind = HarnessFailure["kind"];
 
+/**
+ * Provider-neutral usage for one session: what it cost and how much it moved.
+ *
+ * Cost and tokens come from the provider — Claude reports USD directly, Codex
+ * reports only tokens and its dollars are computed from a price table. `costUsd`
+ * is null when no price is known ("unknown" is a deliberate signal to update the
+ * table, never a fabricated number); the token counts are the fallback display
+ * and the machine-record diagnostics. `durationMs` is NOT provider-reported: it
+ * is wall-clock the pipeline measures around the session (Codex reports no
+ * duration at all), so it is filled in later, not here — see the harness code.
+ */
+export interface SessionUsage {
+  /** Wall-clock around the session, measured by the pipeline. Zero until set there. */
+  durationMs: number;
+  /** Provider/table dollars for this session; null means no price is known. */
+  costUsd: number | null;
+  inputTokens: number;
+  cachedInputTokens: number;
+  /**
+   * Output tokens as the provider counts them. For Codex this already includes
+   * reasoning tokens (see codex.ts) — `reasoningTokens` is a diagnostic subset,
+   * never added on top, or every reasoning session would be double-billed.
+   */
+  outputTokens: number;
+  /** Reasoning tokens, a diagnostic subset of output. Zero when the provider reports none. */
+  reasoningTokens: number;
+  /** The provider model, for the price lookup and diagnostics. Absent when unreported. */
+  model?: string;
+  /**
+   * True when `costUsd` is a price-table estimate (Codex) rather than a figure
+   * the provider reported (Claude). A table estimate runs low — cache writes and
+   * long-context tiers are unpriced — so surfaces that show the dollars say so.
+   */
+  isCostEstimated?: boolean;
+}
+
 export type HarnessEvent =
   | { type: "text"; text: string }
   | { type: "tool"; name: string; detail?: string }
   /** The provider's identifier for this session, used to continue it later. */
   | { type: "session"; sessionId: string }
-  | { type: "result"; ok: boolean; text: string; failure?: HarnessFailure };
+  | { type: "result"; ok: boolean; text: string; failure?: HarnessFailure; usage?: SessionUsage };
 
 export interface HarnessResult {
   ok: boolean;
@@ -70,6 +106,12 @@ export interface HarnessResult {
   sessionId?: string;
   /** Set only when the provider failed, not the agent — see `HarnessFailure`. */
   failure?: HarnessFailure;
+  /**
+   * What the session cost and moved. Absent when the provider reported nothing
+   * usable (an early crash) — callers still have pipeline-measured duration to
+   * fall back on. `durationMs` here is zero until the pipeline fills it in.
+   */
+  usage?: SessionUsage;
 }
 
 export interface HarnessSession {

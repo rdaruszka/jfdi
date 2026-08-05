@@ -65,7 +65,10 @@ In detail:
    hand-resolved `git merge` produces.
 7. **Cleanup.** On success the worktree is removed and the `jfdi/<id>` branch
    deleted; the card moves to Done, checked off, and a merge entry closes the
-   ticket note's `## Comments` trail.
+   ticket note's `## Comments` trail. That entry carries the run's whole
+   [cost-and-time table](pipeline.md#cost-and-time) — every stage, the scribe,
+   and an Integration row when a conflict pulled in an integration agent — so the
+   closing comment answers "what did this ticket cost" on its own.
 
 Any failure along the way blocks instead: the card moves to Blocked, the reason
 is written into the ticket note's `## Questions`, and **the worktree and branch

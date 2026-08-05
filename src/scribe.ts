@@ -21,7 +21,9 @@
  */
 import type { StageName } from "./events.js";
 import { git } from "./git.js";
+import type { SessionUsage } from "./harness/types.js";
 import { STAGE_LABELS, statusLine } from "./transitions.js";
+import { COST_ESTIMATE_NOTE, formatCostUsd, formatDurationMs } from "./usage.js";
 
 /** What the pipeline knows about the session it is committing for. */
 export interface SessionHandoff {
@@ -36,6 +38,8 @@ export interface SessionHandoff {
   summary: string;
   /** Partial work: the session did not finish, so the subject carries a WIP marker. */
   isInterrupted: boolean;
+  /** What the session cost and took — rendered into the JFDI-Cost/JFDI-Duration trailers. */
+  usage: SessionUsage;
 }
 
 /** The mechanical context the scribe writes from, collected by the pipeline. */
@@ -169,12 +173,28 @@ export function assembleCommitMessage(
     flattenToLine(handoff.outcome),
     flattenToLine(handoff.routing),
   );
-  const trailers = `JFDI-Round: ${handoff.round}/${handoff.maxRounds}`;
+  // One all-trailer paragraph, every line trailer-shaped, so git parses the
+  // block: JFDI-Cost/JFDI-Duration join JFDI-Round here, never in the prose.
+  const trailers = [
+    `JFDI-Round: ${handoff.round}/${handoff.maxRounds}`,
+    `JFDI-Duration: ${formatDurationMs(handoff.usage.durationMs)}`,
+    `JFDI-Cost: ${trailerCost(handoff.usage)}`,
+  ].join("\n");
   const message = `${[subject, body, status, trailers].filter((part) => part !== "").join("\n\n")}\n`;
   // Belt and braces over every fragment at once: newlines survive this, so the
   // shape above is untouched and a fragment nobody scrubbed still cannot put a
   // NUL — which `git commit -m` rejects outright — into repository history.
   return scrubControlCharacters(message);
+}
+
+/**
+ * The JFDI-Cost value: dollars when priced, a token count when the price is
+ * unknown. A Codex figure is a table estimate that runs low, so it says so in a
+ * brief parenthetical; a Claude figure is provider-reported and stands alone.
+ */
+function trailerCost(usage: SessionUsage): string {
+  const cost = formatCostUsd(usage.costUsd, usage.inputTokens + usage.outputTokens);
+  return usage.isCostEstimated ? `${cost} (${COST_ESTIMATE_NOTE})` : cost;
 }
 
 /**

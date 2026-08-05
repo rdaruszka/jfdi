@@ -171,6 +171,8 @@ async function recordSignOff(ticketId: string, commit: string): Promise<void> {
     testsAdded: "",
     rounds: 1,
     commit,
+    usageRows: [],
+    elapsedMs: 0,
   });
 }
 

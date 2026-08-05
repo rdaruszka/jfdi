@@ -1,6 +1,7 @@
 import { Box, Text, useApp, useInput } from "ink";
 import { useEffect, useState } from "react";
 import type { CoordinatorState, EventLog, JfdiEvent, TicketState } from "../events.js";
+import { formatRunningTotals } from "../usage.js";
 
 /**
  * Cap on the event tail held in memory — the TUI runs for the coordinator's
@@ -25,6 +26,10 @@ const STATUS_COLOR: Record<TicketState["status"], string> = {
 function TicketRow({ ticket }: { ticket: TicketState }) {
   const stage = ticket.stage ? ` ${ticket.stage}` : "";
   const round = ticket.round > 0 ? ` r${ticket.round}` : "";
+  const cost =
+    ticket.totalAgentMs > 0
+      ? formatRunningTotals(ticket.totalCostUsd, ticket.totalAgentMs, ticket.totalTokens)
+      : "";
   return (
     <Box>
       <Box width={30}>
@@ -39,9 +44,12 @@ function TicketRow({ ticket }: { ticket: TicketState }) {
           {round}
         </Text>
       </Box>
-      <Text dimColor wrap="truncate">
-        {ticket.lastActivity}
-      </Text>
+      <Box flexGrow={1}>
+        <Text dimColor wrap="truncate">
+          {ticket.lastActivity}
+        </Text>
+      </Box>
+      {cost ? <Text dimColor>{cost}</Text> : null}
     </Box>
   );
 }

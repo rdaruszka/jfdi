@@ -23,9 +23,11 @@ import {
   worktreesDir,
 } from "./pipeline.js";
 import { formatGateCommands, loadPrompt, renderPrompt } from "./prompts.js";
+import { loadReport } from "./report.js";
 import { appendToSection, quoteAgentText } from "./ticket-note.js";
 import { ensureTicketNote, type Ticket } from "./tickets.js";
 import { BLOCKED_ROUTING, recordTransition, shortSha, statusLine } from "./transitions.js";
+import { renderUsageTable, type UsageRow } from "./usage.js";
 import { todayIsoDate } from "./util/dates.js";
 import { ensureDir, fileExists } from "./util/fsx.js";
 import { type IntegrationVerdict, readIntegrationVerdict } from "./verdicts.js";
@@ -82,9 +84,20 @@ async function runIntegrationAgent(
     },
   );
   const verdict = await readIntegrationVerdict(verdictPath);
+  // Only this session's own numbers: integration runs may be a separate process
+  // whose ledger holds no pipeline stages, so it must not overwrite the run
+  // total the pipeline's own stage_end events already set. Its cost still reaches
+  // the merged table's Integration row, from the ledger this session tallied into.
   context.log.emit("stage_end", ticket.id, {
     stage,
     verdict: verdict?.resolution ?? (result.ok ? "invalid-verdict" : "session-failed"),
+    ...(result.usage
+      ? {
+          durationMs: result.usage.durationMs,
+          costUsd: result.usage.costUsd,
+          tokens: result.usage.inputTokens + result.usage.outputTokens,
+        }
+      : {}),
   });
   return verdict;
 }
@@ -240,6 +253,7 @@ export async function integrateTicket(
       INTEGRATION_ROUND,
       `Branch already contained in \`${target}\` — closed without re-merging.`,
     );
+    context.usage.finish(ticket.id);
     await cleanup(context, worktree);
     return { status: "already-merged" };
   }
@@ -301,12 +315,35 @@ export async function integrateTicket(
       `landed on \`${target}\` as \`${shortSha(landingCommit)}\``,
     ),
   ];
+  const table = await mergedUsageTable(context, ticket.id);
+  if (table) mergedNarration.push("", table);
   if (leftoverNote) mergedNarration.push("", leftoverNote.trim());
   if (resolutionNote) mergedNarration.push("", "Conflict resolution:", resolutionNote);
   await recordTransition(notePath, "integration", INTEGRATION_ROUND, mergedNarration.join("\n"));
+  context.usage.finish(ticket.id);
   await cleanup(context, worktree);
   await deleteBranch(context.repoRoot, worktree.branch);
   return { status: "merged" };
+}
+
+/**
+ * The whole run's cost/time table for the merged comment: the pipeline's stages
+ * from the persisted report (it survives the process boundary a manual `jfdi
+ * merge` crosses), plus the Integration row from this process's own ledger when
+ * a conflict pulled in an integration agent. Null when there is nothing to show.
+ */
+async function mergedUsageTable(
+  context: PipelineContext,
+  ticketId: string,
+): Promise<string | null> {
+  const report = await loadReport(context.stateDir, ticketId);
+  const integrationRow = context.usage
+    .of(ticketId)
+    .snapshot()
+    .find((row: UsageRow) => row.label === "Integration");
+  const rows = [...(report?.usageRows ?? []), ...(integrationRow ? [integrationRow] : [])];
+  if (rows.length === 0) return null;
+  return renderUsageTable(rows, report?.elapsedMs ?? null);
 }
 
 async function cleanup(context: PipelineContext, worktree: Worktree): Promise<void> {
@@ -337,6 +374,7 @@ async function blocked(
     ].join("\n"),
   );
   context.log.emit("blocked", ticket.id, { reason: reason.split("\n")[0] });
+  context.usage.finish(ticket.id);
   return { status: "blocked", reason };
 }
 

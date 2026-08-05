@@ -70,6 +70,14 @@ export interface TicketState {
   branch: string;
   lastActivity: string;
   lastEventTs: string;
+  /**
+   * Running cost/time for this run, set (never accumulated) from the cumulative
+   * an event carries — the stream re-folds across processes, so a `+=` here would
+   * double-count. Null cost means a session so far had no known price.
+   */
+  totalCostUsd: number | null;
+  totalAgentMs: number;
+  totalTokens: number;
 }
 
 export interface CoordinatorState {
@@ -144,7 +152,26 @@ function newTicketState(id: string, ts: string): TicketState {
     branch: "",
     lastActivity: "",
     lastEventTs: ts,
+    totalCostUsd: 0,
+    totalAgentMs: 0,
+    totalTokens: 0,
   };
+}
+
+/**
+ * Set a ticket's running totals from the run-cumulative an event carries.
+ * Idempotent by construction: a re-folded event writes the same values, never
+ * adds to them. Does nothing for an event without the cumulative (`runAgentMs`
+ * gates it), so narration-only stage_ends and pre-feature streams leave totals be.
+ */
+function applyRunTotals(ticket: TicketState, data: Record<string, unknown> | undefined): void {
+  const runAgentMs = numberField(data, "runAgentMs");
+  if (runAgentMs === undefined) return;
+  ticket.totalAgentMs = runAgentMs;
+  ticket.totalTokens = numberField(data, "runTokens") ?? ticket.totalTokens;
+  // costUsd rides as a number when known and null when a session was unpriced;
+  // `numberField` yields undefined for the null, which we read as "unknown".
+  ticket.totalCostUsd = numberField(data, "runCostUsd") ?? null;
 }
 
 /**
@@ -222,9 +249,13 @@ function applyTicketEvent(
       ticket.stage = stageField(event.data) ?? ticket.stage;
       ticket.lastActivity = narrate(event, ticket);
       break;
+    case "stage_end":
+      // Narration, plus the running cost/time the stage_end carries.
+      applyRunTotals(ticket, event.data);
+      ticket.lastActivity = narrate(event, ticket);
+      break;
     // Narration only — see narrate() for what each one says.
     case "resumed":
-    case "stage_end":
     case "gate_start":
     case "gate_result":
     case "session_activity":
@@ -267,6 +298,9 @@ function applyTicketEvent(
       ticket.status = "merge-ready";
       ticket.stage = null;
       ticket.lastActivity = "awaiting approval";
+      // The complete run total, including the final commit's scribe — the last
+      // stage_end fired before that scribe ran, so this closes the gap.
+      applyRunTotals(ticket, event.data);
       break;
     case "merged":
       ticket.status = "done";

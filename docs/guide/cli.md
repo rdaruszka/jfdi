@@ -63,8 +63,9 @@ skipped over — left in place, re-checked each scan, and dispatched once its
 blockers reach Done.
 
 The TUI shows the board name and target branch, active tickets with their
-current stage and round, tickets needing attention (blocked / ready to merge /
-queued), the integration queue, settled tickets, and a tail of recent events.
+current stage and round and running cost/agent-time, tickets needing attention
+(blocked / ready to merge / queued), the integration queue, settled tickets, and
+a tail of recent events.
 When the provider under the harness is down, a banner across the top names the
 reason and when work resumes. Two keys: `q` quits (as do Ctrl-C / SIGTERM, exit
 codes 130/143), and `R` retries a paused harness immediately. When stdout is

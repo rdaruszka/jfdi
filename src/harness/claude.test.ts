@@ -40,6 +40,37 @@ describe("mapClaudeLine", () => {
     expect(mapClaudeLine(line)).toEqual([{ type: "result", ok: true, text: "all done" }]);
   });
 
+  it("carries the CLI-reported cost and tokens through verbatim on the result", () => {
+    const line = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      result: "all done",
+      total_cost_usd: 1.87,
+      usage: {
+        input_tokens: 120_000,
+        output_tokens: 8_000,
+        cache_read_input_tokens: 40_000,
+      },
+    });
+    expect(mapClaudeLine(line)).toEqual([
+      {
+        type: "result",
+        ok: true,
+        text: "all done",
+        // Claude reports dollars directly, so costUsd is its figure untouched;
+        // durationMs stays zero until the pipeline measures it.
+        usage: {
+          durationMs: 0,
+          costUsd: 1.87,
+          inputTokens: 120_000,
+          cachedInputTokens: 40_000,
+          outputTokens: 8_000,
+          reasoningTokens: 0,
+        },
+      },
+    ]);
+  });
+
   it("maps error results as not ok", () => {
     const line = JSON.stringify({
       type: "result",
