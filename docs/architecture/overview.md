@@ -171,7 +171,10 @@ this repo.
    implementation and degrade gracefully elsewhere.
 3. **Serialized integration.** Exactly one integration at a time, pulled from
    the merge-ready queue in completion order. Nothing but Integration ever
-   touches the target branch.
+   touches the target branch. When a separate `jfdi merge` process integrates,
+   it flushes `merge_start` to the shared event stream before touching git; a
+   coordinator that can observe its merged git state therefore also observes
+   the in-flight record and leaves that process to finish the card move.
 4. **Atomic board writes.** The board is co-edited by Obsidian. Every write is a
    read → modify → verify-unchanged → temp-file-rename cycle, retried on
    conflict; edits are surgical (move one card line), never wholesale rewrites.
