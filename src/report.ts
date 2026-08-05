@@ -20,42 +20,92 @@ export async function saveReport(
 
 /**
  * report.json is our own file, but a crashed write or a hand edit can leave
- * anything there — and callers dereference `decisions`/`observations` without
- * guarding. Check the core shape before handing it over. The cost/time fields
- * are checked leniently: a report written before this feature has none, and a
- * merge should still proceed reading them as "no table" rather than refusing.
+ * anything there. Invalid JSON or a missing core field is returned as explicit
+ * corruption so every caller can block without destroying the evidence. The
+ * cost/time fields are checked leniently: a report written before this feature
+ * has none, and a merge should still proceed reading them as "no table" rather
+ * than refusing.
  */
-function hasCoreReportShape(record: Record<string, unknown>): boolean {
-  return (
-    typeof record.summary === "string" &&
-    Array.isArray(record.decisions) &&
-    Array.isArray(record.observations) &&
-    typeof record.testsAdded === "string" &&
-    typeof record.rounds === "number" &&
-    typeof record.commit === "string"
-  );
+function reportShapeError(parsed: unknown): string | null {
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+    return "invalid report shape: expected a JSON object";
+  const record = parsed as Record<string, unknown>;
+  const expectedFields: Array<[string, "string" | "number" | "array"]> = [
+    ["summary", "string"],
+    ["decisions", "array"],
+    ["observations", "array"],
+    ["testsAdded", "string"],
+    ["rounds", "number"],
+    ["commit", "string"],
+  ];
+  for (const [field, expected] of expectedFields) {
+    const value = record[field];
+    const isExpected = expected === "array" ? Array.isArray(value) : typeof value === expected;
+    if (!isExpected) {
+      const expectedDescription = expected === "array" ? "an array" : `a ${expected}`;
+      return `invalid report shape: expected ${field} to be ${expectedDescription}`;
+    }
+  }
+  return null;
 }
 
-export async function loadReport(stateDir: string, ticketId: string): Promise<RunReport | null> {
-  const content = await readIfExists(path.join(runsDir(stateDir, ticketId), "report.json"));
+export interface CorruptReport {
+  kind: "corrupt";
+  path: string;
+  error: string;
+}
+
+export function isCorruptReport(report: RunReport | CorruptReport): report is CorruptReport {
+  return "kind" in report && report.kind === "corrupt";
+}
+
+export async function loadReport(
+  stateDir: string,
+  ticketId: string,
+): Promise<RunReport | CorruptReport | null> {
+  const reportPath = path.join(runsDir(stateDir, ticketId), "report.json");
+  const content = await readIfExists(reportPath);
   if (content === null) return null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(content);
-  } catch {
-    // A truncated or hand-mangled report is treated as absent: the caller
-    // re-runs the pipeline rather than merging on a half-read record.
-    return null;
+  } catch (error) {
+    return {
+      kind: "corrupt",
+      path: reportPath,
+      error: `could not parse JSON: ${(error as Error).message}`,
+    };
   }
-  if (typeof parsed !== "object" || parsed === null) return null;
+  const shapeError = reportShapeError(parsed);
+  if (shapeError !== null) return { kind: "corrupt", path: reportPath, error: shapeError };
   const record = parsed as Record<string, unknown>;
-  if (!hasCoreReportShape(record)) return null;
   // Backfill the cost/time fields so an older report loads as one without a table.
   return {
     ...(record as unknown as RunReport),
     usageRows: Array.isArray(record.usageRows) ? (record.usageRows as RunReport["usageRows"]) : [],
     elapsedMs: typeof record.elapsedMs === "number" ? record.elapsedMs : 0,
   };
+}
+
+/** The one unblock recipe every entry point gives for JFDI-owned report corruption. */
+export function corruptReportMessage(ticketId: string, report: CorruptReport): string {
+  return [
+    `Run report \`${report.path}\` is corrupt: ${report.error}.`,
+    `To unblock, fix or restore \`runs/${ticketId}/report.json\` to keep the existing pass intact, or delete the file to deliberately request a full re-run.`,
+  ].join("\n\n");
+}
+
+/** Record report corruption without touching the report itself. */
+export async function recordCorruptReport(
+  context: PipelineContext,
+  ticketId: string,
+  notePath: string,
+  report: CorruptReport,
+): Promise<string> {
+  const message = corruptReportMessage(ticketId, report);
+  await recordTransition(notePath, "report", 0, message);
+  context.log.emit("blocked", ticketId, { reason: message.split("\n")[0] });
+  return message;
 }
 
 /**

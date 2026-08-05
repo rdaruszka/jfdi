@@ -49,6 +49,30 @@ afterEach(async () => {
 });
 
 describe("integrateTicket", () => {
+  it("refuses a corrupt report before integration touches git or the evidence", async () => {
+    const context = fixture.context(passingHandler("corrupt.txt"));
+    const ticket = await resolveTicket("Corrupt report", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    if (outcome.status !== "passed") throw new Error("pipeline should pass");
+    const targetHead = await revParse(fixture.repo, "main");
+    const reportPath = path.join(fixture.stateDir, "runs", ticket.id, "report.json");
+    const corruptContent = '{"summary":';
+    await fs.writeFile(reportPath, corruptContent);
+
+    const result = await integrateTicket(context, ticket, outcome.worktree);
+
+    expect(result.status).toBe("blocked");
+    if (result.status !== "blocked") return;
+    expect(result.reason).toContain(reportPath);
+    expect(result.reason).toContain("fix or restore");
+    expect(result.reason).toContain("delete the file");
+    expect(await revParse(fixture.repo, "main")).toBe(targetHead);
+    expect(await fs.readFile(reportPath, "utf8")).toBe(corruptContent);
+    await expect(
+      fs.access(path.join(fixture.stateDir, "runs", ticket.id, "integration")),
+    ).rejects.toThrow();
+  });
+
   it("clean merge → merge commit on the target, cleanup, closing comment", async () => {
     const context = fixture.context(passingHandler("feat.txt"));
     const ticket = await resolveTicket("Ship feature", fixture.ticketsDir);

@@ -3,7 +3,8 @@ import { findTicketCard, moveCardSafe } from "../cards.js";
 import { branchExists, ticketBranch } from "../git.js";
 import { integrateTicket } from "../integrate.js";
 import { worktreesDir } from "../pipeline.js";
-import { resolveTicket } from "../tickets.js";
+import { isCorruptReport, loadReport, recordCorruptReport } from "../report.js";
+import { ensureTicketNote, resolveTicket } from "../tickets.js";
 import { fileExists } from "../util/fsx.js";
 import { attachInlinePrinter, buildContext, type CliContext } from "./context.js";
 
@@ -39,11 +40,6 @@ export async function mergeCommand(ticketId: string, options: MergeOptions = {})
   const context = await buildContext(options.cwd, options.stateDir);
   const detach = attachInlinePrinter(context.log);
   try {
-    const branch = ticketBranch(ticketId);
-    if (!(await branchExists(context.repoRoot, branch))) {
-      console.error(`no branch ${branch} — nothing to merge for ticket "${ticketId}"`);
-      return 1;
-    }
     const ticketsDir = path.join(context.repoRoot, context.config.ticketsDir);
     const notePath = path.join(ticketsDir, `${ticketId}.md`);
     const ticket = (await fileExists(notePath))
@@ -56,6 +52,20 @@ export async function mergeCommand(ticketId: string, options: MergeOptions = {})
           links: [],
           mode: "default" as const,
         };
+    const savedReport = await loadReport(context.stateDir, ticketId);
+    if (savedReport && isCorruptReport(savedReport)) {
+      const ensuredNotePath = await ensureTicketNote(ticket, ticketsDir);
+      const reason = await recordCorruptReport(context, ticketId, ensuredNotePath, savedReport);
+      await moveTicketCard(context, ticketId, context.config.board.columns.blocked, false);
+      console.error(`Integration blocked: ${reason}`);
+      return 2;
+    }
+
+    const branch = ticketBranch(ticketId);
+    if (!(await branchExists(context.repoRoot, branch))) {
+      console.error(`no branch ${branch} — nothing to merge for ticket "${ticketId}"`);
+      return 1;
+    }
 
     const worktreePath = path.join(worktreesDir(context.jfdiDir), ticketId);
     const outcome = await integrateTicket(context, ticket, { path: worktreePath, branch });

@@ -15,10 +15,10 @@ import {
   revParse,
   type Worktree,
 } from "./git.js";
-import type { PipelineContext } from "./pipeline.js";
+import type { PipelineContext, RunReport } from "./pipeline.js";
 import { runHeldSession, runQaStage, runsDir, sessionSelectionFields } from "./pipeline.js";
 import { formatGateCommands, loadPrompt, renderPrompt } from "./prompts.js";
-import { loadReport } from "./report.js";
+import { isCorruptReport, loadReport, recordCorruptReport } from "./report.js";
 import { appendToSection, quoteAgentText } from "./ticket-note.js";
 import { ensureTicketNote, type Ticket } from "./tickets.js";
 import { BLOCKED_ROUTING, recordTransition, shortSha, statusLine } from "./transitions.js";
@@ -306,11 +306,16 @@ export async function integrateTicket(
 ): Promise<IntegrateOutcome> {
   const target = context.config.integration.target_branch;
   const runDir = path.join(runsDir(context.stateDir, ticket.id), "integration");
-  await ensureDir(runDir);
   const notePath = await ensureTicketNote(
     ticket,
     path.join(context.repoRoot, context.config.ticketsDir),
   );
+  const savedReport = await loadReport(context.stateDir, ticket.id);
+  if (savedReport && isCorruptReport(savedReport)) {
+    const reason = await recordCorruptReport(context, ticket.id, notePath, savedReport);
+    return { status: "blocked", reason };
+  }
+  await ensureDir(runDir);
   const stale = await clearStaleMerge(worktree);
   if (stale.status === "blocked") return blocked(context, ticket, notePath, stale.reason);
   context.log.emit("merge_start", ticket.id, stale.note ? { note: stale.note } : undefined);
@@ -383,12 +388,18 @@ export async function integrateTicket(
     return blocked(context, ticket, notePath, `merge failed: ${(error as Error).message}`);
   }
   context.log.emit("merged", ticket.id);
-  await recordMergedTransition(context, ticket, notePath, {
-    target,
-    landingCommit,
-    leftoverNote,
-    resolutionNote,
-  });
+  await recordMergedTransition(
+    context,
+    ticket,
+    notePath,
+    {
+      target,
+      landingCommit,
+      leftoverNote,
+      resolutionNote,
+    },
+    savedReport,
+  );
   context.usage.finish(ticket.id);
   await cleanup(context, worktree);
   await deleteBranch(context.repoRoot, worktree.branch);
@@ -401,11 +412,11 @@ export async function integrateTicket(
  * merge` crosses), plus the Integration row from this process's own ledger when
  * a conflict pulled in an integration agent. Null when there is nothing to show.
  */
-async function mergedUsageTable(
+function mergedUsageTable(
   context: PipelineContext,
   ticketId: string,
-): Promise<string | null> {
-  const report = await loadReport(context.stateDir, ticketId);
+  report: RunReport | null,
+): string | null {
   const integrationRow = context.usage
     .of(ticketId)
     .snapshot()
@@ -428,6 +439,7 @@ async function recordMergedTransition(
   ticket: Ticket,
   notePath: string,
   details: MergedTransitionDetails,
+  report: RunReport | null,
 ): Promise<void> {
   // The whole body is blockquoted as one comment, so the Integration agent's
   // resolution notes ride in raw rather than pre-quoted like a standalone append.
@@ -438,7 +450,7 @@ async function recordMergedTransition(
       `landed on \`${details.target}\` as \`${shortSha(details.landingCommit)}\``,
     ),
   ];
-  const table = await mergedUsageTable(context, ticket.id);
+  const table = mergedUsageTable(context, ticket.id, report);
   if (table) mergedNarration.push("", table);
   if (details.leftoverNote) mergedNarration.push("", details.leftoverNote.trim());
   if (details.resolutionNote)

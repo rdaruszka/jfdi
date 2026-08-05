@@ -9,6 +9,7 @@ import {
   sessionKindOf,
   writeVerdict,
 } from "../test-helpers.js";
+import { ticketIdFromCard } from "../util/ids.js";
 import { runTicketInline } from "./run.js";
 
 let fixture: Fixture;
@@ -75,6 +76,28 @@ afterEach(async () => {
 });
 
 describe("jfdi run — board card", () => {
+  it("refuses a corrupt report, preserves it, and moves the card to Blocked", async () => {
+    await writeBoard(BOARD);
+    const ticketId = ticketIdFromCard(CARD);
+    const reportPath = path.join(fixture.stateDir, "runs", ticketId, "report.json");
+    await fs.mkdir(path.dirname(reportPath), { recursive: true });
+    const corruptContent = '{"summary":';
+    await fs.writeFile(reportPath, corruptContent);
+    const handler = vi.fn(passingHandler());
+
+    expect(await runTicketInline(fixture.context(handler), CARD)).toBe(2);
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(findColumn(await readBoard(), "Blocked")?.cards.map((card) => card.text)).toEqual([
+      CARD,
+    ]);
+    expect(await fs.readFile(reportPath, "utf8")).toBe(corruptContent);
+    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticketId}.md`), "utf8");
+    expect(note).toContain(reportPath);
+    expect(note).toContain("fix or restore");
+    expect(note).toContain("delete the file");
+  });
+
   it("on-approval: moves the matching card from the begin column to Ready to Merge", async () => {
     await writeBoard(BOARD);
     fixture.config.integration.mode = "on-approval";

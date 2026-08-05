@@ -114,6 +114,14 @@ Three routes, all equivalent:
    to Done or Blocked depending on where you put it — so derived state never
    keeps advertising an approval question the board has already answered.
 
+A missing `report.json` remains normal and allows a fresh run. A report that
+exists but is invalid JSON or lacks its required fields is different: the
+coordinator moves the card to Blocked, and `jfdi run` / `jfdi merge` refuse to
+proceed. The ticket comment names the file and parse/shape error, and gives both
+recovery choices: fix or restore it to preserve the existing pass, or delete it
+to deliberately request a full re-run. JFDI leaves the corrupt file untouched
+as evidence and as the tripwire if the card is moved back without a repair.
+
 One caveat on `jfdi merge`: it requires the `jfdi/<id>` branch to still exist. If
 you hand-merged and already deleted the branch, let the coordinator's next board
 scan close the card (or move it to Done yourself).

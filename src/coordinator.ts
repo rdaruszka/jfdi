@@ -19,17 +19,30 @@ import { boardPath, moveCardSafe } from "./cards.js";
 import { type IntegrationRecord, integrationRecords } from "./events.js";
 import { branchExists, isAncestor, revParse, ticketBranch } from "./git.js";
 import { IntegrationQueue, integrateTicket } from "./integrate.js";
-import type { PipelineContext } from "./pipeline.js";
+import type { PipelineContext, RunReport } from "./pipeline.js";
 import { runPipeline, worktreesDir } from "./pipeline.js";
-import { loadReport, recordMergeReady, recordObservations, saveReport } from "./report.js";
+import {
+  isCorruptReport,
+  loadReport,
+  recordCorruptReport,
+  recordMergeReady,
+  recordObservations,
+  saveReport,
+} from "./report.js";
 import { ensureJfdiGitignore } from "./scaffold.js";
-import { resolveTicket, type Ticket } from "./tickets.js";
+import { ensureTicketNote, resolveTicket, type Ticket } from "./tickets.js";
 import { fileExists, readIfExists } from "./util/fsx.js";
 import { ticketIdFromCard } from "./util/ids.js";
 
 export interface CoordinatorOptions {
   /** Polling fallback interval for board changes (ms). */
   pollMs?: number;
+}
+
+interface ReadyToMergeReport {
+  card: Card;
+  id: string;
+  report: RunReport | null;
 }
 
 /** How often the mtime poll runs when `fs.watch` misses (or is unavailable). */
@@ -214,6 +227,32 @@ export class Coordinator {
     if (!this.context.pause.isPaused()) await this.dispatchReadyCards(board);
   }
 
+  /** Block corrupt reports before the merge-detection sweep considers a card. */
+  private async preflightReadyToMergeCards(cards: Card[]): Promise<ReadyToMergeReport[]> {
+    const readyReports: ReadyToMergeReport[] = [];
+    for (const card of cards) {
+      const id = ticketIdFromCard(card.text);
+      if (this.active.has(id)) continue;
+      const report = await loadReport(this.context.stateDir, id);
+      if (report && isCorruptReport(report)) {
+        const ticketsDir = path.join(this.context.repoRoot, this.context.config.ticketsDir);
+        const ticket = await resolveTicket(card.text, ticketsDir);
+        const notePath = await ensureTicketNote(ticket, ticketsDir);
+        await recordCorruptReport(this.context, id, notePath, report);
+        await moveCardSafe(
+          this.context,
+          card,
+          this.context.config.board.columns.readyToMerge,
+          this.context.config.board.columns.blocked,
+          false,
+        );
+        continue;
+      }
+      readyReports.push({ card, id, report });
+    }
+    return readyReports;
+  }
+
   /**
    * Close Ready-to-Merge cards whose work already landed, without merging
    * again. The obvious evidence is perishable — branch deletion is the normal
@@ -229,11 +268,10 @@ export class Coordinator {
   private async closeMergedCards(board: Board): Promise<void> {
     const columns = this.context.config.board.columns;
     const cards = findColumn(board, columns.readyToMerge)?.cards ?? [];
+    const readyReports = await this.preflightReadyToMergeCards(cards);
     // Read the event stream at most once per scan, and only once a card needs it.
     let records: Map<string, IntegrationRecord> | null = null;
-    for (const card of cards) {
-      const id = ticketIdFromCard(card.text);
-      if (this.active.has(id)) continue;
+    for (const { card, id, report } of readyReports) {
       if (records === null) records = await integrationRecords(this.context.stateDir);
       const record = records.get(id);
       // Mid-integration in another process (`jfdi merge` in a second
@@ -248,7 +286,7 @@ export class Coordinator {
         // run's, and a re-dispatched ticket's fresh branch must not close on it.
         hasMerged = await this.isInTarget(branch);
       } else {
-        hasMerged = record?.phase === "merged" || (await this.isSignedOffCommitInTarget(id));
+        hasMerged = record?.phase === "merged" || (await this.isSignedOffCommitInTarget(report));
       }
       if (!hasMerged) continue;
       // A merge already narrated on the stream is folded into this instance's
@@ -264,20 +302,8 @@ export class Coordinator {
     }
   }
 
-  /**
-   * Whether the commit a run's reviews signed off on is already in the target.
-   * This is the evidence a hand-merge leaves once the branch is gone: nothing
-   * records the merge, but `report.json` still names the tip, and any merge —
-   * a human's or our own — carries that very commit into the target as a
-   * parent. Our own integrations also write the `merged` event, so this check
-   * only has to catch the ones that happened outside the tool. A sha git can no
-   * longer resolve (the branch was deleted unmerged) is not contained in
-   * anything.
-   */
-  private async isSignedOffCommitInTarget(ticketId: string): Promise<boolean> {
-    const report = await loadReport(this.context.stateDir, ticketId);
-    if (report === null) return false;
-    return this.isInTarget(report.commit);
+  private async isSignedOffCommitInTarget(report: RunReport | null): Promise<boolean> {
+    return report !== null && (await this.isInTarget(report.commit));
   }
 
   private isInTarget(commitish: string): Promise<boolean> {
@@ -441,6 +467,14 @@ export class Coordinator {
     try {
       const ticketsDir = path.join(this.context.repoRoot, this.context.config.ticketsDir);
       const ticket = await resolveTicket(card.text, ticketsDir);
+      const savedReport = await loadReport(this.context.stateDir, id);
+      if (savedReport && isCorruptReport(savedReport)) {
+        const notePath = await ensureTicketNote(ticket, ticketsDir);
+        await recordCorruptReport(this.context, id, notePath, savedReport);
+        const fromColumn = isAlreadyInProgress ? columns.inProgress : columns.begin;
+        await moveCardSafe(this.context, card, fromColumn, columns.blocked, false);
+        return;
+      }
       if (!isAlreadyInProgress)
         await moveCardSafe(this.context, card, columns.begin, columns.inProgress, false);
 
@@ -449,7 +483,6 @@ export class Coordinator {
       // a commit, so the shortcut holds only while the branch still points at
       // the commit the report signed off on — if it moved, the report no
       // longer describes what would land, and the pipeline runs instead.
-      const savedReport = await loadReport(this.context.stateDir, id);
       const branch = ticketBranch(id);
       if (
         savedReport &&
