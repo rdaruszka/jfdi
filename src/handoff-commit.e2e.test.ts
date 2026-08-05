@@ -446,6 +446,52 @@ describe("handoff commit messages, as git reads them", () => {
   );
 
   it(
+    "lands a scribe first line past 72 characters verbatim as the commit subject",
+    async () => {
+      const sandbox = await makeSandbox();
+      await initProject(sandbox);
+
+      // A realistic first line just over git's conventional length — not a
+      // degenerate run of one character — with a real body under it. Nothing in
+      // the sink (git) needs it shorter; the 72-char figure is a steer, so the
+      // subject position is where it belongs, uncut.
+      const firstLine =
+        "Rework the object-name resolution so every callsite shares one canonical path";
+      expect(firstLine.length).toBeGreaterThan(72);
+      const body = "The old duplicate lookups drifted out of sync; this collapses them.";
+      const promptDump = path.join(sandbox.root, "scribe-prompt.txt");
+      const scribeFile = await scribeAnswer(sandbox, "overlong", `${firstLine}\n\n${body}`);
+
+      const run = await runCli(sandbox, ["run", "Collapse object-name lookups"], {
+        scribeFile,
+        scribePromptDump: promptDump,
+      });
+      expect(run.code, run.stderr).toBe(0);
+      const ticketId = ticketIdOf(run);
+      const branch = `jfdi/${ticketId}`;
+
+      // git itself reports the whole first line as the subject — no truncation,
+      // no padding, and no demotion to a pipeline-authored subject.
+      const subject = await git(sandbox.project, "log", "-1", "--format=%s", branch);
+      expect(subject).toBe(`${ticketId}: ${firstLine}`);
+      expect(subject).not.toContain("Implementation round");
+
+      // The first line is the subject, not a body paragraph, and the real body
+      // still follows it.
+      const message = await git(sandbox.project, "log", "-1", "--format=%B", branch);
+      expect(message).not.toContain(`\n\n${firstLine}`);
+      expect(message).toContain(body);
+      expect(await trailerValue(sandbox.project, branch, "JFDI-Round")).toBe("1/3");
+
+      // The 72-char figure survives only where the ticket allows it: as guidance
+      // in the scribe's prompt, never as a threshold the code enforces.
+      const prompt = await fs.readFile(promptDump, "utf8");
+      expect(prompt).toContain("72 characters or fewer");
+    },
+    PIPELINE_TIMEOUT_MS,
+  );
+
+  it(
     "builds the scribe's prompt from the diff, the ticket and the stage's summary",
     async () => {
       const sandbox = await makeSandbox();
