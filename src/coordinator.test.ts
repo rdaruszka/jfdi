@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { findColumn, moveCard, parseBoard } from "./board.js";
 import { Coordinator } from "./coordinator.js";
-import { EventLog, type JfdiEvent, loadState } from "./events.js";
+import { EventLog, integrationRecords, type JfdiEvent, loadState } from "./events.js";
 import { branchExists, deleteBranch, git, isAncestor, revParse } from "./git.js";
 import { integrateTicket } from "./integrate.js";
 import { worktreesDir } from "./pipeline.js";
@@ -516,6 +516,57 @@ describe("Coordinator", () => {
 
     expect(findColumn(await readBoard(), "Ready to Merge")?.cards).toHaveLength(0);
     expect(await recordedMergedEvents(alphaId)).toHaveLength(1);
+  });
+
+  it("makes the in-flight record durable on disk before git exposes the landed merge", async () => {
+    // QA angle on the same guarantee, independent of the sweep helper above: a
+    // REAL persistent EventLog (not a buffering double), instrumented to
+    // snapshot at every durability barrier what a foreign process reading disk
+    // would see — the on-disk integration record (via the same
+    // `integrationRecords` the coordinator uses) and whether git has yet carried
+    // the signed-off commit into the target. The fix's promise, and what
+    // overview.md now documents, is that no barrier lets git expose the merge
+    // before the in-flight record is durable. Against pre-fix code integrate
+    // never flushes, so no barrier is observed and the first assertion fails.
+    const stages: string[] = [];
+    const pipelineCoordinator = await runToMergeReady(stages);
+    pipelineCoordinator.stop();
+
+    const alphaId = ticketIdFromCard(ALPHA_TEXT);
+    const ticket = await resolveTicket(ALPHA_TEXT, fixture.ticketsDir);
+    const report = await loadReport(fixture.stateDir, alphaId);
+    if (!report) throw new Error("pipeline should save a report before integration");
+
+    const barriers: { recordedPhase: string | undefined; mergeVisibleInTarget: boolean }[] = [];
+    class BarrierObservingEventLog extends EventLog {
+      override async flush(): Promise<void> {
+        await super.flush();
+        const records = await integrationRecords(fixture.stateDir);
+        barriers.push({
+          recordedPhase: records.get(alphaId)?.phase,
+          mergeVisibleInTarget: await isAncestor(fixture.repo, report.commit, "main"),
+        });
+      }
+    }
+
+    const context = fixture.context(autoHandler());
+    context.log = new BarrierObservingEventLog(fixture.stateDir);
+    const outcome = await integrateTicket(context, ticket, {
+      path: path.join(worktreesDir(fixture.jfdiDir), alphaId),
+      branch: `jfdi/${alphaId}`,
+    });
+
+    expect(outcome.status).toBe("merged");
+    expect(await isAncestor(fixture.repo, report.commit, "main")).toBe(true);
+    // A durability barrier ran, and the first one made the in-flight record
+    // durable while git still hid the merge — the exact ordering the fix adds.
+    expect(barriers[0]?.recordedPhase).toBe("in-flight");
+    expect(barriers[0]?.mergeVisibleInTarget).toBe(false);
+    // No barrier ever exposed the merge in git without a durable record already
+    // present, so a sweep that can see the landed state can always see the record.
+    for (const barrier of barriers) {
+      if (barrier.mergeVisibleInTarget) expect(barrier.recordedPhase).toBeDefined();
+    }
   });
 
   it("closes a Ready-to-Merge card the human merged by hand and tidied up", async () => {
