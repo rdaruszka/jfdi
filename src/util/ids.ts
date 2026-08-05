@@ -5,8 +5,7 @@ export function slugify(text: string): string {
     .toLowerCase()
     .replace(/\[\[|\]\]/g, " ")
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .replace(/-{2,}/g, "-");
+    .replace(/^-+|-+$/g, "");
 }
 
 const WIKILINK_RE = /\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/;
