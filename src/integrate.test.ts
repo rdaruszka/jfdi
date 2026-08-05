@@ -556,6 +556,20 @@ describe("integrateTicket", () => {
     expect(await git(fixture.repo, "rev-parse", "HEAD")).toBe(headBefore);
   });
 
+  it("closes an already-merged branch after the human removed its worktree", async () => {
+    const context = fixture.context(passingHandler("human-cleanup.txt"));
+    const ticket = await resolveTicket("Human cleanup", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    if (outcome.status !== "passed") throw new Error("pipeline should pass");
+
+    await git(fixture.repo, "merge", "--ff-only", outcome.worktree.branch);
+    await git(fixture.repo, "worktree", "remove", "--force", outcome.worktree.path);
+
+    const result = await integrateTicket(context, ticket, outcome.worktree);
+
+    expect(result.status).toBe("already-merged");
+  });
+
   it("checkpoints a dirty worktree after a hand merge before cleaning it up", async () => {
     const context = fixture.context(passingHandler("hand-merged.txt"));
     const ticket = await resolveTicket("Dirty hand merge", fixture.ticketsDir);

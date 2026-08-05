@@ -258,15 +258,17 @@ export async function integrateTicket(
   // fall through and land through the normal merge path instead of being lost.
   let leftoverNote = "";
   if (await isAncestor(context.repoRoot, worktree.branch, target)) {
-    try {
-      leftoverNote = await captureLeftovers(context, ticket, worktree);
-    } catch (error) {
-      return blocked(
-        context,
-        ticket,
-        notePath,
-        `checkpointing uncommitted changes before cleanup failed: ${(error as Error).message}`,
-      );
+    if (await fileExists(worktree.path)) {
+      try {
+        leftoverNote = await captureLeftovers(context, ticket, worktree);
+      } catch (error) {
+        return blocked(
+          context,
+          ticket,
+          notePath,
+          `checkpointing uncommitted changes before cleanup failed: ${(error as Error).message}`,
+        );
+      }
     }
     if (!leftoverNote) {
       context.log.emit("merged", ticket.id, { note: "already contained in target" });
