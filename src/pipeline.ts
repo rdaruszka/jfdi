@@ -1455,14 +1455,13 @@ export async function runPipeline(
         source: result.step.source,
         feedback: result.step.feedback,
       });
-      await saveFeedbackHistory(runDirs.current, history);
+      await saveFeedbackHistory(runDirs.current, [...priorHistory, ...history]);
       continue;
     }
     if (result.step.kind === "blocked") {
       // A blocked run concluded nothing: the session saw the inherited feedback
-      // but stopped on a question instead of answering it. So the *inherited*
-      // items stay unanswered business too, and are carried forward — unlike a
-      // retry, where the next round re-reads them from memory anyway.
+      // but stopped on a question instead of answering it. So the inherited
+      // items stay unanswered business too and are carried forward.
       await saveFeedbackHistory(runDirs.current, [...priorHistory, ...history]);
       return { status: "blocked", reason: result.step.reason };
     }

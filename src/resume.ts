@@ -122,6 +122,15 @@ function historyPath(runDir: string): string {
  */
 const MAX_CARRIED_FEEDBACK_ITEMS = 10;
 
+interface DroppedFeedbackMarker {
+  type: "dropped-feedback";
+  /** The run that produced the feedback removed by the cap. */
+  run: number;
+  droppedItemCount: number;
+}
+
+type FeedbackHistoryEntry = FeedbackItem | DroppedFeedbackMarker;
+
 /**
  * Persist a run's unfinished feedback — the rounds a later dispatch still has
  * to answer. The in-memory history dies with the process, so it is written as
@@ -129,8 +138,21 @@ const MAX_CARRIED_FEEDBACK_ITEMS = 10;
  * earlier rounds were addressed. Round verdicts stay on disk either way.
  */
 export async function saveFeedbackHistory(runDir: string, history: FeedbackItem[]): Promise<void> {
+  const dropped = history.slice(0, -MAX_CARRIED_FEEDBACK_ITEMS);
   const kept = history.slice(-MAX_CARRIED_FEEDBACK_ITEMS);
-  await atomicWrite(historyPath(runDir), `${JSON.stringify(kept, null, 2)}\n`);
+  const droppedCountsByRun = new Map<number, number>();
+  for (const item of dropped) {
+    droppedCountsByRun.set(item.run, (droppedCountsByRun.get(item.run) ?? 0) + 1);
+  }
+  const markers: DroppedFeedbackMarker[] = [...droppedCountsByRun].map(
+    ([run, droppedItemCount]) => ({
+      type: "dropped-feedback",
+      run,
+      droppedItemCount,
+    }),
+  );
+  const entries: FeedbackHistoryEntry[] = [...markers, ...kept];
+  await atomicWrite(historyPath(runDir), `${JSON.stringify(entries, null, 2)}\n`);
 }
 
 /**
@@ -162,6 +184,16 @@ function isFeedbackItem(value: unknown): value is FeedbackItem {
   );
 }
 
+function isDroppedFeedbackMarker(value: unknown): value is DroppedFeedbackMarker {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    record.type === "dropped-feedback" &&
+    typeof record.run === "number" &&
+    typeof record.droppedItemCount === "number"
+  );
+}
+
 /**
  * Read a previous run's feedback rounds. A missing, truncated or mangled file
  * reads as no history: the resumed run loses the *why* but still runs, which
@@ -177,6 +209,7 @@ export async function loadFeedbackHistory(runDir: string): Promise<FeedbackItem[
     return [];
   }
   if (!Array.isArray(parsed)) return [];
-  const items: unknown[] = parsed;
-  return items.every(isFeedbackItem) ? items : [];
+  const entries: unknown[] = parsed;
+  if (!entries.every((entry) => isFeedbackItem(entry) || isDroppedFeedbackMarker(entry))) return [];
+  return entries.filter(isFeedbackItem);
 }
