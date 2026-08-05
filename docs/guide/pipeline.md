@@ -362,15 +362,16 @@ A run ends in one of two states:
 
 - **Passed** — every stage signed off on the final commit and the gate is green.
   What happens next depends on `integration.mode`: `auto` merges immediately;
-  `on-approval` moves the card to **Ready to Merge** and writes the final report
-  (summary, rounds, commit, QA tests added, autonomous decisions) into the ticket
-  note for your review. See [Integration & Merging](integration.md).
+  `on-approval` moves the card to **Ready to Merge** and appends a ready-to-merge
+  comment (summary, rounds, commit, QA tests added, and the `jfdi merge` approval
+  line) to the ticket note for your review — the autonomous decisions are already
+  their own decision comments above it. See [Integration & Merging](integration.md).
 - **Blocked** — an escalation, exhausted rounds, or a failed integration. The card
   moves to **Blocked**, the reason is in the ticket note, and the worktree is kept
   for inspection. `jfdi run` exits with code 2 in this case.
 
 Either way, the complete paper trail is on disk: the ticket note holds the
-human-readable record (`## Comments`, `## Questions`, `## Report`), and the state
+human-readable record (`## Comments`, `## Questions`), and the state
 directory holds the machine record — per-round verdicts and raw session logs under
 `runs/<ticket-id>/run-<k>/`, viewable with `jfdi logs <ticket-id>`. See
 [Events & State](../architecture/events-and-state.md) for the full layout.

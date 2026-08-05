@@ -3,7 +3,6 @@ import { findTicketCard, moveCardSafe } from "../cards.js";
 import { branchExists, ticketBranch } from "../git.js";
 import { integrateTicket } from "../integrate.js";
 import { worktreesDir } from "../pipeline.js";
-import { loadReport } from "../report.js";
 import { resolveTicket } from "../tickets.js";
 import { fileExists } from "../util/fsx.js";
 import { attachInlinePrinter, buildContext, type CliContext } from "./context.js";
@@ -54,8 +53,7 @@ export async function mergeCommand(ticketId: string): Promise<number> {
         };
 
     const worktreePath = path.join(worktreesDir(context.jfdiDir), ticketId);
-    const report = await loadReport(context.stateDir, ticketId);
-    const outcome = await integrateTicket(context, ticket, { path: worktreePath, branch }, report);
+    const outcome = await integrateTicket(context, ticket, { path: worktreePath, branch });
     const columns = context.config.board.columns;
     if (outcome.status === "blocked") {
       await moveTicketCard(context, ticketId, columns.blocked, false);

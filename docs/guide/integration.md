@@ -64,8 +64,8 @@ In detail:
    that merge commit rather than as commits of their own — the same shape a
    hand-resolved `git merge` produces.
 7. **Cleanup.** On success the worktree is removed and the `jfdi/<id>` branch
-   deleted; the card moves to Done, checked off, and a dated `## Report` entry is
-   appended to the ticket note.
+   deleted; the card moves to Done, checked off, and a merge entry closes the
+   ticket note's `## Comments` trail.
 
 Any failure along the way blocks instead: the card moves to Blocked, the reason
 is written into the ticket note's `## Questions`, and **the worktree and branch

@@ -19,7 +19,7 @@ import { boardPath, moveCardSafe } from "./cards.js";
 import { type IntegrationRecord, integrationRecords } from "./events.js";
 import { branchExists, isAncestor, revParse, ticketBranch } from "./git.js";
 import { IntegrationQueue, integrateTicket } from "./integrate.js";
-import type { PipelineContext, RunReport } from "./pipeline.js";
+import type { PipelineContext } from "./pipeline.js";
 import { runPipeline, worktreesDir } from "./pipeline.js";
 import { loadReport, recordMergeReady, recordObservations, saveReport } from "./report.js";
 import { ensureJfdiGitignore } from "./scaffold.js";
@@ -456,7 +456,7 @@ export class Coordinator {
         (await branchExists(this.context.repoRoot, branch)) &&
         (await revParse(this.context.repoRoot, branch)) === savedReport.commit
       ) {
-        await this.integrate(card, ticket, savedReport);
+        await this.integrate(card, ticket);
         return;
       }
 
@@ -479,7 +479,7 @@ export class Coordinator {
         await moveCardSafe(this.context, card, columns.inProgress, columns.readyToMerge, false);
         return;
       }
-      await this.integrate(card, ticket, outcome.report);
+      await this.integrate(card, ticket);
     } catch (error) {
       this.context.log.emit("failed", id, { reason: (error as Error).message });
       await moveCardSafe(this.context, card, columns.inProgress, columns.blocked, false).catch(
@@ -491,19 +491,14 @@ export class Coordinator {
   }
 
   /** Integration is the global critical section: strictly one at a time. */
-  private async integrate(card: Card, ticket: Ticket, report: RunReport): Promise<void> {
+  private async integrate(card: Card, ticket: Ticket): Promise<void> {
     const columns = this.context.config.board.columns;
     this.context.log.emit("merge_queued", ticket.id);
     const outcome = await this.integrations.enqueue(() =>
-      integrateTicket(
-        this.context,
-        ticket,
-        {
-          path: path.join(worktreesDir(this.context.jfdiDir), ticket.id),
-          branch: ticketBranch(ticket.id),
-        },
-        report,
-      ),
+      integrateTicket(this.context, ticket, {
+        path: path.join(worktreesDir(this.context.jfdiDir), ticket.id),
+        branch: ticketBranch(ticket.id),
+      }),
     );
     if (outcome.status === "blocked") {
       await moveCardSafe(this.context, card, columns.inProgress, columns.blocked, false);

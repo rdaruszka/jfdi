@@ -174,7 +174,7 @@ describe("half-app end-to-end (fake harness)", () => {
 
     // Board and ticket notes are untracked (work tracking is external), so the run's churn to
     // them never dirties the target checkout — the merge lands directly.
-    const merged = await integrateTicket(context, ticket, outcome.worktree, outcome.report);
+    const merged = await integrateTicket(context, ticket, outcome.worktree);
     expect(merged, JSON.stringify(merged)).toEqual({ status: "merged" });
 
     // The subject is the pipeline's own: the scribe writes it from the
@@ -187,8 +187,8 @@ describe("half-app end-to-end (fake harness)", () => {
       "utf8",
     );
     expect(note).toContain("## Comments");
-    expect(note).toContain("## Report");
-    expect(note).toContain("Merged into `main`");
+    expect(note).not.toContain("## Report");
+    expect(note).toContain("JFDI Integration merged — landed on `main`");
   });
 });
 
