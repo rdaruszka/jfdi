@@ -279,7 +279,9 @@ describe("the slice of a ticket note that reaches a stage prompt", () => {
       const sandbox = await makeSandbox();
       await seedProbe(sandbox);
 
-      expect((await runCli(sandbox, ["run", `[[${PROBE_ID}]]`])).code).toBe(0);
+      // The probe carries an unresolved `blocked-by`, which gates dispatch; this
+      // test is about the note slice, not blocking, so it forces past the gate.
+      expect((await runCli(sandbox, ["run", "--force", `[[${PROBE_ID}]]`])).code).toBe(0);
 
       // Every stage reads the same slice: an unscoped spec would balloon the
       // later prompts with the pipeline's own chatter.
@@ -316,9 +318,11 @@ describe("a pipeline append to a ticket note", () => {
       await seedProbe(sandbox);
       const before = await readNote(sandbox, PROBE_ID);
 
+      // `--force` past the probe's unresolved `blocked-by`: this test is about
+      // how decisions are appended, not about dispatch gating.
       expect(
         (
-          await runCli(sandbox, ["run", `[[${PROBE_ID}]]`], {
+          await runCli(sandbox, ["run", "--force", `[[${PROBE_ID}]]`], {
             decisions: ["FIRST_DECISION assumed sqlite", "SECOND_DECISION skipped the repro"],
           })
         ).code,
@@ -415,7 +419,9 @@ describe("frontmatter links between tickets", () => {
       const sandbox = await makeSandbox();
       await seedProbe(sandbox);
 
-      expect((await runCli(sandbox, ["run", `[[${PROBE_ID}]]`])).code).toBe(0);
+      // The probe's own `blocked-by` is unresolved and gates dispatch; forcing
+      // past it lets the pipeline run and report the links, which is the point.
+      expect((await runCli(sandbox, ["run", "--force", `[[${PROBE_ID}]]`])).code).toBe(0);
 
       // `resolvable-ticket` is in ticketsDir, so it is not reported; the typo
       // and the one pointing out of the folder both are — never dropped in

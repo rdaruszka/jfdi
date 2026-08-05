@@ -1,10 +1,9 @@
 const USAGE = `jfdi — Just F'ing Do It
 
 Usage:
-  jfdi run [--force] <ticket>
-                        Run one ticket through the full pipeline (card text,
-                        [[wikilink]], or an inline description). --force runs a
-                        ticket whose blocked-by tickets are not yet done.
+  jfdi run <ticket>     Run one ticket through the full pipeline (card text,
+                        [[wikilink]], or an inline description). Add --force to
+                        run a ticket whose blocked-by tickets are not yet done.
   jfdi start            Watch the board and run pipelines continuously (live TUI)
   jfdi status [--json]  Snapshot of coordinator state
   jfdi logs <ticket>    Dump a ticket's raw session logs
