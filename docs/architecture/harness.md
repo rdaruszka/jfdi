@@ -198,13 +198,14 @@ verified against Claude Code v2.1.220 and Codex 0.146.0 in Aug 2026 and are
 |---|---|---|
 | where the fatal text is | the `result` line — an API failure arrives as `subtype: "success"` with `is_error: true`; `subtype: "error_*"` is a *task* failure | `turn.failed`'s `error.message`, or the stderr `Error:` line when no events arrived |
 | usage-limit | `You've hit your <session\|weekly\|Opus\|Sonnet> limit`, `usage limit reached` | `You've hit your usage limit`, `out of credits`, `spend cap`, `Quota exceeded` |
-| reset time | only in the prose (`resets 3:45pm`, `resets Mon 12:00am`, `resets May 28 at 7pm (Europe/Madrid)`), plus the legacy `…usage limit reached\|<epoch-seconds>` | only as local-time text (`Try again at 3:45 PM.`); `Try again later.` carries none |
+| reset time | only as local 12-hour clock prose (`resets 3:45pm`), plus the legacy `…usage limit reached\|<epoch-seconds>` | only as local 12-hour clock prose (`Try again at 3:45 PM.`); `Try again later.` carries none |
 | needs-human | `run /login`, `not logged in`, `invalid api key`, `oauth token expired/revoked`, `could not be refreshed`, `authentication`, `Credit balance is too low` | `could not be refreshed`, `status 401`, `codex login`, `no Codex credentials` |
 | outage | `api_error_status` 500/529, or `unable to connect`, `connection error`, `ECONN`, `ETIMEDOUT`, `ENOTFOUND`, `timed out`, `overloaded` | `exceeded retry limit`, `stream disconnected`, `Connection failed`, `request timed out`, `Error while reading the server response`, `high demand`, `at capacity`; **also** any session that exits without emitting `thread.started` (the detached-TTY regression, openai/codex#19945) |
 
 Reset times are parsed by [reset-time.ts](../../src/harness/reset-time.ts),
-shared because reading a clock out of English is not provider-specific. It is
-best-effort by construction: an unreadable string yields `null`, and a
+shared because reading a clock out of English is not provider-specific. It
+accepts only the observed 12-hour clock form (with a parenthesized timezone
+stripped because it cannot be honoured). Everything else yields `null`, and a
 `resetsAtMs: null` usage limit waits on the outage backoff instead — a limit
 self-expires, so it never demands a human. Reading a time *early* is safe too:
 the retry fails, is classified again, and re-pauses on the fresh string.

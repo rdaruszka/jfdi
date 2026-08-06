@@ -49,13 +49,10 @@ describe("mapCodexLine", () => {
 });
 
 describe("classifyCodexFailure", () => {
-  it("reads each usage-limit wording, with the local reset time out of the prose", () => {
+  it("reads a usage-limit reset from 12-hour clock prose", () => {
     expect(
       classifyCodexFailure("You've hit your usage limit. Try again at 3:45 PM.", NOW),
     ).toMatchObject({ kind: "usage-limit", resetsAtMs: new Date(2026, 7, 3, 15, 45).getTime() });
-    expect(
-      classifyCodexFailure("You are out of credits. Try again at Mar 3rd, 2027 3:45 PM.", NOW),
-    ).toMatchObject({ kind: "usage-limit", resetsAtMs: new Date(2027, 2, 3, 15, 45).getTime() });
     expect(classifyCodexFailure("Quota exceeded for this spend cap", NOW)?.kind).toBe(
       "usage-limit",
     );
@@ -67,6 +64,15 @@ describe("classifyCodexFailure", () => {
       resetsAtMs: null,
       detail: "You've hit your usage limit. Try again later.",
     });
+  });
+
+  // Regression: the deleted calendar-date form once read `Mar 3rd, 2027 3:45 PM`
+  // as a real instant. It is still a usage-limit, but now leaves the reset null
+  // so the pipeline backs off instead of trusting a speculative parse.
+  it("still pauses on a limit but leaves the reset null for a deleted prose shape", () => {
+    expect(
+      classifyCodexFailure("You are out of credits. Try again at Mar 3rd, 2027 3:45 PM.", NOW),
+    ).toMatchObject({ kind: "usage-limit", resetsAtMs: null });
   });
 
   it("classifies the repairs only a human can make", () => {

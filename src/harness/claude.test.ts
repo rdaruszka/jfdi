@@ -10,7 +10,7 @@ import {
 } from "./claude.js";
 import type { HarnessEvent, HarnessSelection } from "./types.js";
 
-/** 2026-08-03 09:30 local — a Monday, so weekday strings have somewhere to land. */
+/** 2026-08-03 09:30 local. */
 const NOW = new Date(2026, 7, 3, 9, 30).getTime();
 
 /** Harness-only selection: the tests that care about flags name their own. */
@@ -102,7 +102,7 @@ describe("mapClaudeLine", () => {
 });
 
 describe("classifyClaudeFailure", () => {
-  it("reads each usage-limit wording, with the reset time out of the prose", () => {
+  it("reads the usage-limit reset time out of 12-hour clock prose", () => {
     expect(
       classifyClaudeFailure("You've hit your session limit · resets 3:45pm", null, NOW),
     ).toEqual({
@@ -110,12 +110,6 @@ describe("classifyClaudeFailure", () => {
       resetsAtMs: new Date(2026, 7, 3, 15, 45).getTime(),
       detail: "You've hit your session limit · resets 3:45pm",
     });
-    expect(
-      classifyClaudeFailure("You've hit your weekly limit, resets Mon 12:00am", null, NOW),
-    ).toMatchObject({ kind: "usage-limit", resetsAtMs: new Date(2026, 7, 10, 0).getTime() });
-    expect(
-      classifyClaudeFailure("You've hit your Opus limit · resets Aug 28 at 7pm", null, NOW),
-    ).toMatchObject({ kind: "usage-limit", resetsAtMs: new Date(2026, 7, 28, 19).getTime() });
   });
 
   it("reads the legacy raw-API form, where the reset is epoch seconds after a pipe", () => {
@@ -132,6 +126,23 @@ describe("classifyClaudeFailure", () => {
       resetsAtMs: null,
       detail: "You've hit your session limit",
     });
+  });
+
+  // Regression: a limit whose prose carries a deleted speculative shape (weekday
+  // or calendar date) is still a usage-limit, but its reset is now unreadable —
+  // so the pipeline pauses and backs off instead of pausing until a misread
+  // instant. The calendar-date case is the one that once misread a past date.
+  it("still pauses on a limit but leaves the reset null for a deleted prose shape", () => {
+    for (const text of [
+      "You've hit your weekly limit, resets Mon 12:00am",
+      "You've hit your Opus limit · resets Aug 28 at 7pm",
+      "You've hit your session limit · resets 19:00",
+    ]) {
+      expect(classifyClaudeFailure(text, null, NOW)).toMatchObject({
+        kind: "usage-limit",
+        resetsAtMs: null,
+      });
+    }
   });
 
   it("classifies the repairs only a human can make", () => {
