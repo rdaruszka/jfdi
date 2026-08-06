@@ -3,8 +3,8 @@
  * driven through the built CLI against real harness stubs — not the FakeHarness
  * the unit suite injects a `SessionUsage.model` through.
  *
- * The ticket's surface is the per-stage Model column the ready-to-merge and
- * merged comments carry. This test runs a full pipeline whose Claude stub emits
+ * The ticket's surface is the per-stage Model column the Integration comment
+ * carries. This test runs a full pipeline whose Claude stub emits
  * a *provider-reported* model on its `result` line (the shape Claude Code uses),
  * distinct from the configured model, then reads the rendered stage table back
  * out of the ticket note. It pins two things the real artifact must honour:
@@ -222,7 +222,7 @@ afterEach(async () => {
 
 describe("provider-confirmed model reporting, end to end", () => {
   it(
-    "names a model per stage in the ready-to-merge comment's table, labeled by source",
+    "names a model per stage in the Integration comment's table, labeled by source",
     async () => {
       const sandbox = await makeSandbox();
       expect((await runCli(sandbox, ["init", "--bare"])).code).toBe(0);
@@ -239,6 +239,8 @@ describe("provider-confirmed model reporting, end to end", () => {
 
       const run = await runCli(sandbox, ["run", "Add a greeting"]);
       expect(run.code, `${run.stdout}${run.stderr}`).toBe(0);
+      const merge = await runCli(sandbox, ["merge", await ticketIdOf(sandbox)]);
+      expect(merge.code, `${merge.stdout}${merge.stderr}`).toBe(0);
 
       const note = await readTicketNote(sandbox);
 
@@ -284,6 +286,8 @@ describe("provider-confirmed model reporting, end to end", () => {
 
       const run = await runCli(sandbox, ["run", "Add a greeting"]);
       expect(run.code, `${run.stdout}${run.stderr}`).toBe(0);
+      const merge = await runCli(sandbox, ["merge", await ticketIdOf(sandbox)]);
+      expect(merge.code, `${merge.stdout}${merge.stderr}`).toBe(0);
 
       const note = await readTicketNote(sandbox);
 

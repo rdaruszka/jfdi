@@ -147,13 +147,23 @@ Users can't see spending in one area without paging through everything.
 
 ## Comments
 
-### 2026-08-03T09:00:00.000Z — implementation round 1
+### 2026-08-03T09:00:00.000Z — JFDI started
 
-Dispatched onto `jfdi/filter-by-category`.
+> Run started — 3 rounds max. Working branch `jfdi/filter-by-category`, will
+> queue for approval before merging to `main`.
 
-### 2026-08-03T09:30:00.000Z — Decision (implementation, round 1)
+### 2026-08-03T09:30:00.000Z — Implementation round 1 complete
 
-Matched case-insensitively — the ticket didn't say.
+> filter-by-category: add category filtering
+>
+> Decisions:
+> - Matched case-insensitively — the ticket didn't say.
+>
+> JFDI Implementation complete — gate green (build ✓ test ✓ lint ✓), moving to Code Review
+>
+> JFDI-Round: 1/3
+> JFDI-Duration: 4m
+> JFDI-Cost: $0.72
 ```
 
 The anatomy, part by part. Every part is optional; an absent one is simply empty.
@@ -175,19 +185,18 @@ The anatomy, part by part. Every part is optional; an absent one is simply empty
 - **`## Questions`** — the escalation queue, written on escalation (question +
   recommended answer), on exhausted rounds (the round history), or on a blocked
   integration. Each entry ends with instructions for how to resume.
-- **`## Comments`** — an append-only trail, oldest first, in two kinds:
-  *transition* entries (`### <ISO timestamp> — <stage> round <n>`) narrating what
-  the pipeline did, and *decision* entries (`### <ISO timestamp> — Decision
-  (<stage>, round <n>)`), one per autonomous choice an agent logged. This is the
-  decide-log-proceed audit trail, and the JIRA emulation: an agent's decisions
-  land in the same chronological trail a human's comments would. Every transition
-  a run makes is here — dispatch, each commit's message verbatim (with its
-  `JFDI-Duration`/`JFDI-Cost` trailers), each review verdict, exhausted rounds,
-  and the run's close: on-approval, the ready-to-merge entry (summary, rounds,
-  commit, the per-stage [cost-and-time table](pipeline.md#cost-and-time), QA tests
-  added, and the `jfdi merge` approval line); either way, the merge entry that
-  lands the branch. So the note tells the whole story without `git log`, and `git
-  log` tells it without the note. See
+- **`## Comments`** — an append-only trail, oldest first, with one entry per
+  phase. A clean single-round run has `JFDI started`, one `complete` entry for
+  each of Implementation, Code Review, and QA, then `Integration complete`.
+  Each stage entry folds in its decisions, status, and
+  `JFDI-Round`/`JFDI-Duration`/`JFDI-Cost` trailers. A stage that changed the
+  worktree also carries its commit message verbatim; gate-fix commit messages
+  accumulate inside the same round's Implementation entry. Failed verdicts and
+  interruptions still produce exactly one entry for that stage and round. In
+  on-approval mode the QA status names the approval queue; approval itself does
+  not add a sixth comment. The Integration entry carries the whole-run
+  [cost-and-time table](pipeline.md#cost-and-time). So the note tells the whole
+  story without `git log`, and `git log` tells it without the note. See
   [Commits and the scribe](pipeline.md#commits-and-the-scribe).
 
 Sections JFDI does not recognize — your own, a legacy `## Decisions` block, or a
@@ -207,10 +216,10 @@ an agent's own `> ` lines survive the round trip untouched.
 The note is the single human-readable record of what happened to a ticket, and
 it is also *input* — but stages read a **defined slice** of it, not the file:
 
-> title + description + `## Questions` + the **decision** entries from
+> title + description + `## Questions` + the **decision blocks** from
 > `## Comments`.
 
-Transition entries, the report, and any unrecognized section stay out. Later
+Other phase prose, the report, and any unrecognized section stay out. Later
 stages must see the decisions (that is what logging them is for), but the
 pipeline's narration is written for you, and review feedback already reaches the
 implementer through the [feedback history](pipeline.md#rounds-and-feedback) —

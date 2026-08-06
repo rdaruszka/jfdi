@@ -1,7 +1,7 @@
 /**
- * How the pipeline narrates itself: the status line that ends every handoff
- * commit message and every ticket comment, and the append that puts it on the
- * note. One vocabulary, so `git log` and the ticket note tell the same story —
+ * How the pipeline narrates itself: the status line that closes every stage
+ * record, and the appends that put phase or exceptional narration on the note.
+ * One vocabulary, so `git log` and the ticket note tell the same story —
  * some humans only ever read one of them.
  *
  * Routing text always names where the run actually went, never where it
@@ -39,9 +39,8 @@ export function retryRouting(round: number, maxRounds: number): string {
 }
 
 /**
- * Append one transition entry to the ticket note's `## Comments` trail — the
- * tool narrating a round or coordinator-owned refusal to whoever reads the
- * note instead of the log.
+ * Append exceptional coordinator-owned narration in the legacy round-labeled
+ * shape. Normal started, stage, and integration records use `recordPhase`.
  */
 export function recordTransition(
   notePath: string,
@@ -54,6 +53,24 @@ export function recordTransition(
     timestamp: new Date().toISOString(),
     stage,
     round,
+    body,
+  });
+}
+
+/** Append one named phase entry, with no legacy `round 0` heading artifact. */
+export function recordPhase(
+  notePath: string,
+  label: string,
+  stage: string,
+  round: number,
+  body: string,
+): Promise<void> {
+  return appendComment(notePath, {
+    kind: "transition",
+    timestamp: new Date().toISOString(),
+    stage,
+    round,
+    label,
     body,
   });
 }

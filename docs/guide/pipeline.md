@@ -132,11 +132,10 @@ still invalid, the run blocks and the ticket comment quotes the final error and
 path. A markdown code fence around otherwise valid JSON remains tolerated. Two of
 the fields matter beyond pass/fail:
 
-- **`decisions`** — autonomous choices the agent made, each appended to the
-  ticket note's `## Comments` trail as a
-  [decision entry](board-and-tickets.md#ticket-notes) stamped with stage and
-  round. This is the audit trail for the decide-log-proceed posture, and the one
-  part of the trail later stages read back.
+- **`decisions`** — autonomous choices the agent made, folded verbatim into the
+  producing stage's phase comment under `Decisions:`. This is the audit trail
+  for the decide-log-proceed posture, and the one part of the trail later stages
+  read back.
 - **`observations`** — out-of-scope issues the agent noticed (pre-existing bugs,
   dead code, tooling gaps). Never fixed inline; every valid verdict contributes
   them regardless of pass/fail/escalate outcome. They become proposal cards in
@@ -176,6 +175,9 @@ The shape:
 
 <body, written for a reader with zero context who was not in the session>
 
+Decisions:
+- <one verbatim decision from the stage verdict>
+
 JFDI <Stage> <outcome> — <where the run actually went>
 
 JFDI-Round: <n>/<max>
@@ -183,7 +185,7 @@ JFDI-Duration: <agent time, e.g. 7m>
 JFDI-Cost: <e.g. $1.87, or "1.2M tokens, price unavailable">
 ```
 
-The scribe writes the subject and body only. The status line and the trailers are
+The scribe writes the subject and body only. The decisions, status line, and trailers are
 appended by the pipeline, so they never depend on an agent getting a format
 right: `git log --format='%(trailers:key=JFDI-Cost)'` always answers. The
 blank line above the trailer block is load-bearing: git only reads a message's
@@ -217,19 +219,30 @@ stream.
 
 ### The comment trail
 
-Every transition is also appended to the ticket note's `## Comments` section, so
-`git log` and the note each tell the story on their own. For a commit, the entry
-is the rendered message **verbatim** — one rendering, two surfaces. The trail
-covers:
+The ticket note's `## Comments` section gets one entry per phase, not one entry
+per fact. A clean single-round run has exactly five labels:
 
-| Transition | Entry |
-|---|---|
-| dispatch | "JFDI run started — round 1, branch jfdi/&lt;id&gt;" |
-| an implementation or fix session | the commit's message |
-| a review verdict | "JFDI Code Review PASSED — moving to QA", or FAILED followed by the exact feedback the implementer received; the same for QA |
-| rounds exhausted | "JFDI run exhausted its N rounds — moving to Blocked for human review", with the round history |
-| integration | "JFDI Integration merged — landed on main as &lt;sha&gt;", or blocked with the reason |
-| a decision | one entry per `decisions` item, in the [decision format](board-and-tickets.md#ticket-notes) |
+1. `JFDI started`
+2. `Implementation round 1 complete`
+3. `Code Review round 1 complete`
+4. `QA round 1 complete`
+5. `Integration complete`
+
+The started entry states the maximum rounds, working branch, target branch, and
+whether integration is automatic or waits for approval. Each stage entry folds
+together the stage's commit subject/body when it changed the worktree, a
+`Decisions:` bullet list copied verbatim from its verdict, its closing status,
+and the `JFDI-Round`/`JFDI-Duration`/`JFDI-Cost` trailers. Review sign-offs name
+the commit they bind to. A failed verdict carries the exact feedback and the
+same trailers; an interrupted session uses an `interrupted` label and keeps its
+WIP handoff. Gate failures add no narration entry: every gate-fix commit message
+is clearly delimited inside that round's one Implementation comment. Later
+rounds append their own stage entries.
+
+For a changed stage, its rendered commit message appears **verbatim** in the
+phase entry — one rendering, two surfaces. The Integration entry keeps the merged
+line and whole-run usage table. In on-approval mode, QA says it queued for
+approval; moving to Ready to Merge does not append another comment.
 
 Two deliberate absences: **no comment for a pause** — infrastructure holds are
 not ticket history — and agents never write the note themselves. Every append is
@@ -239,11 +252,10 @@ loses nothing.
 
 ### Cost and time
 
-Every session's cost and time ride its handoff commit as the `JFDI-Duration` and
-`JFDI-Cost` trailers (above), and a human should be able to see what a ticket
-cost from whichever surface they are looking at. Where more than one stage's
-numbers appear together, they appear as a table. The **ready-to-merge** comment
-(on-approval mode) and the **merged** comment both carry the whole run:
+Every stage comment carries `JFDI-Duration` and `JFDI-Cost`; changed stages carry
+the same trailers in their handoff commit. A human can therefore see what a
+ticket cost from either surface. Where more than one stage's numbers appear
+together, they appear as a table in the **Integration complete** comment:
 
 | Stage | Model | Sessions | Time | Cost |
 |---|---|---|---|---|
@@ -386,7 +398,7 @@ is not an event — see
 ## Escalation and Blocked
 
 The default posture is **decide, log, proceed**: at a decision fork the agent makes
-the reasonable call, records it as a decision comment, and continues. Escalation is
+the reasonable call, records it in its verdict for the stage comment, and continues. Escalation is
 prompted as a last resort for genuine hard blocks — contradictory requirements,
 missing access, work impossible as specified — and must carry a recommended
 answer, never a bare question.
@@ -448,10 +460,10 @@ A run ends in one of two states:
 
 - **Passed** — every stage signed off on the final commit and the gate is green.
   What happens next depends on `integration.mode`: `auto` merges immediately;
-  `on-approval` moves the card to **Ready to Merge** and appends a ready-to-merge
-  comment (summary, rounds, commit, QA tests added, and the `jfdi merge` approval
-  line) to the ticket note for your review — the autonomous decisions are already
-  their own decision comments above it. See [Integration & Merging](integration.md).
+  `on-approval` moves the card to **Ready to Merge**. The QA phase comment says
+  that approval is required, while `report.json` preserves the run data used by
+  `jfdi merge`; no extra approval comment fragments the trail. See
+  [Integration & Merging](integration.md).
 - **Blocked** — an escalation, exhausted rounds, malformed feedback history, or a
   failed integration. The card moves to **Blocked**, the reason is in the ticket
   note, and the worktree is kept for inspection. `jfdi run` exits with code 2 in

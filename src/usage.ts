@@ -238,7 +238,7 @@ function rowModelCell(row: UsageRow): string {
 }
 
 /**
- * The per-stage model/cost/time table the ready-to-merge and merged comments carry.
+ * The per-stage model/cost/time table the Integration comment carries.
  * `elapsedMs` is dispatch→now wall-clock, shown beside agent time in the Total
  * row and labeled distinctly (§1/§2 of the ticket); null omits the elapsed clause.
  */

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { assembleCommitMessage, type SessionHandoff, scribeVariables } from "./scribe.js";
+import {
+  assembleCommitMessage,
+  assembleStageComment,
+  type SessionHandoff,
+  scribeVariables,
+} from "./scribe.js";
 
 const HANDOFF: SessionHandoff = {
   stage: "implementation",
@@ -155,6 +160,27 @@ describe("assembleCommitMessage", () => {
     expect(message.split("\n")[0]).toBe("fix-object-names: Implementation round 2");
     expect(message).toContain("Taught the parser to accept sha256 object names.");
     expect(message).toContain("JFDI-Round: 2/3");
+  });
+});
+
+describe("assembleStageComment", () => {
+  it("folds review decisions, status, and estimated usage into one record", () => {
+    const comment = assembleStageComment({
+      ...HANDOFF,
+      stage: "code-review",
+      outcome: "PASSED",
+      routing: "sign-off on commit `a1b2c3d`, moving to QA",
+      decisions: ["kept the provider boundary unchanged"],
+      usage: { ...HANDOFF.usage, costUsd: 1.5, isCostEstimated: true },
+    });
+
+    expect(comment).toContain("Decisions:\n- kept the provider boundary unchanged");
+    expect(comment).toContain(
+      "JFDI Code Review PASSED — sign-off on commit `a1b2c3d`, moving to QA",
+    );
+    expect(comment).toContain("JFDI-Round: 2/3");
+    expect(comment).toContain("JFDI-Duration: 7m");
+    expect(comment).toContain("JFDI-Cost: $1.50 (estimate, runs low)");
   });
 });
 

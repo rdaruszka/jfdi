@@ -4,11 +4,11 @@
  * — it is pipeline plumbing that happens to use a session, selected by the
  * `stages["commit-message"]` config entry.
  *
- * The scribe writes only the subject and body. The status line and the
- * `JFDI-Round` trailer are bolted on here, because a message that has to stay
+ * The scribe writes only the subject and body. Verdict decisions, the status
+ * line, and the `JFDI-*` trailers are bolted on here, because a message that has to stay
  * machine-parseable (`git log --format='%(trailers:key=JFDI-Round)'`) cannot
- * depend on an agent getting a format right. The same rendered text goes to
- * the commit and to the ticket note's `## Comments` trail.
+ * depend on an agent getting a format right. The same rendered text is included
+ * verbatim in the stage's ticket-note phase comment.
  *
  * The scribe's answer is subprocess output and the completing stage's summary
  * is agent verdict text — both are about to become permanent repository
@@ -37,6 +37,8 @@ export interface SessionHandoff {
   routing: string;
   /** The stage's own account of what it did — the "why" the diff cannot carry. */
   summary: string;
+  /** Autonomous choices from the completing stage's verdict, kept verbatim. */
+  decisions?: readonly string[];
   /** Partial work: the session did not finish, so the subject carries a WIP marker. */
   isInterrupted: boolean;
   /** What the session cost and took — rendered into the JFDI-Cost/JFDI-Duration trailers. */
@@ -150,15 +152,50 @@ export function assembleCommitMessage(
   );
   // One all-trailer paragraph, every line trailer-shaped, so git parses the
   // block: JFDI-Cost/JFDI-Duration join JFDI-Round here, never in the prose.
-  const trailers = [
+  const message = `${[
+    subject,
+    body,
+    decisionsBlock(handoff.decisions),
+    status,
+    handoffTrailers(handoff),
+  ]
+    .filter((part) => part !== "")
+    .join("\n\n")}\n`;
+  // Scrub once at the history boundary: NUL makes `git commit -m` fail, while
+  // terminal escapes in the message would poison every later `git log`.
+  return scrubControlCharacters(message);
+}
+
+/** A complete stage record when no worktree change needs a scribe or commit. */
+export function assembleStageComment(handoff: SessionHandoff, detail = ""): string {
+  const status = statusLine(handoff.stage, handoff.outcome, handoff.routing);
+  assert(
+    !/[\r\n]/.test(status),
+    "Cannot assemble stage comment: pipeline-produced status line contains a line break",
+  );
+  return scrubControlCharacters(
+    `${[detail.trim(), decisionsBlock(handoff.decisions), status, handoffTrailers(handoff)]
+      .filter((part) => part !== "")
+      .join("\n\n")}\n`,
+  );
+}
+
+function decisionsBlock(decisions: readonly string[] | undefined): string {
+  if (!decisions || decisions.length === 0) return "";
+  return `Decisions:\n${decisions.map(formatDecisionBullet).join("\n")}`;
+}
+
+function formatDecisionBullet(decision: string): string {
+  const lines = decision.split("\n");
+  return [`- ${lines[0] ?? ""}`, ...lines.slice(1).map((line) => `  ${line}`)].join("\n");
+}
+
+function handoffTrailers(handoff: SessionHandoff): string {
+  return [
     `JFDI-Round: ${handoff.round}/${handoff.maxRounds}`,
     `JFDI-Duration: ${formatDurationMs(handoff.usage.durationMs)}`,
     `JFDI-Cost: ${trailerCost(handoff.usage)}`,
   ].join("\n");
-  const message = `${[subject, body, status, trailers].filter((part) => part !== "").join("\n\n")}\n`;
-  // Scrub once at the history boundary: NUL makes `git commit -m` fail, while
-  // terminal escapes in the message would poison every later `git log`.
-  return scrubControlCharacters(message);
 }
 
 /**

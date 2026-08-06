@@ -126,6 +126,14 @@ describe("integrateTicket", () => {
     // The trail's closing entry says where the work went, naming the commit it landed as.
     const landed = await revParse(fixture.repo, "main");
     const comments = parseTicketNote(note).comments;
+    expect(comments.map((comment) => comment.label)).toEqual([
+      "JFDI started",
+      "Implementation round 1 complete",
+      "Code Review round 1 complete",
+      "QA round 1 complete",
+      "Integration complete",
+    ]);
+    expect(comments).toHaveLength(5);
     const closingComment = comments.at(-1);
     expect(closingComment).toMatchObject({
       kind: "transition",

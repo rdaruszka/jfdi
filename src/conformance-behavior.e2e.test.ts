@@ -472,19 +472,22 @@ describe("pipeline behavior", () => {
       // the run, ending at the merge, in the note's Comments trail.
       const trail = (await readTicketNote(sandbox, ticketId)).split("### ").slice(1);
       const headings = trail.map((entry) => entry.split("\n")[0] ?? "");
-      expect(headings.filter((heading) => /— dispatch round 1$/.test(heading))).toHaveLength(1);
-      expect(headings.filter((heading) => /— implementation round 1$/.test(heading))).toHaveLength(
-        1,
-      );
-      expect(headings.filter((heading) => /— code-review round 1$/.test(heading))).toHaveLength(1);
-      expect(headings.filter((heading) => /— qa round 1$/.test(heading))).toHaveLength(1);
+      expect(headings.map((heading) => heading.replace(/^\S+ — /, ""))).toEqual([
+        "JFDI started",
+        "Implementation round 1 complete",
+        "Code Review round 1 complete",
+        "QA round 1 complete",
+        "Integration complete",
+      ]);
       const note = await readTicketNote(sandbox, ticketId);
-      expect(note).toContain("> JFDI run started — round 1");
+      expect(note).toContain("> Run started — 3 rounds max.");
       // The commit's message, verbatim, on the note as well.
       expect(note).toContain(`> ${ticketId}: stub-scribed subject`);
-      expect(note).toContain("> JFDI Implementation complete — moving to the mechanical gate");
+      expect(note).toContain("> JFDI Implementation complete — gate green");
       expect(note).toContain("> JFDI-Round: 1/3");
-      expect(note).toContain("> JFDI Code Review PASSED — moving to QA");
+      expect(note).toMatch(
+        /> JFDI Code Review PASSED — sign-off on commit `[0-9a-f]{7}`, moving to QA/,
+      );
       expect(note).toMatch(/> JFDI Integration merged — landed on `main` as `[0-9a-f]{7}`/);
 
       // A second approval is a clean failure, not a double merge.
@@ -575,9 +578,7 @@ describe("pipeline behavior", () => {
       ).toHaveLength(1);
       expect(note).toContain("> JFDI Code Review FAILED — moving to Blocked for human review");
       expect(note).toContain("> needs work");
-      expect(note).toContain(
-        "> JFDI run exhausted its 3 rounds — moving to Blocked for human review",
-      );
+      expect(note).toContain("All 3 rounds failed. Round history:");
     },
     PIPELINE_TIMEOUT_MS,
   );
