@@ -252,6 +252,37 @@ describe("jfdi start — blocked-by cycle refusal (built CLI)", () => {
   );
 
   it(
+    "names the loop by real blocked-by links, not the sorted ids, when ids are out of cycle order",
+    async () => {
+      const sandbox = await makeSandbox();
+      // True edges: a→c, c→b, b→a, so the real directed loop is a → c → b → a.
+      // The sorted signature is [a, b, c]; a comment built from it would print
+      // "a → b → c → a", contradicting a.md's own `blocked-by: [[c]]` frontmatter.
+      await writeNote(sandbox, "a", ["c"]);
+      await writeNote(sandbox, "b", ["a"]);
+      await writeNote(sandbox, "c", ["b"]);
+      await writeReadyBoard(sandbox, ["a", "b", "c"]);
+
+      const coordinator = startCoordinator(sandbox);
+      const settled = await waitUntil(
+        async () => (await columnIds(sandbox, "Blocked")).length === 3,
+      );
+      expect(settled).toBe(true);
+      await delay(RESCAN_WINDOW_MS);
+      await stopCoordinator(coordinator);
+
+      expect(await columnIds(sandbox, "Blocked")).toEqual(["a", "b", "c"]);
+      const message =
+        "Blocked-by loop: a → c → b → a. A human must break the loop by removing one blocked-by link.";
+      for (const id of ["a", "b", "c"]) {
+        expect(await noteComments(sandbox, id)).toEqual([message]);
+      }
+      expect(await agentRan(sandbox)).toBe(false);
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
     "releases a member once a human breaks the loop by removing a link",
     async () => {
       const sandbox = await makeSandbox();
