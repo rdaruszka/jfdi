@@ -5,7 +5,7 @@ import type { JfdiConfig } from "./config.js";
 import type { JfdiEvent, StageName } from "./events.js";
 import { createWorktree, git, isMergeInProgress, mergeTargetIntoBranch } from "./git.js";
 import type { SessionKind } from "./harness/index.js";
-import { type PipelineContext, runPipeline } from "./pipeline.js";
+import { type PipelineContext, runHeldSession, runPipeline } from "./pipeline.js";
 import {
   commitFile,
   DEFAULT_SCRIBE_HANDLER,
@@ -33,6 +33,36 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await fixture.cleanup();
+});
+
+describe("runHeldSession", () => {
+  it("returns and tallies synthesized usage when the provider omits it", async () => {
+    const context = fixture.context(() => Promise.resolve({ ok: true, text: "done" }));
+    context.now = steppingClock(37);
+
+    const result = await runHeldSession(
+      context,
+      "usage-required",
+      "implementation",
+      "prompt",
+      { cwd: fixture.repo },
+      () => undefined,
+    );
+
+    expect(result.usage).toEqual({
+      durationMs: 37,
+      costUsd: null,
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+    });
+    expect(context.usage.of("usage-required").totals()).toEqual({
+      sessions: 1,
+      durationMs: 37,
+      costUsd: null,
+      totalTokens: 0,
+    });
+  });
 });
 
 describe("runPipeline", () => {
