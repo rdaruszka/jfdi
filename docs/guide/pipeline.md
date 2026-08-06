@@ -416,19 +416,24 @@ coordinator crash — leaving partial commits and possibly a dirty or mid-merge
 worktree. Re-dispatching the card (moving it back to the begin column) reuses the
 branch and resumes deliberately:
 
-1. Any in-progress merge is aborted. If git cannot abort it (a stale
+1. The previous run's `history.json` is loaded before the worktree is touched.
+   Because JFDI writes this file atomically, malformed JSON or an invalid entry
+   blocks the card with an error event and a warning comment naming the content.
+   Fix the file to preserve its feedback, or delete it to deliberately resume
+   without history; moving the card back before either action blocks it again.
+2. Any in-progress merge is aborted. If git cannot abort it (a stale
    `index.lock`, an unwritable file), the run stops there and the card is
    blocked — dispatching onto a half-merged tree would hand the agent conflict
    markers and commit them.
-2. Any uncommitted changes are checkpoint-committed as
+3. Any uncommitted changes are checkpoint-committed as
    `jfdi(<ticket-id>): recovered from interrupted run`, so the session starts from
    a clean, committed tree. In practice there is rarely anything left to
    recover: the pipeline already committed each session's work as that session
    ended, so what the branch holds is a `WIP —` commit with the reason on it.
-3. The Implementation prompt carries a resume section: how many commits the branch
+4. The Implementation prompt carries a resume section: how many commits the branch
    already holds, a short log, what was recovered — with explicit instructions to
    continue the work, not start over.
-4. Unanswered feedback from the previous run (persisted as `history.json` in the
+5. Unanswered feedback from the previous run (persisted as `history.json` in the
    run directory, capped at the 10 most recent items) is carried into the prompt
    as well. Each retry save includes inherited feedback, so interruption between
    rounds cannot strand it in an older run. If the cap discards items, the file
@@ -444,9 +449,10 @@ A run ends in one of two states:
   comment (summary, rounds, commit, QA tests added, and the `jfdi merge` approval
   line) to the ticket note for your review — the autonomous decisions are already
   their own decision comments above it. See [Integration & Merging](integration.md).
-- **Blocked** — an escalation, exhausted rounds, or a failed integration. The card
-  moves to **Blocked**, the reason is in the ticket note, and the worktree is kept
-  for inspection. `jfdi run` exits with code 2 in this case.
+- **Blocked** — an escalation, exhausted rounds, malformed feedback history, or a
+  failed integration. The card moves to **Blocked**, the reason is in the ticket
+  note, and the worktree is kept for inspection. `jfdi run` exits with code 2 in
+  this case.
 
 Either way, the complete paper trail is on disk: the ticket note holds the
 human-readable record (`## Comments`, `## Questions`), and the state

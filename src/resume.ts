@@ -131,6 +131,18 @@ interface DroppedFeedbackMarker {
 
 type FeedbackHistoryEntry = FeedbackItem | DroppedFeedbackMarker;
 
+/** A tool-owned history.json violated the shape saveFeedbackHistory writes. */
+export class FeedbackHistoryError extends Error {
+  constructor(
+    readonly filePath: string,
+    readonly failure: string,
+    readonly offendingContent: string,
+  ) {
+    super(`malformed feedback history at ${filePath}: ${failure}`);
+    this.name = "FeedbackHistoryError";
+  }
+}
+
 /**
  * Persist a run's unfinished feedback — the rounds a later dispatch still has
  * to answer. The in-memory history dies with the process, so it is written as
@@ -194,22 +206,31 @@ function isDroppedFeedbackMarker(value: unknown): value is DroppedFeedbackMarker
   );
 }
 
-/**
- * Read a previous run's feedback rounds. A missing, truncated or mangled file
- * reads as no history: the resumed run loses the *why* but still runs, which
- * beats refusing to dispatch over an unreadable log.
- */
+/** Read a previous run's feedback rounds. Missing is empty; malformed blocks the caller. */
 export async function loadFeedbackHistory(runDir: string): Promise<FeedbackItem[]> {
-  const content = await readIfExists(historyPath(runDir));
+  const filePath = historyPath(runDir);
+  const content = await readIfExists(filePath);
   if (content === null) return [];
   let parsed: unknown;
   try {
     parsed = JSON.parse(content);
-  } catch {
-    return [];
+  } catch (error) {
+    throw new FeedbackHistoryError(
+      filePath,
+      `JSON parse failed: ${(error as Error).message}`,
+      content,
+    );
   }
-  if (!Array.isArray(parsed)) return [];
+  if (!Array.isArray(parsed))
+    throw new FeedbackHistoryError(filePath, "top-level value is not an array", content);
   const entries: unknown[] = parsed;
-  if (!entries.every((entry) => isFeedbackItem(entry) || isDroppedFeedbackMarker(entry))) return [];
+  for (const [index, entry] of entries.entries()) {
+    if (!isFeedbackItem(entry) && !isDroppedFeedbackMarker(entry))
+      throw new FeedbackHistoryError(
+        filePath,
+        `entry at index ${index} is not a feedback item or dropped-feedback marker`,
+        JSON.stringify(entry, null, 2),
+      );
+  }
   return entries.filter(isFeedbackItem);
 }

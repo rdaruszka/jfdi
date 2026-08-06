@@ -16,6 +16,7 @@ import type {
 import type { PauseController } from "./pause.js";
 import { formatGateCommands, loadPrompt, type PromptName, renderPrompt } from "./prompts.js";
 import {
+  FeedbackHistoryError,
   type FeedbackItem,
   formatResumeSection,
   loadFeedbackHistory,
@@ -140,12 +141,26 @@ async function nextRunDir(stateDir: string, ticketId: string): Promise<RunDirs> 
   const entries = await fs.readdir(base);
   const runCount = entries.filter((e) => /^run-\d+$/.test(e)).length;
   const current = path.join(base, `run-${runCount + 1}`);
-  await ensureDir(current);
   return {
     current,
     previous: runCount > 0 ? path.join(base, `run-${runCount}`) : null,
     runNumber: runCount + 1,
   };
+}
+
+/** The warning a malformed tool-owned history file leaves for the operator. */
+function malformedFeedbackHistoryWarning(error: FeedbackHistoryError): string {
+  return [
+    `WARNING: Malformed feedback history at ${error.filePath} blocked this run: ${error.failure}.`,
+    "",
+    "Offending content:",
+    "",
+    "```json",
+    error.offendingContent,
+    "```",
+    "",
+    "Fix the file to resume with its feedback intact, or delete it to deliberately resume without history. Moving the card back before doing one of those will block it again.",
+  ].join("\n");
 }
 
 /**
@@ -1601,13 +1616,37 @@ export async function runPipeline(
     ticket,
     path.join(context.repoRoot, context.config.ticketsDir),
   );
+  const runDirs = await nextRunDir(context.stateDir, ticket.id);
+
+  // Why the previous run failed. A malformed tool-owned file is an impossible
+  // state, so stop before creating or sanitizing the worktree or dispatching. The
+  // next run directory is deliberately not created: fixing or deleting this
+  // same file is the only way a re-dispatch can proceed.
+  let priorHistory: FeedbackItem[] = [];
+  try {
+    if (runDirs.previous) priorHistory = await loadFeedbackHistory(runDirs.previous);
+  } catch (error) {
+    if (!(error instanceof FeedbackHistoryError)) throw error;
+    const warning = malformedFeedbackHistoryWarning(error);
+    await recordTransition(notePath, "resume", 1, warning);
+    context.log.emit("error", ticket.id, {
+      message: error.message,
+      filePath: error.filePath,
+      failure: error.failure,
+    });
+    context.log.emit("blocked", ticket.id, {
+      reason: error.message.slice(0, MAX_REASON_CHARS),
+    });
+    return { status: "blocked", reason: error.message, observations: [] };
+  }
+
   const worktree = await createWorktree(
     context.repoRoot,
     worktreesDir(context.jfdiDir),
     ticket.id,
     target,
   );
-  const runDirs = await nextRunDir(context.stateDir, ticket.id);
+  await ensureDir(runDirs.current);
   // A fresh tally per run, and the clock the ticket-level elapsed measures from.
   context.usage.start(ticket.id);
   const runStartedMs = nowMs(context);
@@ -1630,8 +1669,7 @@ export async function runPipeline(
       hasAbortedMerge: resume.hasAbortedMerge,
     });
 
-  // Why the previous run failed, recovered from disk; `history` is this run's own.
-  const priorHistory = runDirs.previous ? await loadFeedbackHistory(runDirs.previous) : [];
+  // `history` is this run's own; `priorHistory` was recovered before sanitizing.
   const history: FeedbackItem[] = [];
   const allDecisions: string[] = [];
   const allObservations = new Set<string>();
