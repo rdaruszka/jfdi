@@ -2,11 +2,11 @@ import * as path from "node:path";
 import { findTicketCard, moveCardSafe } from "../cards.js";
 import { branchExists, ticketBranch } from "../git.js";
 import { integrateTicket } from "../integrate.js";
-import { worktreesDir } from "../pipeline.js";
+import { type PipelineContext, worktreesDir } from "../pipeline.js";
 import { isCorruptReport, loadReport, recordCorruptReport } from "../report.js";
 import { ensureTicketNote, resolveTicket } from "../tickets.js";
 import { fileExists } from "../util/fsx.js";
-import { attachInlinePrinter, buildContext, type CliContext } from "./context.js";
+import { attachInlinePrinter, buildContext } from "./context.js";
 
 export interface MergeOptions {
   cwd?: string;
@@ -20,7 +20,7 @@ export interface MergeOptions {
  * ticket never had one, and the merge proceeds boardless.
  */
 async function moveTicketCard(
-  context: CliContext,
+  context: PipelineContext,
   ticketId: string,
   toColumn: string,
   shouldCheckOff: boolean,

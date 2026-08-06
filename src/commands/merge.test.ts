@@ -167,4 +167,16 @@ describe("mergeCommand board bookkeeping", () => {
 
     expect(await git(fixture.repo, "log", "--oneline", "main")).toContain("implement the thing");
   });
+
+  // Runs mergeCommand end-to-end through buildContext (which now returns
+  // PipelineContext, no CliContext wrapper) and its no-branch early return.
+  // Guards that collapsing the two context types left the command's entry
+  // path intact.
+  it("returns 1 and leaves the target untouched when the ticket has no branch", async () => {
+    const before = await git(fixture.repo, "rev-parse", "main");
+
+    expect(await runMerge()).toBe(1);
+
+    expect(await git(fixture.repo, "rev-parse", "main")).toBe(before);
+  });
 });
