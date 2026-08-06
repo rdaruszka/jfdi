@@ -245,16 +245,19 @@ cost from whichever surface they are looking at. Where more than one stage's
 numbers appear together, they appear as a table. The **ready-to-merge** comment
 (on-approval mode) and the **merged** comment both carry the whole run:
 
-| Stage | Sessions | Time | Cost |
-|---|---|---|---|
-| Implementation | 2 | 28m | $9.00 |
-| Code Review | 2 | 6m | $2.50 |
-| QA | 1 | 7m | $1.87 |
-| Scribe | 3 | 1m | $0.04 |
-| **Total** | **8** | **agent 42m · elapsed 3h 10m** | **$13.41** |
+| Stage | Model | Sessions | Time | Cost |
+|---|---|---|---|---|
+| Implementation | claude-opus-4-8 (provider-confirmed) | 2 | 28m | $9.00 |
+| Code Review | gpt-5.6-sol (configured) | 2 | 6m | $2.50 |
+| QA | claude-opus-4-8 (provider-confirmed) | 1 | 7m | $1.87 |
+| Scribe | claude-sonnet-5 (provider-confirmed) | 3 | 1m | $0.04 |
+| **Total** |  | **8** | **agent 42m · elapsed 3h 10m** | **$13.41** |
 
 Every session is counted, the scribe included — a total that omits sessions is a
-lie. Two clocks are labeled distinctly: **agent** time is the wall-clock summed
+lie. Each model the provider reports is labeled **provider-confirmed**; when it
+reports none, the configured model is shown and labeled **configured** instead.
+If continuations use more than one model, the row lists every one. Two clocks are
+labeled distinctly: **agent** time is the wall-clock summed
 around the sessions themselves; **elapsed** is dispatch → merge-ready, which
 includes everything the run waited on in between. A row (or the total) whose
 price is unknown shows a token count instead of dollars, never a guessed figure;

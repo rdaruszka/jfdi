@@ -67,7 +67,7 @@ export interface SessionUsage {
   cachedInputTokens: number;
   /** Output tokens as the provider counts them, including Codex reasoning tokens. */
   outputTokens: number;
-  /** The provider model, for the price lookup and diagnostics. Absent when unreported. */
+  /** The provider-confirmed model, carried into usage rows and reports. Absent when unreported. */
   model?: string;
   /**
    * True when `costUsd` is a price-table estimate (Codex) rather than a figure

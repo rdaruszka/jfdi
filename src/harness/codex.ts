@@ -176,13 +176,12 @@ function parseStreamLine(line: string): CodexStreamLine | null {
  */
 function pricedUsage(
   tokens: SessionUsage | null,
-  model: string | undefined,
+  configuredModel: string | undefined,
 ): SessionUsage | undefined {
   if (tokens === null) return undefined;
-  const costUsd = codexCostUsd(model, tokens);
+  const costUsd = codexCostUsd(configuredModel, tokens);
   return {
     ...tokens,
-    ...(model ? { model } : {}),
     costUsd,
     // A dollar figure here is always a table estimate (Codex reports no cost);
     // flag it so the dollars carry an "estimate, runs low" note downstream. An

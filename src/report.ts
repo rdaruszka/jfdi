@@ -79,10 +79,16 @@ export async function loadReport(
   const shapeError = reportShapeError(parsed);
   if (shapeError !== null) return { kind: "corrupt", path: reportPath, error: shapeError };
   const record = parsed as Record<string, unknown>;
-  // Backfill the cost/time fields so an older report loads as one without a table.
+  // Backfill usage fields so older reports load without inventing model provenance.
+  const usageRows = Array.isArray(record.usageRows)
+    ? (record.usageRows as RunReport["usageRows"]).map((row) => ({
+        ...row,
+        models: Array.isArray(row.models) ? row.models : [],
+      }))
+    : [];
   return {
     ...(record as unknown as RunReport),
-    usageRows: Array.isArray(record.usageRows) ? (record.usageRows as RunReport["usageRows"]) : [],
+    usageRows,
     elapsedMs: typeof record.elapsedMs === "number" ? record.elapsedMs : 0,
   };
 }

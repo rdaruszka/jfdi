@@ -46,7 +46,7 @@ import {
   shortSha,
   statusLine,
 } from "./transitions.js";
-import type { UsageRegistry, UsageRow } from "./usage.js";
+import { resolveUsageModel, type UsageRegistry, type UsageRow } from "./usage.js";
 import { todayIsoDate } from "./util/dates.js";
 import { ensureDir, fileExists, readIfExists } from "./util/fsx.js";
 import {
@@ -102,7 +102,7 @@ export interface RunReport {
   testsAdded: string;
   rounds: number;
   commit: string;
-  /** Per-stage cost/time tally for this run's table. Scribe included; integration not yet. */
+  /** Per-stage model/cost/time tally for this run's table. Scribe included; integration not yet. */
   usageRows: UsageRow[];
   /** Dispatch → merge-ready wall-clock, labeled `elapsed` beside agent time. */
   elapsedMs: number;
@@ -217,8 +217,8 @@ function narrateSessionActivity(
 }
 
 /**
- * One `stages` entry's agent selection, as the event stream records it — so
- * `jfdi logs` can answer "which model produced this" long after the run.
+ * One `stages` entry's configured agent selection, as `stage_start` records it.
+ * Provider-confirmed models arrive later through session usage on `stage_end`.
  */
 export function sessionSelectionFields(
   config: JfdiConfig,
@@ -233,18 +233,21 @@ export function sessionSelectionFields(
 }
 
 /**
- * The cost/time a `stage_end` carries: this session's own numbers, plus the
- * run's cumulative totals so a renderer can show a running per-ticket figure
- * from the stream alone. The cumulative is read after the session was tallied,
- * so it includes it. `runCostUsd` is null when any session so far was unpriced.
+ * The model/cost/time a `stage_end` carries: this session's own values, plus
+ * the run's cumulative totals so a renderer can show a running per-ticket
+ * figure from the stream alone. The cumulative is read after the session was
+ * tallied, so it includes it. `runCostUsd` is null when any session was unpriced.
  */
 function stageUsageFields(
   context: PipelineContext,
   ticketId: string,
+  sessionKind: SessionKind,
   usage: SessionUsage,
 ): Record<string, unknown> {
   const totals = context.usage.of(ticketId).totals();
+  const model = resolveUsageModel(usage, context.config.stages[sessionKind].model);
   return {
+    ...(model === null ? {} : { model: model.name, modelSource: model.source }),
     durationMs: usage.durationMs,
     costUsd: usage.costUsd,
     tokens: usage.inputTokens + usage.outputTokens,
@@ -344,7 +347,13 @@ function tallied(
   sessionKind: SessionKind,
   result: HarnessResult,
 ): HarnessResult {
-  if (result.usage) context.usage.add(ticketId, sessionKind, result.usage);
+  if (result.usage)
+    context.usage.add(
+      ticketId,
+      sessionKind,
+      result.usage,
+      context.config.stages[sessionKind].model,
+    );
   return result;
 }
 
@@ -818,7 +827,7 @@ export async function runQaStage(
   context.log.emit("stage_end", ticket.id, {
     stage: "qa",
     verdict: verdict?.verdict ?? (outcome.ok ? "invalid-verdict" : "session-failed"),
-    ...stageUsageFields(context, ticket.id, outcome.usage),
+    ...stageUsageFields(context, ticket.id, "qa", outcome.usage),
   });
   return result;
 }
@@ -931,7 +940,7 @@ async function runImplementationStage(
   context.log.emit("stage_end", ticket.id, {
     stage: "implementation",
     verdict: verdict?.status ?? (outcome.ok ? "invalid-verdict" : "session-failed"),
-    ...stageUsageFields(context, ticket.id, outcome.usage),
+    ...stageUsageFields(context, ticket.id, "implementation", outcome.usage),
   });
   if (result.invalidVerdictFailure)
     return staged({ kind: "blocked", reason: result.invalidVerdictFailure });
@@ -1047,7 +1056,7 @@ async function runCodeReviewStage(
   context.log.emit("stage_end", ticket.id, {
     stage: "code-review",
     verdict: verdict?.verdict ?? (outcome.ok ? "invalid-verdict" : "session-failed"),
-    ...stageUsageFields(context, ticket.id, outcome.usage),
+    ...stageUsageFields(context, ticket.id, "code-review", outcome.usage),
   });
   if (result.invalidVerdictFailure)
     return {
