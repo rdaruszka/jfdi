@@ -30,8 +30,8 @@ import {
   saveReport,
 } from "./report.js";
 import { ensureJfdiGitignore } from "./scaffold.js";
-import { recordTransition } from "./transitions.js";
 import { ensureTicketNote, resolveTicket, type Ticket } from "./tickets.js";
+import { recordTransition } from "./transitions.js";
 import { fileExists, readIfExists } from "./util/fsx.js";
 import { ticketIdFromCard } from "./util/ids.js";
 
@@ -458,7 +458,6 @@ export class Coordinator {
     beginIds: Set<string>,
     ticketsDir: string,
   ): Promise<void> {
-    const columns = this.context.config.board.columns;
     const nodesById = new Map(nodes.map((node) => [node.id, node]));
     const live = new Set<string>();
     const blockingNodes: BlockingNode[] = nodes.map((node) => ({
@@ -470,29 +469,39 @@ export class Coordinator {
       if (!this.reportedCycles.has(signature) && !cycle.some((id) => beginIds.has(id))) continue;
       live.add(signature);
       const isNewEpisode = !this.reportedCycles.has(signature);
-      if (isNewEpisode) {
-        this.reportedCycles.add(signature);
-        this.context.log.emit("error", undefined, {
-          message: `blocked-by cycle among begin-column tickets: ${cycle.join(", ")} — none will dispatch until it is untied`,
-          cycle,
-        });
-      }
-      const loop = `${cycle.join(" → ")} → ${cycle[0]}`;
-      const comment = `Blocked-by loop: ${loop}. A human must break the loop by removing one blocked-by link.`;
-      for (const id of cycle) {
-        const node = nodesById.get(id);
-        if (!node) throw new Error(`blocked-by cycle member "${id}" has no board card`);
-        const shouldBlock = node.column !== columns.blocked;
-        if (shouldBlock)
-          await moveCardSafe(this.context, node.card, node.column, columns.blocked, false);
-        if (isNewEpisode || shouldBlock) {
-          const notePath = await ensureTicketNote(node.ticket, ticketsDir);
-          await recordTransition(notePath, "coordinator", 0, comment);
-        }
-      }
+      if (isNewEpisode) this.reportedCycles.add(signature);
+      await this.refuseBlockedByCycle(cycle, nodesById, ticketsDir, isNewEpisode);
     }
     for (const signature of [...this.reportedCycles])
       if (!live.has(signature)) this.reportedCycles.delete(signature);
+  }
+
+  /** Move and annotate the members that this cycle episode visibly refuses. */
+  private async refuseBlockedByCycle(
+    cycle: string[],
+    nodesById: Map<string, BlockingCardNode>,
+    ticketsDir: string,
+    isNewEpisode: boolean,
+  ): Promise<void> {
+    if (isNewEpisode)
+      this.context.log.emit("error", undefined, {
+        message: `blocked-by cycle among begin-column tickets: ${cycle.join(", ")} — none will dispatch until it is untied`,
+        cycle,
+      });
+    const loop = `${cycle.join(" → ")} → ${cycle[0]}`;
+    const comment = `Blocked-by loop: ${loop}. A human must break the loop by removing one blocked-by link.`;
+    const blockedColumn = this.context.config.board.columns.blocked;
+    for (const id of cycle) {
+      const node = nodesById.get(id);
+      if (!node) throw new Error(`blocked-by cycle member "${id}" has no board card`);
+      const shouldBlock = node.column !== blockedColumn;
+      if (shouldBlock)
+        await moveCardSafe(this.context, node.card, node.column, blockedColumn, false);
+      if (isNewEpisode || shouldBlock) {
+        const notePath = await ensureTicketNote(node.ticket, ticketsDir);
+        await recordTransition(notePath, "coordinator", 0, comment);
+      }
+    }
   }
 
   /**

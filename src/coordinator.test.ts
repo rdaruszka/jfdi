@@ -8,7 +8,6 @@ import { branchExists, createWorktree, deleteBranch, git, isAncestor, revParse }
 import { integrateTicket } from "./integrate.js";
 import { worktreesDir } from "./pipeline.js";
 import { isCorruptReport, loadReport, saveReport } from "./report.js";
-import { parseTicketNote } from "./ticket-note.js";
 import {
   commitFile,
   type Fixture,
@@ -16,6 +15,7 @@ import {
   sessionKindOf,
   writeVerdict,
 } from "./test-helpers.js";
+import { parseTicketNote } from "./ticket-note.js";
 import { resolveTicket } from "./tickets.js";
 import { ticketIdFromCard } from "./util/ids.js";
 
