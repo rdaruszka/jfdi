@@ -105,13 +105,9 @@ async function runIntegrationAgent(
   context.log.emit("stage_end", ticket.id, {
     stage,
     verdict: verdict?.resolution ?? (result.ok ? "invalid-verdict" : "session-failed"),
-    ...(result.usage
-      ? {
-          durationMs: result.usage.durationMs,
-          costUsd: result.usage.costUsd,
-          tokens: result.usage.inputTokens + result.usage.outputTokens,
-        }
-      : {}),
+    durationMs: result.usage.durationMs,
+    costUsd: result.usage.costUsd,
+    tokens: result.usage.inputTokens + result.usage.outputTokens,
   });
   return verdict;
 }

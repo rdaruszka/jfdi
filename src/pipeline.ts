@@ -58,6 +58,8 @@ import {
   type VerdictReadResult,
 } from "./verdicts.js";
 
+type MeasuredHarnessResult = HarnessResult & { usage: SessionUsage };
+
 export interface PipelineContext {
   repoRoot: string;
   /** Absolute path to .jfdi/ — versioned setup (config, prompts, sandbox) + worktrees. */
@@ -259,7 +261,7 @@ function stageUsageFields(
  * provider reported none (an early crash still cost real time). Duration is the
  * pipeline's own measure — never the provider's — so it is always present.
  */
-function withDuration(result: HarnessResult, durationMs: number): HarnessResult {
+function withDuration(result: HarnessResult, durationMs: number): MeasuredHarnessResult {
   const usage: SessionUsage = result.usage
     ? { ...result.usage, durationMs }
     : {
@@ -279,7 +281,7 @@ async function runOneSession(
   prompt: string,
   options: SpawnOptions,
   onEvent: (event: HarnessEvent) => void,
-): Promise<HarnessResult> {
+): Promise<MeasuredHarnessResult> {
   const session = context.harnesses[sessionKind].spawn(prompt, options);
   context.sessions?.add(session);
   const startedMs = nowMs(context);
@@ -312,7 +314,7 @@ export async function runHeldSession(
   prompt: string,
   options: SpawnOptions,
   onEvent: (event: HarnessEvent) => void,
-): Promise<HarnessResult> {
+): Promise<MeasuredHarnessResult> {
   let attemptOptions = options;
   // Provider-failure retries are one logical session: their wall-clock all
   // counts as agent time, but the tokens/cost come from the attempt that
@@ -321,7 +323,7 @@ export async function runHeldSession(
   for (let attempt = 1; ; attempt++) {
     await context.pause.waitWhilePaused();
     const result = await runOneSession(context, sessionKind, prompt, attemptOptions, onEvent);
-    accumulatedMs += result.usage?.durationMs ?? 0;
+    accumulatedMs += result.usage.durationMs;
     if (!result.failure) {
       context.pause.reportHealthy();
       return tallied(context, ticketId, sessionKind, withDuration(result, accumulatedMs));
@@ -342,9 +344,9 @@ function tallied(
   context: PipelineContext,
   ticketId: string,
   sessionKind: SessionKind,
-  result: HarnessResult,
-): HarnessResult {
-  if (result.usage) context.usage.add(ticketId, sessionKind, result.usage);
+  result: MeasuredHarnessResult,
+): MeasuredHarnessResult {
+  context.usage.add(ticketId, sessionKind, result.usage);
   return result;
 }
 
@@ -381,19 +383,8 @@ async function runStageSession(
     resultText: result.text,
     verdictPath,
     preSessionHead,
-    usage: result.usage ?? zeroUsage(),
+    usage: result.usage,
     ...(result.sessionId ? { sessionId: result.sessionId } : {}),
-  };
-}
-
-/** A usage with everything at zero — a defensive default; runHeldSession fills real duration. */
-function zeroUsage(): SessionUsage {
-  return {
-    durationMs: 0,
-    costUsd: null,
-    inputTokens: 0,
-    cachedInputTokens: 0,
-    outputTokens: 0,
   };
 }
 
