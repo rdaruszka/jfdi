@@ -22,6 +22,11 @@ export type IntegrationMode = "auto" | "on-approval";
 export type PermissionMode = "auto" | "bypass";
 export type { HarnessName, SessionKind };
 
+export interface IntegrationRemoteConfig {
+  fetch_before: boolean;
+  push_after: boolean;
+}
+
 /**
  * Which agent one `stages` entry runs. `model` and `effort` are provider-native
  * strings passed to the CLI verbatim; absent means the provider's own default,
@@ -39,7 +44,11 @@ export interface JfdiConfig {
   ticketsDir: string;
   gate: GateCommand[];
   pipeline: { max_rounds: number };
-  integration: { target_branch: string; mode: IntegrationMode };
+  integration: {
+    target_branch: string;
+    mode: IntegrationMode;
+    remote: IntegrationRemoteConfig;
+  };
   permissions: { mode: PermissionMode };
   max_concurrent: number;
   /** Required, one entry per stage plus the scribe — there is no global harness. */
@@ -64,7 +73,11 @@ export function defaultConfig(): JfdiConfig {
     ticketsDir: `${JFDI_DIR}/tickets`,
     gate: [],
     pipeline: { max_rounds: 3 },
-    integration: { target_branch: "main", mode: "on-approval" },
+    integration: {
+      target_branch: "main",
+      mode: "on-approval",
+      remote: { fetch_before: false, push_after: false },
+    },
     permissions: { mode: "auto" },
     max_concurrent: 2,
     stages: {
@@ -131,6 +144,12 @@ function positiveInteger(value: unknown, fallback: number, where: string): numbe
   if (value === undefined) return fallback;
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1)
     throw new ConfigError(`${where} must be a positive integer`);
+  return value;
+}
+
+function booleanOrDefault(value: unknown, fallback: boolean, where: string): boolean {
+  if (value === undefined) return fallback;
+  if (typeof value !== "boolean") throw new ConfigError(`${where} must be a boolean`);
   return value;
 }
 
@@ -237,6 +256,9 @@ export function parseConfig(raw: unknown): JfdiConfig {
 
   const pipeline = isRecord(raw.pipeline) ? raw.pipeline : {};
   const integration = isRecord(raw.integration) ? raw.integration : {};
+  if (integration.remote !== undefined && !isRecord(integration.remote))
+    throw new ConfigError("integration.remote must be an object");
+  const integrationRemote = isRecord(integration.remote) ? integration.remote : {};
   const mode = stringOrDefault(integration.mode, defaults.integration.mode, "integration.mode");
   if (mode !== "auto" && mode !== "on-approval")
     throw new ConfigError(`integration.mode must be "auto" or "on-approval", got "${mode}"`);
@@ -267,6 +289,18 @@ export function parseConfig(raw: unknown): JfdiConfig {
         "integration.target_branch",
       ),
       mode,
+      remote: {
+        fetch_before: booleanOrDefault(
+          integrationRemote.fetch_before,
+          defaults.integration.remote.fetch_before,
+          "integration.remote.fetch_before",
+        ),
+        push_after: booleanOrDefault(
+          integrationRemote.push_after,
+          defaults.integration.remote.push_after,
+          "integration.remote.push_after",
+        ),
+      },
     },
     permissions: { mode: permissionMode },
     max_concurrent: positiveInteger(raw.max_concurrent, defaults.max_concurrent, "max_concurrent"),

@@ -75,6 +75,7 @@ One JSON object per line:
 | `merge_ready` | — | Passed pipeline awaiting approval (`on-approval`) |
 | `merge_queued` | — | Entered the serialized integration queue |
 | `merge_start` | `note?` | Integration began |
+| `integration_activity` | `operation`, `status`, `remote`, `text`, `attempt?`, `maxAttempts?`, `delayMs?`, `error?` | Fetch, target fast-forward, push, retry, or final remote-operation failure during integration |
 | `complicated_merge` | `notes` | Conflict resolution touched real logic → re-QA |
 | `merged` | `note?` | Landed on the target branch (`note` distinguishes already-contained and hand-merge detection) |
 | `done` | `note` | Card closed without a merge event (e.g. dragged out of Ready to Merge) |

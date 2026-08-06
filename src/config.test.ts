@@ -24,12 +24,20 @@ describe("parseConfig", () => {
         { name: "test", cmd: "npm test" },
       ],
       pipeline: { max_rounds: 3 },
-      integration: { target_branch: "develop", mode: "auto" },
+      integration: {
+        target_branch: "develop",
+        mode: "auto",
+        remote: { fetch_before: true, push_after: true },
+      },
       permissions: { mode: "bypass" },
       max_concurrent: 4,
       stages: STAGES,
     });
-    expect(config.integration).toEqual({ target_branch: "develop", mode: "auto" });
+    expect(config.integration).toEqual({
+      target_branch: "develop",
+      mode: "auto",
+      remote: { fetch_before: true, push_after: true },
+    });
     expect(config.permissions).toEqual({ mode: "bypass" });
     expect(config.gate).toHaveLength(2);
     expect(config.max_concurrent).toBe(4);
@@ -40,6 +48,25 @@ describe("parseConfig", () => {
     expect(() => parseConfig({ integration: { mode: "yolo" }, stages: STAGES })).toThrow(
       ConfigError,
     );
+  });
+
+  it("defaults and validates remote integration flags", () => {
+    expect(parseConfig({ stages: STAGES }).integration.remote).toEqual({
+      fetch_before: false,
+      push_after: false,
+    });
+    expect(
+      parseConfig({
+        integration: { remote: { fetch_before: true, push_after: true } },
+        stages: STAGES,
+      }).integration.remote,
+    ).toEqual({ fetch_before: true, push_after: true });
+    expect(() => parseConfig({ integration: { remote: "origin" }, stages: STAGES })).toThrowError(
+      new ConfigError("integration.remote must be an object"),
+    );
+    expect(() =>
+      parseConfig({ integration: { remote: { fetch_before: "yes" } }, stages: STAGES }),
+    ).toThrowError(new ConfigError("integration.remote.fetch_before must be a boolean"));
   });
 
   it("defaults, accepts, and validates the global permission mode", () => {

@@ -1,7 +1,8 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { type EventLog, type JfdiEvent } from "./events.js";
 import { git, isAncestor, isMergeInProgress, revParse } from "./git.js";
 import { IntegrationQueue, integrateTicket } from "./integrate.js";
 import { type PipelineContext, runPipeline } from "./pipeline.js";
@@ -52,8 +53,55 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
   await fixture.cleanup();
 });
+
+/** Add a bare origin whose main branch starts at the fixture's target. */
+async function addOrigin(): Promise<string> {
+  const remote = path.join(fixture.root, "origin.git");
+  await fs.mkdir(remote);
+  await git(remote, "init", "--bare", "--initial-branch=main");
+  await git(fixture.repo, "remote", "add", "origin", remote);
+  await git(fixture.repo, "push", "-u", "origin", "main");
+  return remote;
+}
+
+/** Clone origin as a human collaborator and configure fixture-only identity. */
+async function clonePublisher(remote: string): Promise<string> {
+  const publisher = path.join(fixture.root, "publisher");
+  await git(fixture.root, "clone", remote, publisher);
+  await git(publisher, "config", "user.email", "publisher@jfdi.local");
+  await git(publisher, "config", "user.name", "JFDI Publisher Test");
+  return publisher;
+}
+
+/** Resolve when the remote operation stream reaches a status count. */
+function waitForRemoteEventCount(
+  events: JfdiEvent[],
+  log: Pick<EventLog, "on">,
+  status: string,
+  count: number,
+): Promise<void> {
+  const matchingCount = () => events.filter((event) => event.data?.status === status).length;
+  if (matchingCount() >= count) return Promise.resolve();
+  return new Promise((resolve) => {
+    const unsubscribe = log.on(() => {
+      if (matchingCount() < count) return;
+      unsubscribe();
+      resolve();
+    });
+  });
+}
+
+/** Advance fake time once for each fixed remote retry delay. */
+async function driveRemoteRetries(events: JfdiEvent[], log: Pick<EventLog, "on">): Promise<void> {
+  const delaysMs = [30_000, 60_000, 120_000, 240_000];
+  for (let retryIndex = 0; retryIndex < delaysMs.length; retryIndex += 1) {
+    await waitForRemoteEventCount(events, log, "retry", retryIndex + 1);
+    await vi.advanceTimersByTimeAsync(delaysMs[retryIndex] as number);
+  }
+}
 
 describe("integrateTicket", () => {
   it("refuses a corrupt report before integration touches git or the evidence", async () => {
@@ -823,7 +871,11 @@ describe("integrateTicket", () => {
    */
   it("lands on a configured non-main target and leaves other branches alone", async () => {
     const trunk = await makeFixture({
-      integration: { target_branch: "trunk", mode: "auto" },
+      integration: {
+        target_branch: "trunk",
+        mode: "auto",
+        remote: { fetch_before: false, push_after: false },
+      },
     });
     try {
       await git(trunk.repo, "branch", "trunk");
@@ -847,6 +899,191 @@ describe("integrateTicket", () => {
     } finally {
       await trunk.cleanup();
     }
+  });
+
+  it("does no remote work when the remote block is disabled", async () => {
+    const remote = await addOrigin();
+    const remoteHead = await revParse(remote, "refs/heads/main");
+    const context = fixture.context(passingHandler("local-only.txt"));
+    const events: JfdiEvent[] = [];
+    context.log.on((event) => events.push(event));
+    const ticket = await resolveTicket("Local integration", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    if (outcome.status !== "passed") throw new Error("pipeline should pass");
+
+    expect(await integrateTicket(context, ticket, outcome.worktree)).toEqual({ status: "merged" });
+    expect(await revParse(remote, "refs/heads/main")).toBe(remoteHead);
+    expect(events.filter((event) => event.type === "integration_activity")).toHaveLength(0);
+  });
+
+  it("keeps local-only behavior when remote flags are enabled but no remote exists", async () => {
+    const context = fixture.context(passingHandler("no-remote.txt"));
+    context.config.integration.remote = { fetch_before: true, push_after: true };
+    const events: JfdiEvent[] = [];
+    context.log.on((event) => events.push(event));
+    const ticket = await resolveTicket("No configured remote", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    if (outcome.status !== "passed") throw new Error("pipeline should pass");
+
+    expect(await integrateTicket(context, ticket, outcome.worktree)).toEqual({ status: "merged" });
+    expect(events.filter((event) => event.type === "integration_activity")).toHaveLength(0);
+  });
+
+  it("fetches and fast-forwards a behind target before building the landing merge", async () => {
+    const remote = await addOrigin();
+    await git(fixture.repo, "remote", "rename", "origin", "central");
+    const context = fixture.context(passingHandler("ticket-change.txt"));
+    context.config.integration.remote.fetch_before = true;
+    const events: JfdiEvent[] = [];
+    context.log.on((event) => events.push(event));
+    const ticket = await resolveTicket("Fetch remote work", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    if (outcome.status !== "passed") throw new Error("pipeline should pass");
+
+    const publisher = await clonePublisher(remote);
+    await commitFile(publisher, "remote-change.txt", "remote\n", "remote change");
+    await git(publisher, "push", "origin", "main");
+    const remoteCommit = await revParse(remote, "refs/heads/main");
+
+    expect(await integrateTicket(context, ticket, outcome.worktree)).toEqual({ status: "merged" });
+    expect(await git(fixture.repo, "rev-parse", "main^1")).toBe(remoteCommit);
+    expect(await fs.readFile(path.join(fixture.repo, "remote-change.txt"), "utf8")).toBe(
+      "remote\n",
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "integration_activity",
+        data: expect.objectContaining({ operation: "fast-forward", status: "succeeded" }),
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "integration_activity",
+        data: expect.objectContaining({ operation: "fetch", remote: "central" }),
+      }),
+    );
+    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
+    expect(note).toContain("Fast-forwarded local target `main`");
+  });
+
+  it("blocks before merging when the local target holds commits the fetched ref lacks", async () => {
+    const remote = await addOrigin();
+    const context = fixture.context(passingHandler("unmerged-ticket.txt"));
+    context.config.integration.remote.fetch_before = true;
+    const ticket = await resolveTicket("Reject target divergence", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    if (outcome.status !== "passed") throw new Error("pipeline should pass");
+
+    const publisher = await clonePublisher(remote);
+    await commitFile(publisher, "remote-side.txt", "remote\n", "remote side");
+    await git(publisher, "push", "origin", "main");
+    await commitFile(fixture.repo, "local-side.txt", "local\n", "local side");
+    const localHead = await revParse(fixture.repo, "main");
+
+    const result = await integrateTicket(context, ticket, outcome.worktree);
+
+    expect(result.status).toBe("blocked");
+    if (result.status !== "blocked") return;
+    expect(result.reason).toContain("local target ref main");
+    expect(result.reason).toContain("refs/remotes/origin/main");
+    expect(await revParse(fixture.repo, "main")).toBe(localHead);
+    expect(await isAncestor(fixture.repo, outcome.worktree.branch, "main")).toBe(false);
+  });
+
+  it("pushes only the landed target branch", async () => {
+    const remote = await addOrigin();
+    await git(fixture.repo, "branch", "--unset-upstream", "main");
+    const context = fixture.context(passingHandler("pushed-ticket.txt"));
+    context.config.integration.remote.push_after = true;
+    const events: JfdiEvent[] = [];
+    context.log.on((event) => events.push(event));
+    const ticket = await resolveTicket("Push landed target", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    if (outcome.status !== "passed") throw new Error("pipeline should pass");
+    const ticketBranch = outcome.worktree.branch;
+
+    expect(await integrateTicket(context, ticket, outcome.worktree)).toEqual({ status: "merged" });
+    expect(await revParse(remote, "refs/heads/main")).toBe(await revParse(fixture.repo, "main"));
+    await expect(revParse(remote, `refs/heads/${ticketBranch}`)).rejects.toThrow();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "integration_activity",
+        data: expect.objectContaining({ operation: "push", status: "succeeded" }),
+      }),
+    );
+  });
+
+  it("retries a rejected push while holding the queue, then blocks without rolling back", async () => {
+    const remote = await addOrigin();
+    const hook = path.join(remote, "hooks", "pre-receive");
+    await fs.writeFile(hook, "#!/bin/sh\necho 'push rejected by test remote' >&2\nexit 1\n");
+    await fs.chmod(hook, 0o755);
+    const context = fixture.context(passingHandler("rejected-push.txt"));
+    context.config.integration.remote.push_after = true;
+    const events: JfdiEvent[] = [];
+    context.log.on((event) => events.push(event));
+    const ticket = await resolveTicket("Rejected remote push", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    if (outcome.status !== "passed") throw new Error("pipeline should pass");
+    const remoteHead = await revParse(remote, "refs/heads/main");
+    const queue = new IntegrationQueue();
+    let hasStartedSecondIntegration = false;
+
+    vi.useFakeTimers();
+    const integration = queue.enqueue(() => integrateTicket(context, ticket, outcome.worktree));
+    const second = queue.enqueue(async () => {
+      hasStartedSecondIntegration = true;
+    });
+    const retryDriver = driveRemoteRetries(events, context.log);
+    await waitForRemoteEventCount(events, context.log, "retry", 1);
+    expect(hasStartedSecondIntegration).toBe(false);
+    await retryDriver;
+    const result = await integration;
+    await second;
+    vi.useRealTimers();
+
+    expect(result.status).toBe("blocked");
+    if (result.status !== "blocked") return;
+    expect(result.reason).toContain("git push with remote origin failed after 5 attempts");
+    expect(result.reason).toContain("push rejected by test remote");
+    expect(events.filter((event) => event.data?.status === "attempt")).toHaveLength(5);
+    expect(events.filter((event) => event.data?.status === "retry")).toHaveLength(4);
+    expect(hasStartedSecondIntegration).toBe(true);
+    expect(await revParse(remote, "refs/heads/main")).toBe(remoteHead);
+    expect(await revParse(fixture.repo, "main")).not.toBe(remoteHead);
+    expect(await fs.readFile(path.join(fixture.repo, "rejected-push.txt"), "utf8")).toBe(
+      "feature\n",
+    );
+    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
+    expect(note).toContain("retrying in 30 seconds");
+    expect(note).toContain("push rejected by test remote");
+  });
+
+  it("retries a failed fetch five times and leaves the ticket merge untouched", async () => {
+    const missingRemote = path.join(fixture.root, "missing-origin.git");
+    await git(fixture.repo, "remote", "add", "origin", missingRemote);
+    const context = fixture.context(passingHandler("never-merged.txt"));
+    context.config.integration.remote.fetch_before = true;
+    const events: JfdiEvent[] = [];
+    context.log.on((event) => events.push(event));
+    const ticket = await resolveTicket("Failed remote fetch", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    if (outcome.status !== "passed") throw new Error("pipeline should pass");
+    const targetHead = await revParse(fixture.repo, "main");
+
+    vi.useFakeTimers();
+    const integration = integrateTicket(context, ticket, outcome.worktree);
+    await driveRemoteRetries(events, context.log);
+    const result = await integration;
+    vi.useRealTimers();
+
+    expect(result.status).toBe("blocked");
+    if (result.status !== "blocked") return;
+    expect(result.reason).toContain("git fetch with remote origin failed after 5 attempts");
+    expect(result.reason).toContain(missingRemote);
+    expect(events.filter((event) => event.data?.status === "attempt")).toHaveLength(5);
+    expect(await revParse(fixture.repo, "main")).toBe(targetHead);
+    expect(await isAncestor(fixture.repo, outcome.worktree.branch, "main")).toBe(false);
   });
 });
 

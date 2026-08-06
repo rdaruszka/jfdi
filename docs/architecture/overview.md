@@ -159,8 +159,14 @@ sequenceDiagram
             H->>C: jfdi merge / drag card / hand-merge
         end
         C->>I: enqueue (serialized)
+        opt integration.remote.fetch_before
+            I->>G: fetch target from upstream remote; fast-forward if behind
+        end
         I->>I: merge target in → resolve → gate → (re-QA?)
         I->>G: land merge commit
+        opt integration.remote.push_after
+            I->>G: push target branch to upstream remote
+        end
         I-->>C: merged
         C->>C: card → Done ✓, worktree removed, branch deleted
     end
@@ -184,7 +190,10 @@ this repo.
    touches the target branch. When a separate `jfdi merge` process integrates,
    it flushes `merge_start` to the shared event stream before touching git; a
    coordinator that can observe its merged git state therefore also observes
-   the in-flight record and leaves that process to finish the card move.
+   the in-flight record and leaves that process to finish the card move. Optional
+   target-branch fetch/push retries remain inside this same critical section, so
+   a remote outage holds later merge-ready tickets instead of letting them race
+   into the same failure.
 4. **Atomic board writes.** The board is co-edited by Obsidian. Every write is a
    read → modify → verify-unchanged → temp-file-rename cycle, retried on
    conflict; edits are surgical (move one card line), never wholesale rewrites.

@@ -234,7 +234,11 @@ async function configure(
 ): Promise<void> {
   const configPath = path.join(sandbox.project, ".jfdi", "config.json");
   const config = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
-  config.integration = { target_branch: TARGET_BRANCH, mode: "on-approval" };
+  config.integration = {
+    target_branch: TARGET_BRANCH,
+    mode: "on-approval",
+    remote: { fetch_before: false, push_after: false },
+  };
   config.gate = gate;
   await fs.writeFile(configPath, JSON.stringify(config, null, 2));
 }
