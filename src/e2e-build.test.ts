@@ -43,4 +43,10 @@ describe("e2e build setup", () => {
     });
     expect(stdout).toContain("jfdi");
   });
+
+  it("keeps test harness doubles out of the production build", async () => {
+    const harnessArtifacts = await fs.readdir(path.join(repoRoot, "dist", "harness"));
+
+    expect(harnessArtifacts.filter((artifact) => artifact.startsWith("fake."))).toEqual([]);
+  });
 });

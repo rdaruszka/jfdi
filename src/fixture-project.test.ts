@@ -9,11 +9,15 @@ import { EventLog } from "./events.js";
 import { createProjectFixture } from "./fixture-project.js";
 import { runGate } from "./gate.js";
 import { git } from "./git.js";
-import { FakeHarness } from "./harness/fake.js";
 import { integrateTicket } from "./integrate.js";
 import { PauseController } from "./pause.js";
 import { type PipelineContext, runPipeline } from "./pipeline.js";
-import { DEFAULT_SCRIBE_HANDLER, sessionKindOf, writeVerdict } from "./test-helpers.js";
+import {
+  DEFAULT_SCRIBE_HANDLER,
+  FakeHarness,
+  sessionKindOf,
+  writeVerdict,
+} from "./test-helpers.js";
 import { resolveTicket } from "./tickets.js";
 import { UsageRegistry } from "./usage.js";
 

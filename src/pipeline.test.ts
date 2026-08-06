@@ -4,12 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JfdiConfig } from "./config.js";
 import type { JfdiEvent, StageName } from "./events.js";
 import { createWorktree, git, isMergeInProgress, mergeTargetIntoBranch } from "./git.js";
-import { type FakeHandler, FakeHarness } from "./harness/fake.js";
 import type { SessionKind } from "./harness/index.js";
 import { type PipelineContext, runPipeline } from "./pipeline.js";
 import {
   commitFile,
   DEFAULT_SCRIBE_HANDLER,
+  type FakeHandler,
+  FakeHarness,
   type Fixture,
   makeFixture,
   sessionKindOf,

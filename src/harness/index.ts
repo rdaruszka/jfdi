@@ -5,7 +5,6 @@ import type { Harness, HarnessName, SessionKind } from "./types.js";
 
 export { CLAUDE_EFFORT_LEVELS, ClaudeHarness } from "./claude.js";
 export { CODEX_EFFORT_LEVELS, CodexHarness } from "./codex.js";
-export { FakeHarness } from "./fake.js";
 export * from "./types.js";
 
 /**

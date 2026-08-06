@@ -8,8 +8,9 @@ mechanical task.
 
 Source: [src/harness/types.ts](../../src/harness/types.ts) (the interface),
 [claude.ts](../../src/harness/claude.ts), [codex.ts](../../src/harness/codex.ts)
-(the implementations), [fake.ts](../../src/harness/fake.ts) (the test double),
-[index.ts](../../src/harness/index.ts) (selection).
+(the implementations), and [index.ts](../../src/harness/index.ts) (selection).
+The test-only `FakeHarness` lives in
+[src/test-helpers.ts](../../src/test-helpers.ts), which production builds exclude.
 
 ## The interface
 

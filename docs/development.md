@@ -76,7 +76,7 @@ Two rules exist because their violations actually bit:
   [.jfdi/sandbox.md](../.jfdi/sandbox.md) is the reference isolation recipe.
 
 Agent sessions in tests are played by `FakeHarness`
-([src/harness/fake.ts](../src/harness/fake.ts)) — an in-process handler that
+([src/test-helpers.ts](../src/test-helpers.ts)) — an in-process handler that
 performs real side effects (writes files, drops verdict files) and records every
 call — or, for spawn-path coverage, by stub `claude`/`codex` scripts that replay
 canned JSON lines. The scribe stands behind its own fake, seeded by
