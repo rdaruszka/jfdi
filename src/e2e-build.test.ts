@@ -49,4 +49,39 @@ describe("e2e build setup", () => {
 
     expect(harnessArtifacts.filter((artifact) => artifact.startsWith("fake."))).toEqual([]);
   });
+
+  it("ships no fake harness code anywhere in dist, under any filename", async () => {
+    // The filename check above only guards dist/harness/fake.*. The acceptance
+    // criterion is broader: NO fake/double code lands in dist under any path. A
+    // reintroduced double inline in a production file, or a stray build of
+    // test-helpers.ts, would clear the filename check while still shipping the
+    // mock. Pin it by symbol across the whole tree — this is the actual product
+    // surface a consumer installs.
+    const distRoot = path.join(repoRoot, "dist");
+
+    async function jsFilesUnder(dir: string): Promise<string[]> {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      const nested = await Promise.all(
+        entries.map(async (entry) => {
+          const full = path.join(dir, entry.name);
+          if (entry.isDirectory()) return jsFilesUnder(full);
+          return entry.name.endsWith(".js") ? [full] : [];
+        }),
+      );
+      return nested.flat();
+    }
+
+    const jsFiles = await jsFilesUnder(distRoot);
+    const contents = await Promise.all(
+      jsFiles.map(async (file) => ({ file, source: await fs.readFile(file, "utf8") })),
+    );
+    const leaked = contents
+      .filter(({ source }) => /\bFakeHarness\b|\bFakeHandler\b/.test(source))
+      .map(({ file }) => path.relative(distRoot, file));
+
+    expect(leaked).toEqual([]);
+    // Guard the relocation target itself: test-helpers.ts is test code and must
+    // never compile into the shipped tree.
+    expect(jsFiles.map((file) => path.relative(distRoot, file))).not.toContain("test-helpers.js");
+  });
 });
