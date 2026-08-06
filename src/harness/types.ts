@@ -30,10 +30,6 @@ export interface HarnessSelection {
   effort?: string | undefined;
 }
 
-export interface PromptSpec {
-  prompt: string;
-}
-
 /**
  * Why a session died, when the reason was the provider under it rather than
  * the work in front of it. Each harness classifies its own provider's failures
@@ -69,14 +65,8 @@ export interface SessionUsage {
   costUsd: number | null;
   inputTokens: number;
   cachedInputTokens: number;
-  /**
-   * Output tokens as the provider counts them. For Codex this already includes
-   * reasoning tokens (see codex.ts) — `reasoningTokens` is a diagnostic subset,
-   * never added on top, or every reasoning session would be double-billed.
-   */
+  /** Output tokens as the provider counts them, including Codex reasoning tokens. */
   outputTokens: number;
-  /** Reasoning tokens, a diagnostic subset of output. Zero when the provider reports none. */
-  reasoningTokens: number;
   /** The provider model, for the price lookup and diagnostics. Absent when unreported. */
   model?: string;
   /**
@@ -90,15 +80,12 @@ export interface SessionUsage {
 export type HarnessEvent =
   | { type: "text"; text: string }
   | { type: "tool"; name: string; detail?: string }
-  /** The provider's identifier for this session, used to continue it later. */
-  | { type: "session"; sessionId: string }
   | { type: "result"; ok: boolean; text: string; failure?: HarnessFailure; usage?: SessionUsage };
 
 export interface HarnessResult {
   ok: boolean;
   /** The session's final result text (agents are told to end with their report). */
   text: string;
-  exitCode: number;
   /**
    * Identifier a later spawn can pass as `continueSessionId` to continue this
    * conversation. Absent when the provider never reported one.
@@ -142,6 +129,6 @@ export interface InteractiveSpawnOptions {
 }
 
 export interface Harness {
-  spawn(promptSpec: PromptSpec, options: SpawnOptions): HarnessSession;
-  spawnInteractive(promptSpec: PromptSpec, options: InteractiveSpawnOptions): Promise<number>;
+  spawn(prompt: string, options: SpawnOptions): HarnessSession;
+  spawnInteractive(prompt: string, options: InteractiveSpawnOptions): Promise<number>;
 }

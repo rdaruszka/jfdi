@@ -121,25 +121,25 @@ describe("half-app end-to-end (fake harness)", () => {
       gate: [{ name: "smoke", cmd: "test -f src/commands/list.ts" }],
     };
 
-    const harness = new FakeHarness(async (spec, options) => {
-      switch (sessionKindOf(spec.prompt)) {
+    const harness = new FakeHarness(async (prompt, options) => {
+      switch (sessionKindOf(prompt)) {
         case "implementation":
-          expect(spec.prompt).toContain("case-insensitive");
+          expect(prompt).toContain("case-insensitive");
           await fs.writeFile(
             path.join(options.cwd, "src/commands/list.ts.category-note"),
             "pretend category filter\n",
           );
-          await writeVerdict(spec.prompt, {
+          await writeVerdict(prompt, {
             status: "done",
             summary: "added --category to list",
             decisions: ["matched case-insensitively via toLowerCase"],
           });
           break;
         case "code-review":
-          await writeVerdict(spec.prompt, { verdict: "pass" });
+          await writeVerdict(prompt, { verdict: "pass" });
           break;
         case "qa":
-          await writeVerdict(spec.prompt, { verdict: "pass", testsAdded: "category filter e2e" });
+          await writeVerdict(prompt, { verdict: "pass", testsAdded: "category filter e2e" });
           break;
         default:
           throw new Error("unexpected stage");

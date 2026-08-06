@@ -84,8 +84,8 @@ export interface ContextOptions {
  * it. It stands behind its own fake, so a test's stage handler never has to
  * know the pipeline asks for a message after each code-producing session.
  */
-export const DEFAULT_SCRIBE_HANDLER: FakeHandler = (spec) => {
-  const summary = /## What the session said it did\n\n(.*)/.exec(spec.prompt)?.[1] ?? "";
+export const DEFAULT_SCRIBE_HANDLER: FakeHandler = (prompt) => {
+  const summary = /## What the session said it did\n\n(.*)/.exec(prompt)?.[1] ?? "";
   const subject = summary.startsWith("(") || summary === "" ? "the session's work" : summary;
   return Promise.resolve({ ok: true, text: `${subject}\n\nWritten by the scribe.` });
 };
@@ -164,7 +164,7 @@ export function steppingClock(stepMs: number): () => number {
 /** A `SessionUsage` for a fake handler to return, so cost/token assertions are deterministic. */
 export function usageFor(
   costUsd: number | null,
-  tokens: { input?: number; cachedInput?: number; output?: number; reasoning?: number } = {},
+  tokens: { input?: number; cachedInput?: number; output?: number } = {},
 ): SessionUsage {
   return {
     durationMs: 0,
@@ -172,7 +172,6 @@ export function usageFor(
     inputTokens: tokens.input ?? 0,
     cachedInputTokens: tokens.cachedInput ?? 0,
     outputTokens: tokens.output ?? 0,
-    reasoningTokens: tokens.reasoning ?? 0,
   };
 }
 

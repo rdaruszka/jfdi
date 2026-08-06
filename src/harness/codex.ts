@@ -16,7 +16,6 @@ import type {
   HarnessSelection,
   HarnessSession,
   InteractiveSpawnOptions,
-  PromptSpec,
   SessionUsage,
   SpawnOptions,
 } from "./types.js";
@@ -117,15 +116,13 @@ export function classifyCodexFailure(text: string, nowMs: number): HarnessFailur
 
 /**
  * Cumulative token counts as Codex reports them. `output_tokens` already
- * includes `reasoning_output_tokens` (a diagnostic subset, not added on top —
- * see the reasoning-token decision on the ticket). `cached_input_tokens` is a
- * subset of `input_tokens`. Version-volatile field names, so read defensively.
+ * includes reasoning tokens. `cached_input_tokens` is a subset of
+ * `input_tokens`. Version-volatile field names, so read defensively.
  */
 interface CodexTokenCounts {
   input_tokens?: number;
   cached_input_tokens?: number;
   output_tokens?: number;
-  reasoning_output_tokens?: number;
 }
 
 interface CodexStreamLine {
@@ -165,7 +162,6 @@ export function codexUsageTokens(line: string): SessionUsage | null {
     inputTokens: counts.input_tokens ?? 0,
     cachedInputTokens: counts.cached_input_tokens ?? 0,
     outputTokens: counts.output_tokens ?? 0,
-    reasoningTokens: counts.reasoning_output_tokens ?? 0,
   };
 }
 
@@ -224,10 +220,6 @@ function finalizeClose(
 export function mapCodexLine(line: string): HarnessEvent[] {
   const parsed = parseStreamLine(line);
   if (parsed === null) return [];
-  // The thread id is what `codex exec resume <id>` continues later.
-  if (parsed.type === "thread.started" && parsed.thread_id) {
-    return [{ type: "session", sessionId: parsed.thread_id }];
-  }
   if (parsed.type === "item.completed" && parsed.item?.type === "agent_message") {
     return parsed.item.text ? [{ type: "text", text: parsed.item.text }] : [];
   }
@@ -273,11 +265,10 @@ function closedResult(
 ): HarnessResult {
   const isSuccess = exitCode === 0 && finalText !== "" && failureText === null;
   return isSuccess
-    ? { ok: true, text: finalText, exitCode: 0 }
+    ? { ok: true, text: finalText }
     : {
         ok: false,
         text: failureText ?? exitText(exitCode, stderrTail),
-        exitCode: exitCode ?? 1,
       };
 }
 
@@ -300,7 +291,7 @@ export class CodexHarness implements Harness {
     private readonly executable: string = "codex",
   ) {}
 
-  spawn(promptSpec: PromptSpec, options: SpawnOptions): HarnessSession {
+  spawn(prompt: string, options: SpawnOptions): HarnessSession {
     // `codex exec resume <thread-id> <prompt>` continues an earlier thread.
     // Flags precede the positional thread id and prompt in both forms.
     const selectionArgs = codexSelectionArgs(this.selection);
@@ -312,15 +303,9 @@ export class CodexHarness implements Harness {
           ...codexPermissionArgs(this.permissionMode),
           ...selectionArgs,
           options.continueSessionId,
-          promptSpec.prompt,
+          prompt,
         ]
-      : [
-          "exec",
-          "--json",
-          ...codexPermissionArgs(this.permissionMode),
-          ...selectionArgs,
-          promptSpec.prompt,
-        ];
+      : ["exec", "--json", ...codexPermissionArgs(this.permissionMode), ...selectionArgs, prompt];
     const child: ChildProcess = spawn(this.executable, args, {
       cwd: options.cwd,
       stdio: ["ignore", "pipe", "pipe"],
@@ -355,8 +340,9 @@ export class CodexHarness implements Harness {
       log?.write(`${line}\n`);
       const usage = codexUsageTokens(line);
       if (usage) latestUsage = usage;
+      const parsed = parseStreamLine(line);
+      if (parsed?.type === "thread.started" && parsed.thread_id) sessionId = parsed.thread_id;
       for (const event of mapCodexLine(line)) {
-        if (event.type === "session") sessionId = event.sessionId;
         if (event.type === "text") finalText = event.text;
         if (event.type === "result" && !event.ok) {
           failureText = event.text;
@@ -373,7 +359,6 @@ export class CodexHarness implements Harness {
         resolve({
           ok: false,
           text: spawnFailureText(this.executable, this.selection, error.message),
-          exitCode: EXIT_COMMAND_NOT_EXECUTABLE,
         });
         notify?.();
       });
@@ -417,16 +402,12 @@ export class CodexHarness implements Harness {
     };
   }
 
-  spawnInteractive(promptSpec: PromptSpec, options: InteractiveSpawnOptions): Promise<number> {
+  spawnInteractive(prompt: string, options: InteractiveSpawnOptions): Promise<number> {
     // `-m` and `-c` are top-level Codex options, so an interactive launch runs
     // the same agent the implementation stage would.
     const child = spawn(
       this.executable,
-      [
-        ...codexPermissionArgs(this.permissionMode),
-        ...codexSelectionArgs(this.selection),
-        promptSpec.prompt,
-      ],
+      [...codexPermissionArgs(this.permissionMode), ...codexSelectionArgs(this.selection), prompt],
       { cwd: options.cwd, stdio: "inherit" },
     );
     return interactiveResult(child, this.executable, this.selection);

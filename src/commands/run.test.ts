@@ -50,18 +50,18 @@ async function readBoard(): Promise<ReturnType<typeof parseBoard>> {
 
 /** Handler that implements each ticket by writing a file named for its card. */
 function passingHandler(onImplementation?: () => Promise<void>) {
-  return async (spec: { prompt: string }, options: { cwd: string }) => {
-    const stage = sessionKindOf(spec.prompt);
+  return async (prompt: string, options: { cwd: string }) => {
+    const stage = sessionKindOf(prompt);
     if (stage === "implementation") {
-      const match = /feature (\w+)/.exec(spec.prompt);
+      const match = /feature (\w+)/.exec(prompt);
       const name = match?.[1] ?? "unknown";
       await commitFile(options.cwd, `${name}.txt`, `${name}\n`, `implement ${name}`);
-      await writeVerdict(spec.prompt, { status: "done", summary: `built ${name}` });
+      await writeVerdict(prompt, { status: "done", summary: `built ${name}` });
       await onImplementation?.();
     } else if (stage === "integration") {
-      await writeVerdict(spec.prompt, { resolution: "clean" });
+      await writeVerdict(prompt, { resolution: "clean" });
     } else {
-      await writeVerdict(spec.prompt, { verdict: "pass" });
+      await writeVerdict(prompt, { verdict: "pass" });
     }
     return { ok: true, text: "" };
   };
@@ -124,8 +124,8 @@ describe("jfdi run — board card", () => {
 
   it("moves the card to Blocked when the pipeline blocks", async () => {
     await writeBoard(BOARD);
-    const context = fixture.context(async (spec) => {
-      await writeVerdict(spec.prompt, {
+    const context = fixture.context(async (prompt) => {
+      await writeVerdict(prompt, {
         status: "escalate",
         question: "which db?",
         recommendation: "sqlite",
@@ -184,17 +184,17 @@ describe("jfdi run — board card", () => {
     fixture.config.integration.mode = "on-approval";
 
     const logs = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const handler = async (spec: { prompt: string }, options: { cwd: string }) => {
-      const stage = sessionKindOf(spec.prompt);
+    const handler = async (prompt: string, options: { cwd: string }) => {
+      const stage = sessionKindOf(prompt);
       if (stage === "implementation") {
         await commitFile(options.cwd, "alpha.txt", "alpha\n", "implement alpha");
-        await writeVerdict(spec.prompt, {
+        await writeVerdict(prompt, {
           status: "done",
           summary: "built alpha",
           observations: ["The legacy executable has no owner"],
         });
       } else {
-        await writeVerdict(spec.prompt, { verdict: "pass" });
+        await writeVerdict(prompt, { verdict: "pass" });
       }
       return { ok: true, text: "" };
     };
