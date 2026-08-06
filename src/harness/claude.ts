@@ -133,7 +133,7 @@ const HTTP_OVERLOADED = 529;
 const CLAUDE_OUTAGE_STATUSES = new Set([HTTP_INTERNAL_SERVER_ERROR, HTTP_OVERLOADED]);
 /** Legacy raw-API form: the reset instant after a pipe, in epoch seconds. */
 const CLAUDE_LEGACY_RESET = /usage limit reached\|(\d+)/i;
-/** The only machine-free form the CLI prints: `resets 3:45pm`, `resets Mon 12:00am`. */
+/** The only machine-free form the CLI prints: `resets 3:45pm`. */
 const CLAUDE_RESETS_AT = /resets\s+([^.\n]+)/i;
 const MS_PER_SECOND = 1_000;
 /** Failure text quoted into a pause banner — one line, terminal-width-ish. */

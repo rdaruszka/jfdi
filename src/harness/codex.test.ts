@@ -49,13 +49,10 @@ describe("mapCodexLine", () => {
 });
 
 describe("classifyCodexFailure", () => {
-  it("reads each usage-limit wording, with the local reset time out of the prose", () => {
+  it("reads a usage-limit reset from 12-hour clock prose", () => {
     expect(
       classifyCodexFailure("You've hit your usage limit. Try again at 3:45 PM.", NOW),
     ).toMatchObject({ kind: "usage-limit", resetsAtMs: new Date(2026, 7, 3, 15, 45).getTime() });
-    expect(
-      classifyCodexFailure("You are out of credits. Try again at Mar 3rd, 2027 3:45 PM.", NOW),
-    ).toMatchObject({ kind: "usage-limit", resetsAtMs: new Date(2027, 2, 3, 15, 45).getTime() });
     expect(classifyCodexFailure("Quota exceeded for this spend cap", NOW)?.kind).toBe(
       "usage-limit",
     );

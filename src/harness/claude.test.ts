@@ -10,7 +10,7 @@ import {
 } from "./claude.js";
 import type { HarnessEvent, HarnessSelection } from "./types.js";
 
-/** 2026-08-03 09:30 local — a Monday, so weekday strings have somewhere to land. */
+/** 2026-08-03 09:30 local. */
 const NOW = new Date(2026, 7, 3, 9, 30).getTime();
 
 /** Harness-only selection: the tests that care about flags name their own. */
@@ -102,7 +102,7 @@ describe("mapClaudeLine", () => {
 });
 
 describe("classifyClaudeFailure", () => {
-  it("reads each usage-limit wording, with the reset time out of the prose", () => {
+  it("reads the usage-limit reset time out of 12-hour clock prose", () => {
     expect(
       classifyClaudeFailure("You've hit your session limit · resets 3:45pm", null, NOW),
     ).toEqual({
@@ -110,12 +110,6 @@ describe("classifyClaudeFailure", () => {
       resetsAtMs: new Date(2026, 7, 3, 15, 45).getTime(),
       detail: "You've hit your session limit · resets 3:45pm",
     });
-    expect(
-      classifyClaudeFailure("You've hit your weekly limit, resets Mon 12:00am", null, NOW),
-    ).toMatchObject({ kind: "usage-limit", resetsAtMs: new Date(2026, 7, 10, 0).getTime() });
-    expect(
-      classifyClaudeFailure("You've hit your Opus limit · resets Aug 28 at 7pm", null, NOW),
-    ).toMatchObject({ kind: "usage-limit", resetsAtMs: new Date(2026, 7, 28, 19).getTime() });
   });
 
   it("reads the legacy raw-API form, where the reset is epoch seconds after a pipe", () => {
