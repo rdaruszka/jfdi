@@ -4,6 +4,7 @@ import * as path from "node:path";
 import {
   type BlockingNode,
   blockedByCycles,
+  blockedByLoop,
   type UnresolvedBlockers,
   unresolvedBlockers,
 } from "./blocking.js";
@@ -470,7 +471,13 @@ export class Coordinator {
       live.add(signature);
       const isNewEpisode = !this.reportedCycles.has(signature);
       if (isNewEpisode) this.reportedCycles.add(signature);
-      await this.refuseBlockedByCycle(cycle, nodesById, ticketsDir, isNewEpisode);
+      await this.refuseBlockedByCycle(
+        cycle,
+        blockedByLoop(cycle, blockingNodes),
+        nodesById,
+        ticketsDir,
+        isNewEpisode,
+      );
     }
     for (const signature of [...this.reportedCycles])
       if (!live.has(signature)) this.reportedCycles.delete(signature);
@@ -479,6 +486,7 @@ export class Coordinator {
   /** Move and annotate the members that this cycle episode visibly refuses. */
   private async refuseBlockedByCycle(
     cycle: string[],
+    loop: string[],
     nodesById: Map<string, BlockingCardNode>,
     ticketsDir: string,
     isNewEpisode: boolean,
@@ -488,8 +496,7 @@ export class Coordinator {
         message: `blocked-by cycle among begin-column tickets: ${cycle.join(", ")} — none will dispatch until it is untied`,
         cycle,
       });
-    const loop = `${cycle.join(" → ")} → ${cycle[0]}`;
-    const comment = `Blocked-by loop: ${loop}. A human must break the loop by removing one blocked-by link.`;
+    const comment = `Blocked-by loop: ${loop.join(" → ")}. A human must break the loop by removing one blocked-by link.`;
     const blockedColumn = this.context.config.board.columns.blocked;
     for (const id of cycle) {
       const node = nodesById.get(id);

@@ -1407,9 +1407,9 @@ describe("Coordinator — blocked-by gating", () => {
   });
 
   it("moves every member of a three-ticket blocked-by cycle to Blocked with one comment", async () => {
-    await writeNote("a", 'blocked-by:\n  - "[[b]]"');
-    await writeNote("b", 'blocked-by:\n  - "[[c]]"');
-    await writeNote("c", 'blocked-by:\n  - "[[a]]"');
+    await writeNote("a", 'blocked-by:\n  - "[[c]]"');
+    await writeNote("b", 'blocked-by:\n  - "[[a]]"');
+    await writeNote("c", 'blocked-by:\n  - "[[b]]"');
     await fs.writeFile(
       boardPath(),
       boardWithColumns([
@@ -1434,7 +1434,7 @@ describe("Coordinator — blocked-by gating", () => {
       "c",
     ]);
     const message =
-      "Blocked-by loop: a → b → c → a. A human must break the loop by removing one blocked-by link.";
+      "Blocked-by loop: a → c → b → a. A human must break the loop by removing one blocked-by link.";
     for (const id of ["a", "b", "c"]) expect(await noteComments(id)).toEqual([message]);
   });
 
