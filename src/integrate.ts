@@ -21,7 +21,7 @@ import { formatGateCommands, loadPrompt, renderPrompt } from "./prompts.js";
 import { isCorruptReport, loadReport, recordCorruptReport } from "./report.js";
 import { appendToSection, quoteAgentText } from "./ticket-note.js";
 import { ensureTicketNote, type Ticket } from "./tickets.js";
-import { BLOCKED_ROUTING, recordTransition, shortSha, statusLine } from "./transitions.js";
+import { BLOCKED_ROUTING, recordPhase, shortSha, statusLine } from "./transitions.js";
 import { renderUsageTable, resolveUsageModel, type UsageRow } from "./usage.js";
 import { todayIsoDate } from "./util/dates.js";
 import { ensureDir, fileExists } from "./util/fsx.js";
@@ -129,7 +129,7 @@ async function requalifyAfterMerge(
   context.log.emit("complicated_merge", ticket.id, { notes });
   const qaDir = path.join(runDir, "requalify");
   await ensureDir(qaDir);
-  const qa = await runQaStage(context, ticket, worktree, qaDir, notePath, 0, {
+  const qa = await runQaStage(context, ticket, worktree, qaDir, notePath, {
     gateSummary:
       "The target branch was just merged in with conflict resolutions; the pipeline re-runs the full mechanical gate after your session — do not run it yourself.",
   });
@@ -277,8 +277,9 @@ async function resolveAlreadyMergedBranch(
   if (leftoverNote) return { status: "continue", leftoverNote };
 
   context.log.emit("merged", ticket.id, { note: "already contained in target" });
-  await recordTransition(
+  await recordPhase(
     notePath,
+    "Integration complete",
     "integration",
     INTEGRATION_ROUND,
     `Branch already contained in \`${target}\` — closed without re-merging.`,
@@ -453,7 +454,13 @@ async function recordMergedTransition(
   if (details.leftoverNote) mergedNarration.push("", details.leftoverNote.trim());
   if (details.resolutionNote)
     mergedNarration.push("", "Conflict resolution:", details.resolutionNote);
-  await recordTransition(notePath, "integration", INTEGRATION_ROUND, mergedNarration.join("\n"));
+  await recordPhase(
+    notePath,
+    "Integration complete",
+    "integration",
+    INTEGRATION_ROUND,
+    mergedNarration.join("\n"),
+  );
 }
 
 async function cleanup(context: PipelineContext, worktree: Worktree): Promise<void> {
@@ -466,8 +473,9 @@ async function blocked(
   notePath: string,
   reason: string,
 ): Promise<IntegrateOutcome> {
-  await recordTransition(
+  await recordPhase(
     notePath,
+    "Integration complete",
     "integration",
     INTEGRATION_ROUND,
     `${statusLine("integration", "blocked", BLOCKED_ROUTING)}\n\n${reason}`,

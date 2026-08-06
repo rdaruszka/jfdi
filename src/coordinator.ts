@@ -574,8 +574,7 @@ export class Coordinator {
 
       await saveReport(this.context.stateDir, id, outcome.report);
       if (this.context.config.integration.mode === "on-approval") {
-        const notePath = ticket.notePath ?? path.join(ticketsDir, `${ticket.id}.md`);
-        await recordMergeReady(this.context, id, notePath, outcome.report);
+        await recordMergeReady(this.context, id, outcome.report);
         await moveCardSafe(this.context, card, columns.inProgress, columns.readyToMerge, false);
         return;
       }

@@ -85,8 +85,10 @@ flowchart TB
   return to their authoring stage inside the round for up to two corrections,
   then block as an agent malfunction. It also owns the branch: agents never commit, and each session ends
   with one pipeline commit whose message the **scribe**
-  ([src/scribe.ts](../../src/scribe.ts)) writes and whose text is appended to
-  the ticket note as a transition comment ([src/transitions.ts](../../src/transitions.ts)).
+  ([src/scribe.ts](../../src/scribe.ts)) writes. The message, verdict decisions,
+  status, and usage are folded into one phase comment per stage and round
+  ([src/transitions.ts](../../src/transitions.ts)); gate-fix messages accumulate
+  inside the round's Implementation comment.
   Emits events for every transition; writes verdicts and logs to the run
   directory. Detailed walkthrough: [The Pipeline](../guide/pipeline.md).
 - **Integration** ([src/integrate.ts](../../src/integrate.ts)) — merge the
@@ -199,13 +201,13 @@ this repo.
    anything the session committed back into the index, and lands one commit per
    session that changed the worktree — failures and interruptions included,
    marked WIP so a resume knows what it inherited. The scribe writes the
-   message; the same text becomes the note's transition comment.
+   message; the same text is included verbatim in the stage's phase comment.
 7. **Wikilink scope.** Card wikilinks resolve only against `.jfdi/tickets/`.
    Beyond its own state directory, the tool never reads or writes outside the
    project folder — except through symlinks the user placed inside `.jfdi/`,
    which are treated as consent.
 8. **Decide, log, proceed.** Escalation is a last resort and must carry a
-   recommended answer. Decisions land in the ticket note as decision comments;
+   recommended answer. Decisions land in the producing stage's phase comment;
    the board is the question queue.
 9. **The target branch is configurable** — never assume `main`.
 
@@ -239,7 +241,7 @@ src/
   tickets.ts              ticket resolution, note sections
   prompts.ts              default prompt templates + loader (disk wins)
   scribe.ts               the commit-message session and the message shape
-  transitions.ts          status lines + the ticket note's transition comments
+  transitions.ts          status lines + the ticket note's phase comments
   verdicts.ts             verdict file parsing
   gate.ts                 gate runner
   resume.ts               interrupted-run recovery + feedback history

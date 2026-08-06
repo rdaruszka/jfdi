@@ -118,8 +118,8 @@ the change's behavior is validated separately.
 
 {{SPEC}}
 
-The ticket note (its full trail: the implementer's decision comments, the
-pipeline's transition comments, and open Questions) is at:
+The ticket note (its full trail: stage phase comments with folded decisions,
+coordinator narration, and open Questions) is at:
 {{NOTE_PATH}}
 
 ## Change under review
@@ -172,8 +172,8 @@ Diffstat:
   synonym for an existing project concept instead of using the established name?
 - **Docs:** does the diff contradict anything the project's docs assert? A doc the
   diff falsifies but doesn't update is a failure.
-- **Decisions:** does the code match the assumptions the implementer logged as
-  decision comments in the ticket note?
+- **Decisions:** does the code match the assumptions folded into the
+  implementer's phase comment in the ticket note?
 
 ${COMMON_POSTURE}
 
@@ -195,8 +195,8 @@ not from the diff.
 
 {{SPEC}}
 
-The ticket note (its full trail: the implementer's decision comments, the
-pipeline's transition comments, and open Questions) is at:
+The ticket note (its full trail: stage phase comments with folded decisions,
+coordinator narration, and open Questions) is at:
 {{NOTE_PATH}}
 
 ## What changed
@@ -402,8 +402,9 @@ just ended, and the pipeline is committing what it left behind.
   not part of the session. Say what the change is in plain words before any
   mechanism, one idea per sentence, as long as the change needs and no longer.
   A one-line change gets one line; do not pad.
-- Do NOT write a status line or any \`JFDI-*:\` trailer. The pipeline appends these
-  under your message, and duplicating them is worse than omitting them:
+- Do NOT write a \`Decisions:\` block, status line, or any \`JFDI-*:\` trailer.
+  The pipeline appends these under your message, and duplicating them is worse
+  than omitting them:
 
   \`\`\`
   {{STATUS_LINE}}

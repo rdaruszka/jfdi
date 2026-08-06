@@ -152,8 +152,7 @@ export async function runTicketInline(
     }
 
     // on-approval: park it as ready to merge.
-    const notePath = ticket.notePath ?? path.join(ticketsDir, `${ticket.id}.md`);
-    await recordMergeReady(context, ticket.id, notePath, outcome.report);
+    await recordMergeReady(context, ticket.id, outcome.report);
     await settleCard(columns.readyToMerge);
     console.log(`\nPipeline passed. Approve with: jfdi merge ${ticket.id}`);
     return 0;

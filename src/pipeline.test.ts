@@ -105,15 +105,87 @@ describe("runPipeline", () => {
     expect(outcome.report.summary).toBe("implemented the feature");
     expect(outcome.report.testsAdded).toBe("one regression test");
 
-    // Decisions recorded as comment entries in the ticket note.
+    // Decisions are folded into the stage's single comment.
     const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
     expect(note).toContain("## Comments");
-    expect(note).toMatch(/### \S+ — Decision \(implementation, round 1\)/);
+    expect(note).toContain("### ");
+    expect(note).toContain("— Implementation round 1 complete");
+    expect(note).toContain("Decisions:\n> - used a flat file instead of a db");
     expect(note).toContain("flat file instead of a db");
 
     // Both commits are on the branch.
     expect(await fs.readFile(path.join(outcome.worktree.path, "e2e.test.txt"), "utf8")).toBe(
       "regression\n",
+    );
+  });
+
+  it("records exactly one complete comment for each stage in a clean round", async () => {
+    const context = fixture.context(async (prompt, options) => {
+      const stage = sessionKindOf(prompt);
+      if (stage === "implementation") {
+        await commitFile(options.cwd, "impl.txt", "the feature\n", "implement");
+        await writeVerdict(prompt, {
+          status: "done",
+          summary: "implemented the feature",
+          decisions: ["kept the implementation deliberately small"],
+        });
+      } else if (stage === "code-review") {
+        await writeVerdict(prompt, {
+          verdict: "pass",
+          decisions: ["confirmed the implementation covers the ticket"],
+        });
+      } else {
+        await commitFile(options.cwd, "e2e.test.txt", "regression\n", "qa tests");
+        await writeVerdict(prompt, {
+          verdict: "pass",
+          testsAdded: "one regression test",
+          decisions: ["covered the user-visible path end to end"],
+        });
+      }
+      return { ok: true, text: `${stage} done` };
+    });
+
+    const ticket = await resolveTicket("Keep one comment per stage", fixture.ticketsDir);
+    expect((await runPipeline(context, ticket)).status).toBe("passed");
+
+    const note = parseTicketNote(
+      await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8"),
+    );
+    expect(note.comments.map((comment) => comment.label)).toEqual([
+      "JFDI started",
+      "Implementation round 1 complete",
+      "Code Review round 1 complete",
+      "QA round 1 complete",
+    ]);
+    expect(note.comments).toHaveLength(4);
+    for (const comment of note.comments.slice(1)) {
+      expect(comment.body).toContain("Decisions:");
+      expect(comment.body).toContain("JFDI-Round: 1/3");
+      expect(comment.body).toContain("JFDI-Duration:");
+      expect(comment.body).toContain("JFDI-Cost:");
+    }
+  });
+
+  it("states the automatic merge target in the started comment", async () => {
+    fixture.config.integration.mode = "auto";
+    const context = fixture.context(async (prompt, options) => {
+      const stage = sessionKindOf(prompt);
+      if (stage === "implementation") {
+        await commitFile(options.cwd, "impl.txt", "done\n", "implement");
+        await writeVerdict(prompt, { status: "done" });
+      } else {
+        await writeVerdict(prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    });
+
+    const ticket = await resolveTicket("Describe automatic integration", fixture.ticketsDir);
+    expect((await runPipeline(context, ticket)).status).toBe("passed");
+    const note = parseTicketNote(
+      await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8"),
+    );
+    expect(note.comments[0]?.body).toBe(
+      `Run started — 3 rounds max. Working branch \`jfdi/${ticket.id}\`, will merge to \`main\`.`,
     );
   });
 
@@ -518,14 +590,30 @@ describe("runPipeline", () => {
     const ticket = await resolveTicket("Gate learner", fixture.ticketsDir);
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
+    if (outcome.status !== "passed") return;
     expect(stages).toEqual(["implementation", "implementation", "code-review", "qa"]);
     // The gate cycle stayed inside round 1: rounds mean moving on to other
     // agents, not iterating with the machine.
-    if (outcome.status === "passed") expect(outcome.report.rounds).toBe(1);
+    expect(outcome.report.rounds).toBe(1);
     const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
     expect(note).toContain(
-      "JFDI gate FAILED at `check` — returning to Implementation for gate fix 1 of 10",
+      "JFDI Implementation complete — gate failed at `check`, continuing with gate fix 1 of 10",
     );
+    expect(
+      parseTicketNote(note).comments.filter((comment) => comment.stage === "implementation"),
+    ).toHaveLength(1);
+    expect(note).toContain("--- Gate-fix session 1 ---");
+    const implementationComment = parseTicketNote(note).comments.find(
+      (comment) => comment.stage === "implementation",
+    );
+    const implementationCommits = (
+      await git(outcome.worktree.path, "rev-list", "--reverse", "main..HEAD")
+    ).split("\n");
+    expect(implementationCommits).toHaveLength(2);
+    for (const commit of implementationCommits) {
+      const message = await git(outcome.worktree.path, "show", "-s", "--format=%B", commit);
+      expect(implementationComment?.body).toContain(message.trimEnd());
+    }
     const roundDir = path.join(fixture.stateDir, "runs", ticket.id, "run-1", "round-1");
     expect(await fs.readFile(path.join(roundDir, "gate-implementation-1.log"), "utf8")).toBe(
       "RED_TRANSCRIPT\n",
@@ -1048,9 +1136,12 @@ describe("runPipeline", () => {
     const note = parseTicketNote(
       await fs.readFile(path.join(fixture.ticketsDir, "quoter.md"), "utf8"),
     );
-    const decisions = note.comments.filter((comment) => comment.kind === "decision");
-    expect(decisions).toHaveLength(1);
-    expect(decisions[0]?.body).toBe(decision);
+    const implementation = note.comments.find(
+      (comment) => comment.label === "Implementation round 1 complete",
+    );
+    expect(implementation?.body).toContain("Decisions:\n- Kept the old format. Example entry:");
+    expect(implementation?.body).toContain("### 2026-01-01T00:00:00.000Z — qa round 9");
+    expect(implementation?.body).toContain("SWALLOWED trailing rationale that matters");
     // The whole decision reaches the next session — not just the half above
     // the quoted heading.
     expect(secondRunPrompt).toContain("## Decisions logged so far");
@@ -1732,6 +1823,10 @@ describe("pipeline-owned commits", () => {
     );
     expect(message).not.toContain("subprocess cleanup also failed");
     expect(message).toContain("JFDI-Round: 3/3");
+    const interruptedNote = parseTicketNote(
+      await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8"),
+    );
+    expect(interruptedNote.comments[1]?.label).toBe("Implementation round 1 interrupted");
 
     // The next dispatch finds that work on the branch, not thrown away.
     let resumedPrompt = "";
@@ -1792,7 +1887,9 @@ describe("pipeline-owned commits", () => {
     // …the session's own account, which the diff cannot carry…
     expect(prompt).toContain("WIDENED_THE_PATTERN to 64 hex digits");
     // …and the metadata the pipeline computed, which it must not write itself.
-    expect(prompt).toContain("JFDI Implementation complete — moving to the mechanical gate");
+    expect(prompt).toContain(
+      "JFDI Implementation complete — gate green (check ✓), moving to Code Review",
+    );
     expect(prompt).toContain("JFDI-Round: 1/3");
   });
 
@@ -1802,7 +1899,11 @@ describe("pipeline-owned commits", () => {
       const stage = sessionKindOf(prompt);
       if (stage === "implementation") {
         await fs.writeFile(path.join(options.cwd, "impl.txt"), "the feature\n");
-        await writeVerdict(prompt, { status: "done", summary: "built the feature" });
+        await writeVerdict(prompt, {
+          status: "done",
+          summary: "built the feature",
+          decisions: ["kept the existing storage boundary"],
+        });
         return { ok: true, text: "", usage: usageFor(2.0) };
       }
       if (stage === "code-review") reviewedCommit = await git(options.cwd, "rev-parse", "HEAD");
@@ -1823,7 +1924,10 @@ describe("pipeline-owned commits", () => {
       "",
       "Written by the scribe.",
       "",
-      "JFDI Implementation complete — moving to the mechanical gate",
+      "Decisions:",
+      "- kept the existing storage boundary",
+      "",
+      "JFDI Implementation complete — gate green (check ✓), moving to Code Review",
       "",
       "JFDI-Round: 1/3",
       "JFDI-Duration: 1m",
@@ -1837,6 +1941,10 @@ describe("pipeline-owned commits", () => {
     const entry = note.comments.find((comment) => comment.stage === "implementation");
     expect(entry?.kind).toBe("transition");
     expect(entry?.body).toBe(message.trimEnd());
+    const reviewEntry = note.comments.find((comment) => comment.stage === "code-review");
+    const qaEntry = note.comments.find((comment) => comment.stage === "qa");
+    expect(reviewEntry?.body).toContain(`sign-off on commit \`${reviewedCommit.slice(0, 7)}\``);
+    expect(qaEntry?.body).toContain(`sign-off on commit \`${reviewedCommit.slice(0, 7)}\``);
 
     // Both reviews judged that commit, and it is the one the run reports.
     expect(reviewedCommit).toBe(await git(outcome.worktree.path, "rev-parse", "HEAD"));
@@ -1928,27 +2036,27 @@ describe("pipeline-owned commits", () => {
     );
     const transitions = note.comments.filter((comment) => comment.kind === "transition");
     expect(transitions.map((comment) => `${comment.stage} ${comment.round}`)).toEqual([
-      "dispatch 1",
+      "dispatch 0",
       "implementation 1",
       "code-review 1",
       "implementation 2",
       "code-review 2",
       "implementation 3",
       "code-review 3",
-      "pipeline 3",
     ]);
-    expect(transitions[0]?.body).toBe(`JFDI run started — round 1, branch \`jfdi/${ticket.id}\``);
+    expect(transitions[0]?.body).toBe(
+      `Run started — 3 rounds max. Working branch \`jfdi/${ticket.id}\`, will queue for approval before merging to \`main\`.`,
+    );
     // A failed review's comment IS the handback: the exact feedback, and where
     // the run actually went with it.
-    expect(transitions[2]?.body).toBe(
-      "JFDI Code Review FAILED — returning to Implementation for round 2\n\nRENAME_THE_HELPER; it shadows the module",
+    expect(transitions[2]?.body).toContain("RENAME_THE_HELPER; it shadows the module");
+    expect(transitions[2]?.body).toContain(
+      "JFDI Code Review FAILED — returning to Implementation for round 2",
     );
     expect(transitions[6]?.body).toContain(
       "JFDI Code Review FAILED — moving to Blocked for human review",
     );
-    expect(transitions[7]?.body).toContain(
-      "JFDI run exhausted its 3 rounds — moving to Blocked for human review",
-    );
+    expect(note.questions).toContain("All 3 rounds failed");
     // The pause left no mark on the trail — neither an entry of its own (the
     // list above is exact) nor a mention inside one: infrastructure is not
     // ticket history, and the held round is narrated as the one round it was.

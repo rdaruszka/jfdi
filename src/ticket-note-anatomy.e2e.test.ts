@@ -244,7 +244,7 @@ const ALL_MARKERS = [
 /**
  * The parts of the note a stage prompt is allowed to carry: the title's
  * description, the human's own sub-sections, the open questions and the
- * decision entries. The pipeline's transition narration and the two legacy
+ * folded decision blocks. Other phase narration and the two legacy
  * blocks are the pipeline talking to humans, and stay out.
  */
 const SLICE_MARKERS = [
@@ -306,7 +306,7 @@ describe("the slice of a ticket note that reaches a stage prompt", () => {
 
 describe("a pipeline append to a ticket note", () => {
   it(
-    "logs each decision as its own Comments entry and leaves every other byte alone",
+    "folds decisions into one phase comment and leaves every other byte alone",
     async () => {
       const sandbox = await makeSandbox();
       await seedProbe(sandbox);
@@ -337,20 +337,14 @@ describe("a pipeline append to a ticket note", () => {
       // The pre-existing entries keep their place at the head of the trail…
       expect(after).toContain("TRANSITION_MARKER pipeline narration");
       expect(after).toContain("PRIOR_DECISION_MARKER earlier decision");
-      // …and each new decision arrives as one entry under its own heading,
-      // stamped with the stage and round that produced it.
-      const headings = [...after.matchAll(/^### (\S+) — Decision \((\S+), round (\d+)\)$/gm)].map(
-        (match) => ({ timestamp: match[1] ?? "", stage: match[2] ?? "", round: match[3] ?? "" }),
+      // …and both new decisions arrive under the one Implementation phase
+      // heading, stamped with the round that produced them.
+      const heading = /^### (\S+) — Implementation round 1 complete$/m.exec(after);
+      expect(heading?.[1]).toBeDefined();
+      expect(new Date(heading?.[1] ?? "").toISOString()).toBe(heading?.[1]);
+      expect(after).toContain(
+        "> Decisions:\n> - FIRST_DECISION assumed sqlite\n> - SECOND_DECISION skipped the repro",
       );
-      expect(headings.slice(1)).toEqual([
-        { timestamp: headings[1]?.timestamp ?? "", stage: "implementation", round: "1" },
-        { timestamp: headings[2]?.timestamp ?? "", stage: "implementation", round: "1" },
-      ]);
-      for (const heading of headings.slice(1)) {
-        expect(new Date(heading.timestamp).toISOString()).toBe(heading.timestamp);
-      }
-      expect(after).toContain("FIRST_DECISION assumed sqlite");
-      expect(after).toContain("SECOND_DECISION skipped the repro");
       // The legacy `## Decisions` block is never appended to again.
       expect(after).not.toContain("FIRST_DECISION assumed sqlite\n\n## Report");
       expect(after.indexOf("## Decisions")).toBe(before.indexOf("## Decisions"));
@@ -372,9 +366,8 @@ describe("a pipeline append to a ticket note", () => {
       const after = await readNote(sandbox, "bare");
       expect(after).toContain("# Bare\n\nLEGACY_BODY here.\n");
       expect(after).toContain("\n## Comments\n");
-      expect(after).toMatch(
-        /### \S+ — Decision \(implementation, round 1\)\n\n> ONLY_DECISION made/,
-      );
+      expect(after).toMatch(/### \S+ — Implementation round 1 complete/);
+      expect(after).toContain("> Decisions:\n> - ONLY_DECISION made");
     },
     PIPELINE_TIMEOUT_MS,
   );

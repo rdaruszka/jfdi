@@ -267,7 +267,7 @@ describe("handoff commit messages, as git reads them", () => {
 
       // …and the human-facing half of the same block is still there.
       const message = await git(sandbox.project, "log", "-1", "--format=%B", branch);
-      expect(message).toContain("JFDI Implementation complete — moving to the mechanical gate");
+      expect(message).toContain("JFDI Implementation complete — gate green, moving to Code Review");
       expect(message).toContain("JFDI-Round: 1/3");
     },
     PIPELINE_TIMEOUT_MS,
@@ -297,9 +297,8 @@ describe("handoff commit messages, as git reads them", () => {
         "acceptance.test.txt",
       );
       const qaMessage = await git(sandbox.project, "log", "-1", "--format=%B", branch);
-      expect(qaMessage).toContain(
-        "JFDI QA PASSED — re-running the mechanical gate over the tests it wrote",
-      );
+      expect(qaMessage).toContain("JFDI QA PASSED — sign-off on commit");
+      expect(qaMessage).toContain("gate green, queued for approval before integration");
       expect(await trailerValue(sandbox.project, branch, "JFDI-Round")).toBe("1/3");
 
       // Same text on the other surface, verbatim, quoted as note entries are.
@@ -499,7 +498,8 @@ describe("handoff commit messages, as git reads them", () => {
           // Nothing but the metadata the pipeline owns: the scribe contributed
           // no message at all, so the stage's own summary stands in for it.
           name: "metadata-only",
-          answer: "JFDI Implementation complete — moving to the mechanical gate\nJFDI-Round: 9/9\n",
+          answer:
+            "JFDI Implementation complete — gate green, moving to Code Review\nJFDI-Round: 9/9\n",
           subject: (id) => `${id}: Implementation round 1`,
           body: (message) => {
             expect(message).toContain("wrote the greeting template");
@@ -536,7 +536,7 @@ describe("handoff commit messages, as git reads them", () => {
         // The two lines the pipeline owns survive every hostile answer, and the
         // trailer stays machine-readable.
         expect(message, testCase.name).toContain(
-          "JFDI Implementation complete — moving to the mechanical gate",
+          "JFDI Implementation complete — gate green, moving to Code Review",
         );
         expect(await trailerValue(sandbox.project, branch, "JFDI-Round"), testCase.name).toBe(
           "1/3",
@@ -545,7 +545,7 @@ describe("handoff commit messages, as git reads them", () => {
         // The note still parses as one trail: every entry the run wrote is
         // there, and the hostile body forged none of its own.
         const note = await readNote(sandbox, ticketId);
-        const dispatchEntries = note.match(/^### \S+ — dispatch round 1$/gm) ?? [];
+        const dispatchEntries = note.match(/^### \S+ — JFDI started$/gm) ?? [];
         expect(dispatchEntries, testCase.name).toHaveLength(1);
       }
     },
@@ -622,7 +622,7 @@ describe("handoff commit messages, as git reads them", () => {
       expect(prompt).toContain("diff --git");
       expect(prompt).toContain("feature1.txt");
       expect(prompt).toContain("wrote the greeting template");
-      expect(prompt).toContain("JFDI Implementation complete — moving to the mechanical gate");
+      expect(prompt).toContain("JFDI Implementation complete — gate green, moving to Code Review");
       // The agent's own commit was folded away before the scribe saw anything,
       // so the house style it matches is the pipeline's, never the agent's.
       expect(prompt).not.toContain("AGENT SELF COMMIT");

@@ -26,11 +26,10 @@ export interface TicketNote {
 }
 
 /**
- * One entry in the `## Comments` trail. A *transition* entry is the tool
- * narrating a round or coordinator-owned refusal to humans; a *decision* entry
- * is one assumption or interpretation choice an agent logged — the JIRA
- * emulation, where an agent's decision lands in the same chronological trail a
- * human's would.
+ * One entry in the `## Comments` trail. New phase entries carry a `label` that
+ * is rendered verbatim after the timestamp. The older transition/decision
+ * shapes remain readable so existing ticket histories keep feeding decisions
+ * into later runs.
  */
 export interface TicketComment {
   kind: "transition" | "decision";
@@ -39,6 +38,8 @@ export interface TicketComment {
   /** The stage that produced the entry (`implementation`, `qa`, …). */
   stage: string;
   round: number;
+  /** New phase heading text; absent on legacy round/decision entries. */
+  label?: string;
   /** Everything under the heading, verbatim. */
   body: string;
 }
@@ -61,6 +62,9 @@ const SECTION_RE = /^##\s+(.+?)\s*$/;
 const ENTRY_RE = /^###\s/;
 const DECISION_HEADING_RE = /^###\s+(\S+)\s+—\s+Decision\s+\((.+?),\s*round\s+(\d+)\)\s*$/;
 const TRANSITION_HEADING_RE = /^###\s+(\S+)\s+—\s+(.+?)\s+round\s+(\d+)\s*$/;
+const PHASE_HEADING_RE = /^###\s+(\S+)\s+—\s+(.+?)\s*$/;
+const STAGE_PHASE_LABEL_RE =
+  /^(Implementation|Code Review|QA) round (\d+) (?:complete|interrupted)$/;
 const FRONTMATTER_KEY_RE = /^([A-Za-z][\w-]*)\s*:\s*(.*)$/;
 const FRONTMATTER_ITEM_RE = /^\s*-\s+(.*)$/;
 
@@ -115,7 +119,7 @@ export function parseTicketNote(content: string): TicketNote {
 
 /**
  * The slice of a note that reaches a stage prompt: title, description, open
- * questions, and the decisions logged so far. Transition entries, legacy
+ * questions, and the decisions logged so far. Other transition prose, legacy
  * `## Decisions`/`## Report` blocks and any other section stay out — the
  * pipeline's narration is for humans, and review feedback reaches the
  * implementer through the feedback history instead.
@@ -125,9 +129,12 @@ export function ticketSpec(note: TicketNote): string {
   if (note.title !== "") parts.push(`# ${note.title}`);
   if (note.description !== "") parts.push(note.description);
   if (note.questions !== "") parts.push(`## ${QUESTIONS_SECTION}\n\n${note.questions}`);
-  const decisions = note.comments.filter((comment) => comment.kind === "decision");
-  if (decisions.length > 0)
-    parts.push(`## Decisions logged so far\n\n${decisions.map(formatComment).join("\n\n")}`);
+  const decisions = note.comments.flatMap((comment) =>
+    comment.kind === "decision"
+      ? [formatComment(comment)]
+      : decisionsFromComment(comment).map((decision) => `- ${decision}`),
+  );
+  if (decisions.length > 0) parts.push(`## Decisions logged so far\n\n${decisions.join("\n\n")}`);
   return parts.join("\n\n");
 }
 
@@ -140,9 +147,11 @@ export function ticketSpec(note: TicketNote): string {
  */
 export function formatComment(comment: TicketComment): string {
   const heading =
-    comment.kind === "decision"
-      ? `### ${comment.timestamp} — Decision (${comment.stage}, round ${comment.round})`
-      : `### ${comment.timestamp} — ${comment.stage} round ${comment.round}`;
+    comment.label !== undefined
+      ? `### ${comment.timestamp} — ${comment.label}`
+      : comment.kind === "decision"
+        ? `### ${comment.timestamp} — Decision (${comment.stage}, round ${comment.round})`
+        : `### ${comment.timestamp} — ${comment.stage} round ${comment.round}`;
   return `${heading}\n\n${quoteAgentText(comment.body.trim())}`;
 }
 
@@ -264,6 +273,14 @@ function parseComments(section: string): TicketComment[] {
  * untouched on disk — appends never rewrite what they did not write.
  */
 function toComment(heading: string, body: string): TicketComment | null {
+  return (
+    legacyDecisionComment(heading, body) ??
+    legacyTransitionComment(heading, body) ??
+    phaseComment(heading, body)
+  );
+}
+
+function legacyDecisionComment(heading: string, body: string): TicketComment | null {
   const decision = DECISION_HEADING_RE.exec(heading);
   if (decision?.[1] && decision[2] && decision[3])
     return {
@@ -273,6 +290,10 @@ function toComment(heading: string, body: string): TicketComment | null {
       round: Number(decision[3]),
       body: unquoteAgentText(body),
     };
+  return null;
+}
+
+function legacyTransitionComment(heading: string, body: string): TicketComment | null {
   const transition = TRANSITION_HEADING_RE.exec(heading);
   if (transition?.[1] && transition[2] && transition[3])
     return {
@@ -283,6 +304,58 @@ function toComment(heading: string, body: string): TicketComment | null {
       body: unquoteAgentText(body),
     };
   return null;
+}
+
+function phaseComment(heading: string, body: string): TicketComment | null {
+  const phase = PHASE_HEADING_RE.exec(heading);
+  if (!phase?.[1] || !phase[2]) return null;
+  const fields = phaseFields(phase[2]);
+  if (!fields) return null;
+  return {
+    kind: "transition",
+    timestamp: phase[1],
+    ...fields,
+    label: phase[2],
+    body: unquoteAgentText(body),
+  };
+}
+
+function phaseFields(label: string): { stage: string; round: number } | null {
+  const stagePhase = STAGE_PHASE_LABEL_RE.exec(label);
+  if (stagePhase?.[1] && stagePhase[2]) {
+    return { stage: phaseStage(stagePhase[1]), round: Number(stagePhase[2]) };
+  }
+  if (label === "JFDI started") return { stage: "dispatch", round: 0 };
+  if (label === "Integration complete") return { stage: "integration", round: 0 };
+  return null;
+}
+
+function phaseStage(label: string): string {
+  if (label === "Implementation") return "implementation";
+  if (label === "Code Review") return "code-review";
+  if (label === "QA") return "qa";
+  throw new Error(`unrecognized stage phase label: ${label}`);
+}
+
+/** Decisions retained by a legacy entry or folded into a phase body. */
+function decisionsFromComment(comment: TicketComment): string[] {
+  const marker = "Decisions:\n";
+  const markerIndex = comment.body.indexOf(marker);
+  if (markerIndex === -1) return [];
+  const afterMarker = comment.body.slice(markerIndex + marker.length);
+  const block = afterMarker.split(/\n\nJFDI /, 1)[0] ?? "";
+  const decisions: string[] = [];
+  let current: string[] = [];
+  for (const line of block.split("\n")) {
+    if (line.startsWith("- ")) {
+      if (current.length > 0) decisions.push(current.join("\n"));
+      current = [line.slice(2)];
+    } else if (current.length > 0 && line.startsWith("  ")) {
+      current.push(line.slice(2));
+    }
+  }
+  if (current.length > 0) decisions.push(current.join("\n"));
+  return decisions;
 }
 
 /**

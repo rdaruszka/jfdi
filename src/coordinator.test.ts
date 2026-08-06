@@ -471,10 +471,10 @@ describe("Coordinator", () => {
     // Nothing merged yet.
     await expect(fs.access(path.join(fixture.repo, "alpha.txt"))).rejects.toThrow();
 
-    // Report appended to each ticket note.
+    // QA's phase record names the approval queue; the report stays on disk.
     const alphaId = ticketIdFromCard("Add feature alpha");
     const note = await fs.readFile(path.join(fixture.ticketsDir, `${alphaId}.md`), "utf8");
-    expect(note).toContain("ready to merge");
+    expect(note).toContain("queued for approval before integration");
     expect(note).toContain("built alpha");
   });
 

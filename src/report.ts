@@ -2,8 +2,8 @@ import * as path from "node:path";
 import { addCardIfAbsent } from "./board.js";
 import type { PipelineContext, RunReport } from "./pipeline.js";
 import { runsDir } from "./pipeline.js";
-import { recordTransition, shortSha } from "./transitions.js";
-import { renderUsageTable, usageTotals } from "./usage.js";
+import { recordTransition } from "./transitions.js";
+import { usageTotals } from "./usage.js";
 import { atomicWrite, fileExists, readIfExists } from "./util/fsx.js";
 
 /** Persist the pipeline report so a later `jfdi merge` / restart can pick it up. */
@@ -142,33 +142,15 @@ export async function recordObservations(
 
 /**
  * Record merge-readiness (on-approval): persist the run report for a later
- * `jfdi merge`, then close the note's `## Comments` trail with the
- * ready-to-merge entry a human approves from. The saved `report.json` — not
- * this comment — is what the coordinator and `jfdi merge` consult; the comment
- * is only the human-readable half. Autonomous decisions are already decision
- * entries in the trail, so they are not repeated here.
+ * `jfdi merge` and emit the state transition. QA's phase comment already says
+ * that the run queued for approval; merge-readiness is not a sixth comment.
  */
 export async function recordMergeReady(
   context: PipelineContext,
   ticketId: string,
-  notePath: string,
   report: RunReport,
 ): Promise<void> {
   await saveReport(context.stateDir, ticketId, report);
-  const lines = [
-    "Run passed all stages — ready to merge.",
-    "",
-    report.summary ? `**Summary:**\n${report.summary}` : "**Summary:** (none recorded)",
-    "",
-    `**Rounds:** ${report.rounds} · **Commit:** \`${shortSha(report.commit)}\``,
-  ];
-  // The whole run's cost and time — the integration row is still to come, so
-  // this table's elapsed runs to merge-ready only.
-  if (report.usageRows.length > 0)
-    lines.push("", renderUsageTable(report.usageRows, report.elapsedMs));
-  if (report.testsAdded) lines.push("", `**QA tests added:**\n${report.testsAdded}`);
-  lines.push("", `_Approve with \`jfdi merge ${ticketId}\`, or merge the branch by hand._`);
-  await recordTransition(notePath, "pipeline", report.rounds, lines.join("\n"));
   // Carry the complete run total so the status/TUI snapshot lands the final
   // figure — including this run's last scribe, which ran after the last stage_end.
   const totals = usageTotals(report.usageRows);
