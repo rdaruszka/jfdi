@@ -29,7 +29,11 @@ init fills in for your repo):
     { "name": "lint",  "cmd": "pnpm lint" }
   ],
   "pipeline": { "max_rounds": 3 },
-  "integration": { "target_branch": "main", "mode": "on-approval" },
+  "integration": {
+    "target_branch": "main",
+    "mode": "on-approval",
+    "remote": { "fetch_before": false, "push_after": false }
+  },
   "permissions": { "mode": "auto" },
   "max_concurrent": 2,
   "stages": {
@@ -52,7 +56,7 @@ init fills in for your repo):
 | `board.columns.begin` | string | `Ready` | Cards here are dispatched, top first. Never auto-created — the heading must exist on the board. |
 | `board.columns.inProgress` | string | `In Progress` | Where dispatched cards sit while running. |
 | `board.columns.done` | string | `Done` | Merged cards land here, checked off. |
-| `board.columns.blocked` | string | `Blocked` | Escalations, exhausted rounds, failed integrations. Never infrastructure failures. |
+| `board.columns.blocked` | string | `Blocked` | Escalations, exhausted rounds, and failed integrations, including exhausted remote git retries. Agent-provider failures pause the tool instead. |
 | `board.columns.readyToMerge` | string | `Ready to Merge` | Only used when `integration.mode` is `on-approval`. |
 | `board.columns.inbox` | string | `Inbox` | Agent observation proposals. Never dispatched from. |
 
@@ -104,9 +108,14 @@ per round; rounds count trips through the review stages.
 |---|---|---|---|
 | `integration.target_branch` | string | `main` | Any local branch. Never assumed — set it if your default branch differs. |
 | `integration.mode` | string | `on-approval` | `"auto"` or `"on-approval"` |
+| `integration.remote.fetch_before` | boolean | `false` | Fetch the target branch before merging and fast-forward a behind local target. |
+| `integration.remote.push_after` | boolean | `false` | Push the target branch after its landing merge commit is created locally. |
 
 `auto` merges a passing pipeline immediately; `on-approval` parks it in Ready to
-Merge for your sign-off. See [Integration & Merging](integration.md).
+Merge for your sign-off. The optional `remote` block is disabled by default. If
+either flag is enabled, JFDI uses the target branch's configured upstream remote,
+falling back to `origin`; a repository with no configured git remotes keeps the
+local-only behavior. See [Integration & Merging](integration.md).
 
 ### `permissions`
 

@@ -8,6 +8,8 @@ import {
   commitMerge,
   deleteBranch,
   fastForward,
+  GitError,
+  git,
   isAncestor,
   isMergeInProgress,
   mergeTargetIntoBranch,
@@ -37,6 +39,254 @@ import {
  * comments carry no round of their own — the same zero its QA re-run uses.
  */
 const INTEGRATION_ROUND = 0;
+
+/** Remote failures get five total attempts before integration blocks. */
+const REMOTE_OPERATION_MAX_ATTEMPTS = 5;
+
+/** First remote retry wait; each later wait doubles while the integration lock stays held. */
+const REMOTE_RETRY_INITIAL_DELAY_MS = 30_000;
+
+/** Exponential multiplier between successive remote-operation waits. */
+const REMOTE_RETRY_BACKOFF_FACTOR = 2;
+
+/** Unit conversion for narrating retry delays. */
+const MILLISECONDS_PER_SECOND = 1_000;
+
+type RemoteOperation = "fetch" | "push";
+
+interface IntegrationRemote {
+  name: string;
+  sourceRef: string;
+  trackingRef: string;
+}
+
+interface RemoteOperationFailure {
+  status: "failed";
+  reason: string;
+}
+
+/**
+ * One integration's bounded remote-operation story. At most two operations,
+ * five attempts apiece, their retries, and one fast-forward are recorded.
+ */
+class IntegrationNarration {
+  private readonly lines: string[] = [];
+
+  constructor(
+    private readonly context: PipelineContext,
+    private readonly ticket: Ticket,
+  ) {}
+
+  record(data: Record<string, unknown> & { text: string }): void {
+    this.lines.push(data.text);
+    this.context.log.emit("integration_activity", this.ticket.id, data);
+  }
+
+  render(): string {
+    if (this.lines.length === 0) return "";
+    return ["Remote operations:", ...this.lines.map((line) => `- ${line}`)].join("\n");
+  }
+}
+
+/** Wait without detaching the integration job from its queue's critical section. */
+function waitForRemoteRetry(delayMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+/**
+ * Resolve the target's upstream remote and refs. With no configured remotes,
+ * opt-in flags deliberately become a no-op. A target without an upstream uses
+ * origin and a same-named branch, exactly like the configuration contract.
+ */
+async function resolveIntegrationRemote(
+  repo: string,
+  target: string,
+): Promise<IntegrationRemote | null> {
+  const remotes = (await git(repo, "remote")).split("\n").filter(Boolean);
+  if (remotes.length === 0) return null;
+
+  const upstreamFields = (
+    await git(
+      repo,
+      "for-each-ref",
+      "--format=%(upstream:remotename)%00%(upstream:remoteref)%00%(upstream)",
+      `refs/heads/${target}`,
+    )
+  ).split("\0");
+  const [upstreamRemote, upstreamSourceRef, upstreamTrackingRef] = upstreamFields;
+  if (
+    upstreamRemote &&
+    upstreamSourceRef &&
+    upstreamTrackingRef &&
+    remotes.includes(upstreamRemote)
+  ) {
+    return {
+      name: upstreamRemote,
+      sourceRef: upstreamSourceRef,
+      trackingRef: upstreamTrackingRef,
+    };
+  }
+  return {
+    name: "origin",
+    sourceRef: `refs/heads/${target}`,
+    trackingRef: `refs/remotes/origin/${target}`,
+  };
+}
+
+function remoteGitError(error: unknown): string {
+  if (error instanceof GitError && error.stderr.trim()) return error.stderr.trim();
+  return (error as Error).message;
+}
+
+function remoteAttemptAction(operation: RemoteOperation, attempt: number): string {
+  if (operation === "fetch") return attempt === 1 ? "Fetching from" : "Retrying fetch from";
+  return attempt === 1 ? "Pushing to" : "Retrying push to";
+}
+
+/** Run one fetch or push with the fixed exponential-backoff policy. */
+async function runRemoteOperation(
+  remote: IntegrationRemote,
+  operation: RemoteOperation,
+  narration: IntegrationNarration,
+  run: () => Promise<void>,
+): Promise<RemoteOperationFailure | null> {
+  for (let attempt = 1; attempt <= REMOTE_OPERATION_MAX_ATTEMPTS; attempt += 1) {
+    const action = remoteAttemptAction(operation, attempt);
+    narration.record({
+      operation,
+      status: "attempt",
+      remote: remote.name,
+      attempt,
+      maxAttempts: REMOTE_OPERATION_MAX_ATTEMPTS,
+      text: `${action} remote \`${remote.name}\` (attempt ${attempt}/${REMOTE_OPERATION_MAX_ATTEMPTS}).`,
+    });
+    try {
+      await run();
+      narration.record({
+        operation,
+        status: "succeeded",
+        remote: remote.name,
+        attempt,
+        maxAttempts: REMOTE_OPERATION_MAX_ATTEMPTS,
+        text: `${operation === "fetch" ? "Fetched from" : "Pushed to"} remote \`${remote.name}\` on attempt ${attempt}/${REMOTE_OPERATION_MAX_ATTEMPTS}.`,
+      });
+      return null;
+    } catch (error) {
+      const detail = remoteGitError(error);
+      if (attempt === REMOTE_OPERATION_MAX_ATTEMPTS) {
+        const reason = `git ${operation} with remote ${remote.name} failed after ${REMOTE_OPERATION_MAX_ATTEMPTS} attempts: ${detail}`;
+        narration.record({
+          operation,
+          status: "failed",
+          remote: remote.name,
+          attempt,
+          maxAttempts: REMOTE_OPERATION_MAX_ATTEMPTS,
+          error: detail,
+          text: reason,
+        });
+        return { status: "failed", reason };
+      }
+      const delayMs = REMOTE_RETRY_INITIAL_DELAY_MS * REMOTE_RETRY_BACKOFF_FACTOR ** (attempt - 1);
+      narration.record({
+        operation,
+        status: "retry",
+        remote: remote.name,
+        attempt: attempt + 1,
+        maxAttempts: REMOTE_OPERATION_MAX_ATTEMPTS,
+        delayMs,
+        error: detail,
+        text: `Git ${operation} failed on attempt ${attempt}/${REMOTE_OPERATION_MAX_ATTEMPTS}; retrying in ${delayMs / MILLISECONDS_PER_SECOND} seconds.`,
+      });
+      await waitForRemoteRetry(delayMs);
+    }
+  }
+  throw new Error(`remote ${operation} retry loop exhausted without returning an outcome`);
+}
+
+/** Fetch and, only when strictly behind, fast-forward the local target. */
+async function fetchTarget(
+  context: PipelineContext,
+  remote: IntegrationRemote,
+  target: string,
+  narration: IntegrationNarration,
+): Promise<RemoteOperationFailure | null> {
+  const fetchFailure = await runRemoteOperation(remote, "fetch", narration, async () => {
+    await git(context.repoRoot, "fetch", remote.name, `+${remote.sourceRef}:${remote.trackingRef}`);
+  });
+  if (fetchFailure) return fetchFailure;
+
+  const localCommit = await revParse(context.repoRoot, target);
+  const remoteCommit = await revParse(context.repoRoot, remote.trackingRef);
+  if (localCommit === remoteCommit) return null;
+  if (!(await isAncestor(context.repoRoot, target, remote.trackingRef))) {
+    const reason = `local target ref ${target} (${localCommit}) has diverged from fetched ref ${remote.trackingRef} (${remoteCommit}); JFDI will not resolve or overwrite either ref`;
+    narration.record({
+      operation: "fetch",
+      status: "failed",
+      remote: remote.name,
+      error: reason,
+      text: reason,
+    });
+    return { status: "failed", reason };
+  }
+
+  try {
+    await fastForward(context.repoRoot, target, remote.trackingRef);
+  } catch (error) {
+    const reason = `fast-forwarding local target ref ${target} to fetched ref ${remote.trackingRef} failed: ${(error as Error).message}`;
+    narration.record({
+      operation: "fast-forward",
+      status: "failed",
+      remote: remote.name,
+      error: reason,
+      text: reason,
+    });
+    return { status: "failed", reason };
+  }
+  narration.record({
+    operation: "fast-forward",
+    status: "succeeded",
+    remote: remote.name,
+    text: `Fast-forwarded local target \`${target}\` to fetched ref \`${remote.trackingRef}\` (${remoteCommit}).`,
+  });
+  return null;
+}
+
+/** Push only the configured target branch to its resolved remote branch. */
+function pushTarget(
+  context: PipelineContext,
+  remote: IntegrationRemote,
+  target: string,
+  narration: IntegrationNarration,
+): Promise<RemoteOperationFailure | null> {
+  return runRemoteOperation(remote, "push", narration, async () => {
+    await git(context.repoRoot, "push", remote.name, `refs/heads/${target}:${remote.sourceRef}`);
+  });
+}
+
+type RemotePreparation =
+  | {
+      status: "ready";
+      remote: IntegrationRemote | null;
+      narration: IntegrationNarration;
+    }
+  | { status: "failed"; reason: string; narration: IntegrationNarration };
+
+/** Resolve the opt-in remote and fetch the target before any merge inspection. */
+async function prepareRemoteIntegration(
+  context: PipelineContext,
+  ticket: Ticket,
+  target: string,
+): Promise<RemotePreparation> {
+  const narration = new IntegrationNarration(context, ticket);
+  const remoteConfig = context.config.integration.remote;
+  const shouldUseRemote = remoteConfig.fetch_before || remoteConfig.push_after;
+  const remote = shouldUseRemote ? await resolveIntegrationRemote(context.repoRoot, target) : null;
+  if (!remoteConfig.fetch_before || !remote) return { status: "ready", remote, narration };
+  const failure = await fetchTarget(context, remote, target, narration);
+  if (failure) return { status: "failed", reason: failure.reason, narration };
+  return { status: "ready", remote, narration };
+}
 
 /** Preserve every serialized integration gate run without overwriting an earlier attempt. */
 async function nextIntegrationGateLogPath(runDir: string, step: string): Promise<string> {
@@ -184,6 +434,45 @@ async function resolveConflictedMerge(
   return requalifyAfterMerge(context, ticket, worktree, notePath, runDir, notes);
 }
 
+type QualifiedMerge =
+  | { status: "qualified"; resolutionNote: string }
+  | { status: "failed"; reason: string };
+
+/** Merge the current target into the ticket branch and qualify the resulting tree. */
+async function mergeAndQualify(
+  context: PipelineContext,
+  ticket: Ticket,
+  worktree: Worktree,
+  notePath: string,
+  runDir: string,
+  target: string,
+): Promise<QualifiedMerge> {
+  const merge = await mergeTargetIntoBranch(worktree.path, target);
+  if (!merge.ok) {
+    if (!merge.hasConflict)
+      return {
+        status: "failed",
+        reason: `merging ${target} into ${worktree.branch} failed: ${merge.output}`,
+      };
+    const resolution = await resolveConflictedMerge(context, ticket, worktree, notePath, runDir);
+    if (resolution.status === "blocked") return { status: "failed", reason: resolution.reason };
+    return { status: "qualified", resolutionNote: resolution.notes };
+  }
+
+  const gate = await runGate(
+    context.config.gate,
+    worktree.path,
+    await nextIntegrationGateLogPath(runDir, "clean-merge"),
+  );
+  context.log.emit("gate_result", ticket.id, { ok: gate.ok });
+  if (!gate.ok)
+    return {
+      status: "failed",
+      reason: `gate failed after merging ${target} into ${worktree.branch}:\n\n${formatGateFailure(gate)}`,
+    };
+  return { status: "qualified", resolutionNote: "" };
+}
+
 /**
  * Commit whatever a session left uncommitted, so that what lands is what the
  * gate ran against. The gate runs against the *working tree* while the landing
@@ -215,6 +504,33 @@ async function captureLeftovers(
  */
 function mergeCommitMessage(ticket: Ticket, branch: string, target: string): string {
   return `Merge ${branch} into ${target}\n\n${ticket.cardText}\n`;
+}
+
+type LandingOutcome =
+  | { status: "landed"; landingCommit: string; leftoverNote: string }
+  | { status: "failed"; reason: string };
+
+/** Build the merge commit from the tested tree and move the local target to it. */
+async function landMerge(
+  context: PipelineContext,
+  ticket: Ticket,
+  worktree: Worktree,
+  target: string,
+  targetHead: string,
+  signedOffCommit: string,
+): Promise<LandingOutcome> {
+  try {
+    const leftoverNote = await captureLeftovers(context, ticket, worktree);
+    const landingCommit = await commitMerge(
+      worktree.path,
+      { firstParent: targetHead, secondParent: signedOffCommit },
+      mergeCommitMessage(ticket, worktree.branch, target),
+    );
+    await fastForward(context.repoRoot, target, landingCommit);
+    return { status: "landed", landingCommit, leftoverNote };
+  } catch (error) {
+    return { status: "failed", reason: `merge failed: ${(error as Error).message}` };
+  }
 }
 
 type StaleMergeOutcome = { status: "clear"; note?: string } | { status: "blocked"; reason: string };
@@ -254,6 +570,7 @@ async function resolveAlreadyMergedBranch(
   worktree: Worktree,
   notePath: string,
   target: string,
+  integrationNarration: IntegrationNarration,
 ): Promise<AlreadyMergedResolution> {
   if (!(await isAncestor(context.repoRoot, worktree.branch, target)))
     return { status: "continue", leftoverNote: "" };
@@ -270,6 +587,7 @@ async function resolveAlreadyMergedBranch(
           ticket,
           notePath,
           `checkpointing uncommitted changes before cleanup failed: ${(error as Error).message}`,
+          integrationNarration.render(),
         ),
       };
     }
@@ -282,7 +600,12 @@ async function resolveAlreadyMergedBranch(
     "Integration complete",
     "integration",
     INTEGRATION_ROUND,
-    `Branch already contained in \`${target}\` — closed without re-merging.`,
+    [
+      `Branch already contained in \`${target}\` — closed without re-merging.`,
+      integrationNarration.render(),
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
   );
   context.usage.finish(ticket.id);
   await cleanup(context, worktree);
@@ -323,6 +646,17 @@ export async function integrateTicket(
   // sweep can mistake this integration for a hand-merge and narrate it twice.
   await context.log.flush();
 
+  const remotePreparation = await prepareRemoteIntegration(context, ticket, target);
+  if (remotePreparation.status === "failed")
+    return blocked(
+      context,
+      ticket,
+      notePath,
+      remotePreparation.reason,
+      remotePreparation.narration.render(),
+    );
+  const { narration: integrationNarration, remote } = remotePreparation;
+
   // Human may have merged by hand (on-approval mode) — never double-merge a
   // clean branch. Dirty work advances the branch when checkpointed, so it must
   // fall through and land through the normal merge path instead of being lost.
@@ -332,6 +666,7 @@ export async function integrateTicket(
     worktree,
     notePath,
     target,
+    integrationNarration,
   );
   if (alreadyMerged.status === "complete") return alreadyMerged.outcome;
   let { leftoverNote } = alreadyMerged;
@@ -340,51 +675,21 @@ export async function integrateTicket(
   const signedOffCommit = await revParse(context.repoRoot, worktree.branch);
   const targetHead = await revParse(context.repoRoot, target);
 
-  // 1. Merge the target into the branch, in the worktree.
-  const merge = await mergeTargetIntoBranch(worktree.path, target);
-  let resolutionNote = "";
-  if (!merge.ok) {
-    if (!merge.hasConflict) {
-      const reason = `merging ${target} into ${worktree.branch} failed: ${merge.output}`;
-      return blocked(context, ticket, notePath, reason);
-    }
-    // 2–4. Conflicts — agent resolution, gate, and re-QA if it got complicated.
-    const resolution = await resolveConflictedMerge(context, ticket, worktree, notePath, runDir);
-    if (resolution.status === "blocked")
-      return blocked(context, ticket, notePath, resolution.reason);
-    resolutionNote = resolution.notes;
-  } else {
-    // Clean merge still reruns the gate pre-land.
-    const gate = await runGate(
-      context.config.gate,
-      worktree.path,
-      await nextIntegrationGateLogPath(runDir, "clean-merge"),
-    );
-    context.log.emit("gate_result", ticket.id, { ok: gate.ok });
-    if (!gate.ok) {
-      return blocked(
-        context,
-        ticket,
-        notePath,
-        `gate failed after merging ${target} into ${worktree.branch}:\n\n${formatGateFailure(gate)}`,
-      );
-    }
-  }
+  const qualified = await mergeAndQualify(context, ticket, worktree, notePath, runDir, target);
+  if (qualified.status === "failed")
+    return blocked(context, ticket, notePath, qualified.reason, integrationNarration.render());
 
   // 5. Land it: the tree the gate just ran against, under a merge commit that
   //    keeps the target's line first and the signed-off commit reachable.
-  let landingCommit = "";
-  try {
-    const latestLeftoverNote = await captureLeftovers(context, ticket, worktree);
-    if (latestLeftoverNote) leftoverNote = latestLeftoverNote;
-    landingCommit = await commitMerge(
-      worktree.path,
-      { firstParent: targetHead, secondParent: signedOffCommit },
-      mergeCommitMessage(ticket, worktree.branch, target),
-    );
-    await fastForward(context.repoRoot, target, landingCommit);
-  } catch (error) {
-    return blocked(context, ticket, notePath, `merge failed: ${(error as Error).message}`);
+  const landing = await landMerge(context, ticket, worktree, target, targetHead, signedOffCommit);
+  if (landing.status === "failed") {
+    return blocked(context, ticket, notePath, landing.reason, integrationNarration.render());
+  }
+  if (landing.leftoverNote) leftoverNote = landing.leftoverNote;
+  if (context.config.integration.remote.push_after && remote) {
+    const pushFailure = await pushTarget(context, remote, target, integrationNarration);
+    if (pushFailure)
+      return blocked(context, ticket, notePath, pushFailure.reason, integrationNarration.render());
   }
   context.log.emit("merged", ticket.id);
   await recordMergedTransition(
@@ -393,9 +698,10 @@ export async function integrateTicket(
     notePath,
     {
       target,
-      landingCommit,
+      landingCommit: landing.landingCommit,
       leftoverNote,
-      resolutionNote,
+      resolutionNote: qualified.resolutionNote,
+      integrationNarration,
     },
     savedReport,
   );
@@ -430,6 +736,7 @@ interface MergedTransitionDetails {
   landingCommit: string;
   leftoverNote: string;
   resolutionNote: string;
+  integrationNarration: IntegrationNarration;
 }
 
 /** Record the closing comment, including any usage, leftovers, and conflict notes. */
@@ -454,6 +761,8 @@ async function recordMergedTransition(
   if (details.leftoverNote) mergedNarration.push("", details.leftoverNote.trim());
   if (details.resolutionNote)
     mergedNarration.push("", "Conflict resolution:", details.resolutionNote);
+  const remoteOperations = details.integrationNarration.render();
+  if (remoteOperations) mergedNarration.push("", remoteOperations);
   await recordPhase(
     notePath,
     "Integration complete",
@@ -472,13 +781,17 @@ async function blocked(
   ticket: Ticket,
   notePath: string,
   reason: string,
+  integrationNarration = "",
 ): Promise<IntegrateOutcome> {
+  const unnarratedReason = integrationNarration.endsWith(reason) ? "" : reason;
   await recordPhase(
     notePath,
     "Integration complete",
     "integration",
     INTEGRATION_ROUND,
-    `${statusLine("integration", "blocked", BLOCKED_ROUTING)}\n\n${reason}`,
+    [statusLine("integration", "blocked", BLOCKED_ROUTING), integrationNarration, unnarratedReason]
+      .filter(Boolean)
+      .join("\n\n"),
   );
   await appendToSection(
     notePath,

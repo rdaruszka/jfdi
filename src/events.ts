@@ -24,6 +24,7 @@ export type EventType =
   | "blocked"
   | "merge_queued"
   | "merge_start"
+  | "integration_activity"
   | "complicated_merge"
   | "merged"
   | "merge_ready"
@@ -192,6 +193,8 @@ function narrate(event: JfdiEvent, ticket: TicketState): string {
       return event.data?.ok ? "gate passed" : `gate failed (${event.data?.step ?? "?"})`;
     case "session_activity":
       return stringField(event.data, "text") ?? ticket.lastActivity;
+    case "integration_activity":
+      return stringField(event.data, "text") ?? ticket.lastActivity;
     case "escalation":
       return "escalated";
     case "unresolved_link":
@@ -259,6 +262,7 @@ function applyTicketEvent(
     case "gate_start":
     case "gate_result":
     case "session_activity":
+    case "integration_activity":
     case "escalation":
     case "unresolved_link":
       ticket.lastActivity = narrate(event, ticket);

@@ -102,7 +102,7 @@ Use these terms exactly; introduce no synonyms. The list grows only by editing t
 - **worktree** — the isolated git checkout (branch `jfdi/<ticket-id>`) a run works in.
 - **resume** — a re-dispatch that deliberately continues an interrupted run's partial work: the worktree is sanitized first, and the Implementation prompt carries what the branch already holds plus the previous run's unanswered feedback. (Run-level; distinct from **continuation**, which is session-level.)
 - **continuation** — re-entering a stage's own previous agent session in a later round of the same run (`claude -p --resume` / `codex exec resume`) with a short brief, instead of starting a fresh session. Round 1 of every stage is always fresh; a forgotten session falls back to one fresh spawn.
-- **pause** — the tool-wide hold on agent sessions while the provider under the harness is down (usage limit, expired login, outage). Global: no dispatches, and every in-flight run holds at its next stage boundary. Not persisted.
+- **pause** — the tool-wide hold on agent sessions while the provider under the harness is down (usage limit, expired login, outage). Global: no dispatches, and every in-flight run holds at its next stage boundary. Not persisted, and never a card fate — nothing reaches Blocked for an agent-provider infrastructure reason. Exhausted remote git operations are integration failures and do block their card.
 - **observation** — an out-of-scope issue a stage reports in its verdict (`observations` array); never fixed inline.
 - **inbox** — the board column where observations land as proposal cards. Agent-writable via the coordinator only, human-drained, never dispatched from: agents propose, humans promote.
 

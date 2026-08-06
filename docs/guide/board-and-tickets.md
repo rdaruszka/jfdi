@@ -318,5 +318,6 @@ have to drag anything anywhere.
 This is checked on every scan, not just at startup, so "in progress with
 nothing behind it" heals itself rather than being a boot-time special case. A
 ticket that genuinely cannot be finished still exhausts its rounds and lands in
-**Blocked** the ordinary way; only infrastructure failures are exempt, and
-those [pause the tool](pipeline.md#when-the-provider-goes-down) instead.
+**Blocked** the ordinary way. Agent-provider failures are exempt and
+[pause the tool](pipeline.md#when-the-provider-goes-down) instead; an exhausted
+remote git fetch or push is an integration failure and does block its card.

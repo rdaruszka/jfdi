@@ -13,7 +13,15 @@ to be `main`.
 
 ```mermaid
 flowchart TD
-    START([merge_start]) --> AM{Branch already<br/>contained in target?}
+    START([merge_start]) --> FETCH{fetch_before and<br/>a remote exists?}
+    FETCH -->|yes| RF[Fetch target branch]
+    RF -->|failure after retries| BLOCKED
+    RF --> SYNC{Local target behind<br/>fetched ref?}
+    SYNC -->|yes| FF[Fast-forward local target]
+    SYNC -->|equal| AM
+    SYNC -->|local-only commits| BLOCKED
+    FF --> AM
+    FETCH -->|no| AM{Branch already<br/>contained in target?}
     AM -->|yes| DIRTY{Worktree dirty?}
     DIRTY -->|no| CLOSE([Close card — already merged])
     DIRTY -->|yes| CHECKPOINT[Checkpoint leftovers<br/>on the ticket branch]
@@ -30,33 +38,48 @@ flowchart TD
     GATE1 -->|pass| LAND
     GATE1 -->|fail| BLOCKED
     GATE2 -->|fail| BLOCKED
-    LAND --> DONE([merged — worktree removed,<br/>branch deleted, card → Done ✓])
+    LAND --> PUSH{push_after and<br/>a remote exists?}
+    PUSH -->|yes| RP[Push target branch]
+    PUSH -->|no| DONE([merged — worktree removed,<br/>branch deleted, card → Done ✓])
+    RP -->|success| DONE
+    RP -->|failure| BLOCKED
 ```
+
+Remote use is opt-in through `integration.remote.fetch_before` and
+`integration.remote.push_after`, both `false` by default. JFDI resolves the remote
+from the target branch's configured upstream, falling back to `origin`. If the
+repository has no configured git remotes, even enabled flags retain local-only
+behavior.
 
 In detail:
 
-1. **Already-merged short-circuit.** If the branch is already contained in the
+1. **Optional remote fetch.** Before inspecting or merging the ticket branch,
+   Integration fetches only the target branch when `fetch_before` is enabled.
+   A local target strictly behind its fetched remote-tracking ref is
+   fast-forwarded. If the local target has commits the fetched ref lacks, JFDI
+   blocks and names both refs; it never resolves or overwrites divergent history.
+2. **Already-merged short-circuit.** If the branch is already contained in the
    target (you merged it by hand) and its worktree is clean, the card is closed
    without another merge. If the worktree is dirty, Integration checkpoints the
    changes on the ticket branch and sends that new commit through the normal
    merge path, where the landing commit keeps it reachable as its second parent.
-2. **Merge the target into the ticket branch**, in the ticket's worktree — so
+3. **Merge the target into the ticket branch**, in the ticket's worktree — so
    the merged state is built and tested where the run already lives. A stale
    in-progress merge left by a crash is aborted first (a conflicted merge has
    committed nothing, so this is lossless).
-3. **Conflicts are agent-resolved.** A fresh Integration agent session resolves
+4. **Conflicts are agent-resolved.** A fresh Integration agent session resolves
    every conflict, preserving both sides' intent, and completes the merge. It is
    forbidden to abort, force-push, or touch the target branch. One merge means
    one resolution, however many commits the branch holds.
-4. **Gate rerun.** The full mechanical gate runs on the merged result — whether
+5. **Gate rerun.** The full mechanical gate runs on the merged result — whether
    or not there were conflicts.
-5. **The complicated-merge valve.** The Integration agent judges its own
+6. **The complicated-merge valve.** The Integration agent judges its own
    resolution: `clean` (adjacent-line noise) or `complicated` (it touched real
    logic). A complicated resolution triggers a fresh QA session on the merged
    branch — the reviews signed off on code that now sits next to changes they
    never saw, so the behavior gets re-validated before landing. QA must pass,
    and the gate runs once more after it.
-6. **Land the merge commit.** Anything a session left uncommitted in the
+7. **Land the merge commit.** Anything a session left uncommitted in the
    worktree is committed first — the gate runs against the working tree, so a
    re-QA regression test or a stray resolution file would otherwise be dropped
    from what lands and then lost with the worktree; the ticket note's report
@@ -69,7 +92,10 @@ In detail:
    Conflict resolutions and any re-QA commits made in the worktree land *inside*
    that merge commit rather than as commits of their own — the same shape a
    hand-resolved `git merge` produces.
-7. **Cleanup.** On success the worktree is removed and the `jfdi/<id>` branch
+8. **Optional remote push.** After the landing commit moves the local target,
+   Integration pushes only that target branch when `push_after` is enabled. A
+   rejected push blocks but does not roll back the already-landed local merge.
+9. **Cleanup.** On success the worktree is removed and the `jfdi/<id>` branch
    deleted; the card moves to Done, checked off, and a merge entry closes the
    ticket note's `## Comments` trail. That entry carries the run's whole
    [cost-and-time table](pipeline.md#cost-and-time) — every stage, the scribe,
@@ -80,6 +106,12 @@ Any failure along the way blocks instead: the card moves to Blocked, the reason
 is written into the ticket note's `## Questions`, and **the worktree and branch
 are kept for inspection** under `.jfdi/worktrees/`. Fix the problem, then move
 the card back to the begin column.
+
+`git fetch` and `git push` failures alone retry five times with exponential
+backoff beginning at 30 seconds. Integration remains globally serialized during
+those waits. The event stream and transition comment record each attempt,
+retry, success or final failure. Divergence, fast-forward refusal, merge
+conflicts, and gate failures do not use this retry policy.
 
 ## `auto` vs `on-approval`
 
