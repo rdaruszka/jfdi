@@ -14,13 +14,14 @@
  * `JFDI_HOME`/`HOME` always point inside the scratch tree — nothing here can
  * reach the real `~/.jfdi`, and the stub guarantees no real agent CLI is spawned.
  */
-import { execFile, spawn } from "node:child_process";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { git, isMergeInProgress, mergeTargetIntoBranch } from "./git.js";
+import { spawnTtyCli } from "./test-helpers.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -40,23 +41,6 @@ const POLL_INTERVAL_MS = 100;
 const HOLD_PROOF_MS = 3_000;
 /** A pause short enough that a test can wait out the real thing. */
 const RESUME_SOON_MS = 50;
-const TEST_TERMINAL_COLUMNS = 80;
-const TEST_TERMINAL_ROWS = 24;
-
-const TTY_CLI_LAUNCHER = `
-import { pathToFileURL } from "node:url";
-Object.defineProperties(process.stdout, {
-  isTTY: { value: true },
-  columns: { value: ${TEST_TERMINAL_COLUMNS} },
-  rows: { value: ${TEST_TERMINAL_ROWS} },
-});
-Object.defineProperty(process.stdin, "isTTY", { value: true });
-process.stdin.setRawMode = () => process.stdin;
-const cliPath = process.env.JFDI_TEST_CLI_PATH;
-const args = JSON.parse(process.env.JFDI_TEST_CLI_ARGS ?? "[]");
-process.argv = [process.execPath, cliPath, ...args];
-await import(pathToFileURL(cliPath).href);
-`;
 
 /**
  * The agent both stubbed CLIs play; it never talks to the network. Beyond
@@ -310,7 +294,7 @@ interface Ended {
  * the outside while they are alive.
  */
 interface LiveCli {
-  child: ReturnType<typeof spawn>;
+  child: ChildProcess;
   output: () => string;
   exited: Promise<Ended>;
 }
@@ -321,25 +305,15 @@ function spawnCli(
   options: StubOptions = {},
   shouldUseTTY = false,
 ): LiveCli {
-  const commandArgs = shouldUseTTY
-    ? ["--input-type=module", "--eval", TTY_CLI_LAUNCHER]
-    : [cliPath, ...args];
-  const env = shouldUseTTY
-    ? {
-        ...stubEnv(sandbox, options),
-        JFDI_TEST_CLI_ARGS: JSON.stringify(args),
-        JFDI_TEST_CLI_PATH: cliPath,
-      }
-    : stubEnv(sandbox, options);
-  const child = spawn(process.execPath, commandArgs, {
-    cwd: sandbox.project,
-    env,
-  });
+  const spawnOptions = { cwd: sandbox.project, env: stubEnv(sandbox, options) };
+  const child = shouldUseTTY
+    ? spawnTtyCli(cliPath, args, spawnOptions)
+    : spawn(process.execPath, [cliPath, ...args], spawnOptions);
   let output = "";
-  child.stdout.on("data", (chunk: Buffer) => {
+  child.stdout?.on("data", (chunk: Buffer) => {
     output += chunk.toString();
   });
-  child.stderr.on("data", (chunk: Buffer) => {
+  child.stderr?.on("data", (chunk: Buffer) => {
     output += chunk.toString();
   });
   return {
@@ -600,7 +574,7 @@ describe("coordinator startup", () => {
         { tag: "second", promptSubdir: "run2" },
       );
 
-      expect(output).toContain("resuming");
+      expect(output).toContain("resumed");
       const prompt = await readPrompt(sandbox, "run2", "implementation-0.txt");
       expect(prompt).toContain("Resuming an interrupted attempt");
       expect(prompt).toContain("3 commits of partial work");

@@ -14,7 +14,7 @@
  * `JFDI_HOME`/`HOME` always point inside the scratch tree; nothing here can
  * reach the real `~/.jfdi`.
  */
-import { type ChildProcess, execFile, spawn } from "node:child_process";
+import { type ChildProcess, execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -22,6 +22,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { findColumn, parseBoard } from "./board.js";
 import { git } from "./git.js";
+import { spawnTtyCli } from "./test-helpers.js";
 import { parseTicketNote } from "./ticket-note.js";
 import { ticketIdFromCard } from "./util/ids.js";
 
@@ -36,23 +37,6 @@ const SETTLE_DEADLINE_MS = 30_000;
 /** Extra scans to let elapse once settled, to prove the refusal does not repeat. */
 const RESCAN_WINDOW_MS = 5_000;
 const POLL_INTERVAL_MS = 250;
-const TEST_TERMINAL_COLUMNS = 80;
-const TEST_TERMINAL_ROWS = 24;
-
-const TTY_CLI_LAUNCHER = `
-import { pathToFileURL } from "node:url";
-Object.defineProperties(process.stdout, {
-  isTTY: { value: true },
-  columns: { value: ${TEST_TERMINAL_COLUMNS} },
-  rows: { value: ${TEST_TERMINAL_ROWS} },
-});
-Object.defineProperty(process.stdin, "isTTY", { value: true });
-process.stdin.setRawMode = () => process.stdin;
-const cliPath = process.env.JFDI_TEST_CLI_PATH;
-const args = JSON.parse(process.env.JFDI_TEST_CLI_ARGS ?? "[]");
-process.argv = [process.execPath, cliPath, ...args];
-await import(pathToFileURL(cliPath).href);
-`;
 
 /** A stub that records every invocation, so an absent log proves no dispatch. */
 const RECORDING_STUB = `#!/usr/bin/env node
@@ -177,13 +161,9 @@ function delay(ms: number): Promise<void> {
 
 /** Launch the built CLI's supported TTY mode while retaining pipe capture for the test. */
 function startCoordinator(sandbox: Sandbox): ChildProcess {
-  const child = spawn(process.execPath, ["--input-type=module", "--eval", TTY_CLI_LAUNCHER], {
+  const child = spawnTtyCli(cliPath, ["start"], {
     cwd: sandbox.project,
-    env: {
-      ...envFor(sandbox),
-      JFDI_TEST_CLI_ARGS: JSON.stringify(["start"]),
-      JFDI_TEST_CLI_PATH: cliPath,
-    },
+    env: envFor(sandbox),
     stdio: ["pipe", "ignore", "ignore"],
   });
   running.push(child);

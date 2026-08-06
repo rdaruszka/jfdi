@@ -17,14 +17,14 @@
  * `JFDI_HOME`/`HOME` always point inside the scratch tree — nothing here can
  * reach the real `~/.jfdi`.
  */
-import { type ChildProcess, execFile, spawn } from "node:child_process";
+import { type ChildProcess, execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { git } from "./git.js";
-import { waitFor } from "./test-helpers.js";
+import { spawnTtyCli, waitFor } from "./test-helpers.js";
 // The card-to-ticket-id rule is the product's own; a test that reimplemented
 // it would be pinning its own copy, not the one the coordinator looks up.
 import { ticketIdFromCard } from "./util/ids.js";
@@ -181,12 +181,11 @@ interface Coordinator {
 }
 
 /**
- * Spawn `jfdi start` and resolve once its initial board scan is done — the
- * banner is printed after `start()` resolves, so anything asserted afterwards
- * is asserted against a coordinator that has already looked at the board.
+ * Spawn `jfdi start` and resolve once its live TUI renders. Each scenario's
+ * board or event condition proves the coordinator completed the relevant scan.
  */
 async function startCoordinator(sandbox: Sandbox): Promise<Coordinator> {
-  const child = spawn(process.execPath, [cliPath, "start"], {
+  const child = spawnTtyCli(cliPath, ["start"], {
     cwd: sandbox.project,
     env: sandboxEnv(sandbox),
   });
@@ -203,10 +202,10 @@ async function startCoordinator(sandbox: Sandbox): Promise<Coordinator> {
     isAlive: () => child.exitCode === null && child.signalCode === null,
     output: () => output,
   };
-  await waitFor(() => output.includes("watching the board"), {
+  await waitFor(() => output.includes("JFDI"), {
     timeoutMs: WAIT_TIMEOUT_MS,
     intervalMs: WAIT_STEP_MS,
-    describe: () => `start never began watching: ${output}`,
+    describe: () => `start never rendered its TUI: ${output}`,
   });
   return coordinator;
 }
@@ -480,8 +479,8 @@ describe("a running coordinator and merges it did not perform", () => {
       );
 
       const coordinator = await startCoordinator(sandbox);
-      // The banner means the initial scan already ran; give the mtime poll a
-      // couple of turns as well before believing the card was left alone.
+      // Give the initial scan and the mtime poll a couple of turns before
+      // believing the card was left alone.
       await sleep(WAIT_STEP_MS * 10);
 
       expect(await columnCards(sandbox, "Ready to Merge")).toEqual(["- [ ] Add feature gamma"]);
