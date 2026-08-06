@@ -81,6 +81,28 @@ describe("mapClaudeLine", () => {
     ]);
   });
 
+  it("does not surface a provider-reported model from the result line", () => {
+    // Regression tripwire for the report-provider-model ticket. That feature
+    // renders `SessionUsage.model` as the provider-confirmed model per stage,
+    // but the Claude harness never reads a model off the result line — so the
+    // provider-confirmed path is inert in production and every row falls back to
+    // the configured model. This pins the drop point: when the harness is wired
+    // to read Claude's reported model, this expectation flips and the reporting
+    // feature comes alive. Until then it documents why the mismatch stays silent.
+    const line = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      result: "done",
+      model: "claude-opus-4-8-provider-ran",
+      total_cost_usd: 0.05,
+      usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 0 },
+    });
+    const [event] = mapClaudeLine(line);
+    expect(event).toMatchObject({ type: "result", ok: true });
+    expect(event.type === "result" ? event.usage : undefined).toBeDefined();
+    expect(event.type === "result" ? event.usage?.model : "unset").toBeUndefined();
+  });
+
   it("maps error results as not ok", () => {
     const line = JSON.stringify({
       type: "result",
