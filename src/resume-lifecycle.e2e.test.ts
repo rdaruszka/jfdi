@@ -40,6 +40,23 @@ const POLL_INTERVAL_MS = 100;
 const HOLD_PROOF_MS = 3_000;
 /** A pause short enough that a test can wait out the real thing. */
 const RESUME_SOON_MS = 50;
+const TEST_TERMINAL_COLUMNS = 80;
+const TEST_TERMINAL_ROWS = 24;
+
+const TTY_CLI_LAUNCHER = `
+import { pathToFileURL } from "node:url";
+Object.defineProperties(process.stdout, {
+  isTTY: { value: true },
+  columns: { value: ${TEST_TERMINAL_COLUMNS} },
+  rows: { value: ${TEST_TERMINAL_ROWS} },
+});
+Object.defineProperty(process.stdin, "isTTY", { value: true });
+process.stdin.setRawMode = () => process.stdin;
+const cliPath = process.env.JFDI_TEST_CLI_PATH;
+const args = JSON.parse(process.env.JFDI_TEST_CLI_ARGS ?? "[]");
+process.argv = [process.execPath, cliPath, ...args];
+await import(pathToFileURL(cliPath).href);
+`;
 
 /**
  * The agent both stubbed CLIs play; it never talks to the network. Beyond
@@ -298,10 +315,25 @@ interface LiveCli {
   exited: Promise<Ended>;
 }
 
-function spawnCli(sandbox: Sandbox, args: string[], options: StubOptions = {}): LiveCli {
-  const child = spawn(process.execPath, [cliPath, ...args], {
+function spawnCli(
+  sandbox: Sandbox,
+  args: string[],
+  options: StubOptions = {},
+  shouldUseTTY = false,
+): LiveCli {
+  const commandArgs = shouldUseTTY
+    ? ["--input-type=module", "--eval", TTY_CLI_LAUNCHER]
+    : [cliPath, ...args];
+  const env = shouldUseTTY
+    ? {
+        ...stubEnv(sandbox, options),
+        JFDI_TEST_CLI_ARGS: JSON.stringify(args),
+        JFDI_TEST_CLI_PATH: cliPath,
+      }
+    : stubEnv(sandbox, options);
+  const child = spawn(process.execPath, commandArgs, {
     cwd: sandbox.project,
-    env: stubEnv(sandbox, options),
+    env,
   });
   let output = "";
   child.stdout.on("data", (chunk: Buffer) => {
@@ -340,7 +372,7 @@ async function runCoordinatorUntil(
   isReady: () => Promise<boolean>,
   options: StubOptions = {},
 ): Promise<string> {
-  const coordinator = spawnCli(sandbox, ["start"], options);
+  const coordinator = spawnCli(sandbox, ["start"], options, true);
   try {
     await waitUntil(
       isReady,
@@ -713,35 +745,6 @@ describe("a provider that is down", () => {
         expect(ended.signal ?? ended.code).toBeTruthy();
       } finally {
         run.child.kill("SIGKILL");
-      }
-    },
-    PIPELINE_TIMEOUT_MS,
-  );
-
-  it(
-    "keeps a paused coordinator alive with no TTY, its card still in flight",
-    async () => {
-      const sandbox = await makeSandbox();
-      await initProject(sandbox);
-      await putCardInColumn(sandbox, "Ready", "- [ ] Fix the parser");
-      const coordinator = spawnCli(sandbox, ["start"], {
-        stubMode: "needs-human",
-        promptSubdir: "held-start",
-      });
-      try {
-        await waitUntil(
-          () => hasPaused(sandbox),
-          () => `coordinator never paused. Output:\n${coordinator.output()}`,
-        );
-        await sleep(HOLD_PROOF_MS);
-        // A coordinator that quits under its own pause stops watching the
-        // board and drops every run it was holding.
-        expect(coordinator.child.exitCode).toBe(null);
-        expect(await cardsInColumn(sandbox, "In Progress")).toEqual(["- [ ] Fix the parser"]);
-        expect(await cardsInColumn(sandbox, "Blocked")).toEqual([]);
-      } finally {
-        coordinator.child.kill("SIGTERM");
-        await coordinator.exited;
       }
     },
     PIPELINE_TIMEOUT_MS,

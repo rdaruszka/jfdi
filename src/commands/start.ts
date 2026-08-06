@@ -4,14 +4,18 @@ import { createElement } from "react";
 import { Coordinator } from "../coordinator.js";
 import { App } from "../tui/App.js";
 import { EXIT_SIGINT, EXIT_SIGTERM } from "../util/exit-codes.js";
-import { attachInlinePrinter, buildContext } from "./context.js";
+import { buildContext } from "./context.js";
 
 /**
  * `jfdi start` — coordinator multi-mode: watch the board, dispatch concurrently,
- * serialize integration, and present the live TUI (or plain streaming when not
- * attached to a TTY).
+ * serialize integration, and present the live TUI.
  */
 export async function startCommand(): Promise<number> {
+  if (!process.stdout.isTTY) {
+    console.error("jfdi start requires a terminal (TTY); it renders a live TUI");
+    return 1;
+  }
+
   const context = await buildContext();
   const coordinator = new Coordinator(context);
 
@@ -26,17 +30,6 @@ export async function startCommand(): Promise<number> {
     shutdown();
     process.exit(EXIT_SIGTERM);
   });
-
-  if (!process.stdout.isTTY) {
-    const detach = attachInlinePrinter(context.log);
-    await coordinator.start();
-    console.log("watching the board (no TTY — plain streaming; ctrl-c to stop)");
-    await new Promise(() => {
-      // Intentionally never resolves — run until killed.
-    });
-    detach();
-    return 0;
-  }
 
   const app = render(
     createElement(App, {

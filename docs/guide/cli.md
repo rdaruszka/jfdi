@@ -68,8 +68,9 @@ current stage and round and running cost/agent-time, tickets needing attention
 a tail of recent events.
 When the provider under the harness is down, a banner across the top names the
 reason and when work resumes. Two keys: `q` quits (as do Ctrl-C / SIGTERM, exit
-codes 130/143), and `R` retries a paused harness immediately. When stdout is
-not a TTY, `jfdi start` falls back to plain line-by-line streaming.
+codes 130/143), and `R` retries a paused harness immediately. `jfdi start`
+requires stdout to be a TTY and exits non-zero with an actionable error when it
+is redirected; it does not provide a headless coordinator mode.
 
 On startup the coordinator:
 
