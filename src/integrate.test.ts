@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type EventLog, type JfdiEvent } from "./events.js";
+import type { EventLog, JfdiEvent } from "./events.js";
 import { git, isAncestor, isMergeInProgress, revParse } from "./git.js";
 import { IntegrationQueue, integrateTicket } from "./integrate.js";
 import { type PipelineContext, runPipeline } from "./pipeline.js";
@@ -1031,8 +1031,9 @@ describe("integrateTicket", () => {
 
     vi.useFakeTimers();
     const integration = queue.enqueue(() => integrateTicket(context, ticket, outcome.worktree));
-    const second = queue.enqueue(async () => {
+    const second = queue.enqueue(() => {
       hasStartedSecondIntegration = true;
+      return Promise.resolve();
     });
     const retryDriver = driveRemoteRetries(events, context.log);
     await waitForRemoteEventCount(events, context.log, "retry", 1);
