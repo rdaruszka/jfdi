@@ -161,6 +161,30 @@ describe("assembleCommitMessage", () => {
     expect(message).toContain("Taught the parser to accept sha256 object names.");
     expect(message).toContain("JFDI-Round: 2/3");
   });
+
+  it("keeps pipeline-owned failure detail when the scribe supplies its own body", () => {
+    const failureDetail =
+      "implementation agent failed to function properly after 2 verdict correction attempts: JSON parse failed in implementation.verdict.json";
+    const message = assembleCommitMessage(
+      "Describe partial work\n\nWhat the session did, in the scribe's words.",
+      "fix-object-names",
+      {
+        ...HANDOFF,
+        outcome: "invalid verdict",
+        routing: "moving to Blocked for human review",
+        detail: failureDetail,
+        isInterrupted: true,
+      },
+    );
+
+    expect(message).toContain(`What the session did, in the scribe's words.\n\n${failureDetail}`);
+    const fallbackMessage = assembleCommitMessage("", "fix-object-names", {
+      ...HANDOFF,
+      summary: failureDetail,
+      detail: failureDetail,
+    });
+    expect(fallbackMessage.split(failureDetail)).toHaveLength(2);
+  });
 });
 
 describe("assembleStageComment", () => {
@@ -181,6 +205,18 @@ describe("assembleStageComment", () => {
     expect(comment).toContain("JFDI-Round: 2/3");
     expect(comment).toContain("JFDI-Duration: 7m");
     expect(comment).toContain("JFDI-Cost: $1.50 (estimate, runs low)");
+  });
+
+  it("keeps pipeline-owned failure detail when the stage has no commit", () => {
+    const comment = assembleStageComment({
+      ...HANDOFF,
+      outcome: "invalid verdict",
+      routing: "moving to Blocked for human review",
+      detail: "JSON parse failed in implementation.verdict.json",
+      isInterrupted: true,
+    });
+
+    expect(comment).toContain("JSON parse failed in implementation.verdict.json");
   });
 });
 

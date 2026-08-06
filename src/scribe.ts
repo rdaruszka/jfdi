@@ -37,6 +37,8 @@ export interface SessionHandoff {
   routing: string;
   /** The stage's own account of what it did — the "why" the diff cannot carry. */
   summary: string;
+  /** Pipeline-owned failure detail that must remain in the permanent stage record. */
+  detail?: string;
   /** Autonomous choices from the completing stage's verdict, kept verbatim. */
   decisions?: readonly string[];
   /** Partial work: the session did not finish, so the subject carries a WIP marker. */
@@ -139,6 +141,7 @@ export function assembleCommitMessage(
   const writtenBody = summary === null ? written : lines.slice(1).join("\n");
   const fallbackBody = handoff.summary;
   const body = (writtenBody.trim() !== "" ? writtenBody : fallbackBody).trim();
+  const detail = handoff.detail?.trim() ?? "";
   // The status line is one line by definition: a reason quoted from a dead
   // session's output would otherwise wrap onto a line of its own. It is NOT
   // part of the trailer paragraph: git only treats the last paragraph as a
@@ -155,6 +158,7 @@ export function assembleCommitMessage(
   const message = `${[
     subject,
     body,
+    detail !== body ? detail : "",
     decisionsBlock(handoff.decisions),
     status,
     handoffTrailers(handoff),
@@ -173,8 +177,9 @@ export function assembleStageComment(handoff: SessionHandoff, detail = ""): stri
     !/[\r\n]/.test(status),
     "Cannot assemble stage comment: pipeline-produced status line contains a line break",
   );
+  const permanentDetail = detail.trim() || handoff.detail?.trim() || "";
   return scrubControlCharacters(
-    `${[detail.trim(), decisionsBlock(handoff.decisions), status, handoffTrailers(handoff)]
+    `${[permanentDetail, decisionsBlock(handoff.decisions), status, handoffTrailers(handoff)]
       .filter((part) => part !== "")
       .join("\n\n")}\n`,
   );

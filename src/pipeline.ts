@@ -1671,6 +1671,7 @@ function implementationHandoff(
         outcome: "invalid verdict",
         routing: BLOCKED_ROUTING,
         summary: step.reason,
+        detail: step.reason,
         isInterrupted: true,
       };
     case "escalate":
