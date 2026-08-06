@@ -35,6 +35,17 @@ describe("mapClaudeLine", () => {
     expect(mapClaudeLine(line)).toEqual([{ type: "tool", name: "Bash", detail: "npm test" }]);
   });
 
+  it("preserves the full tool detail", () => {
+    const command = `pnpm test --filter ${"long-command".repeat(20)}`;
+    const line = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [{ type: "tool_use", name: "Bash", input: { command } }],
+      },
+    });
+    expect(mapClaudeLine(line)).toEqual([{ type: "tool", name: "Bash", detail: command }]);
+  });
+
   it("maps the final result line", () => {
     const line = JSON.stringify({ type: "result", subtype: "success", result: "all done" });
     expect(mapClaudeLine(line)).toEqual([{ type: "result", ok: true, text: "all done" }]);
@@ -155,6 +166,14 @@ describe("classifyClaudeFailure", () => {
     // A 500 body that says nothing recognizable is still an outage.
     expect(classifyClaudeFailure("Internal server error", 500, NOW)?.kind).toBe("outage");
     expect(classifyClaudeFailure("something went wrong", 529, NOW)?.kind).toBe("outage");
+  });
+
+  it("preserves the full first line of a failure detail", () => {
+    const detail = `API Error: Overloaded ${"provider-detail".repeat(20)}`;
+    expect(classifyClaudeFailure(`${detail}\nsecondary diagnostics`, null, NOW)).toEqual({
+      kind: "outage",
+      detail,
+    });
   });
 
   it("leaves an ordinary task failure unclassified, so it stays a feedback round", () => {

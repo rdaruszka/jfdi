@@ -86,6 +86,34 @@ describe("runPipeline", () => {
     );
   });
 
+  it("preserves the full first line of narrated session activity", async () => {
+    const activity = `checking ${"activity-detail".repeat(20)}`;
+    const context = fixture.context(async (spec, options) => {
+      const stage = sessionKindOf(spec.prompt);
+      if (stage === "implementation") {
+        await commitFile(options.cwd, "impl.txt", "the feature\n", "implement");
+        await writeVerdict(spec.prompt, { status: "done", summary: "done" });
+        return {
+          ok: true,
+          text: "",
+          events: [{ type: "text" as const, text: `${activity}\nsecondary line` }],
+        };
+      }
+      await writeVerdict(spec.prompt, { verdict: "pass" });
+      return { ok: true, text: "" };
+    });
+    const activities: JfdiEvent[] = [];
+    context.log.on((event) => {
+      if (event.type === "session_activity") activities.push(event);
+    });
+
+    const ticket = await resolveTicket("Narrate long activity", fixture.ticketsDir);
+    expect((await runPipeline(context, ticket)).status).toBe("passed");
+    expect(
+      activities.find((event) => event.data?.text === `implementation: ${activity}`),
+    ).toBeDefined();
+  });
+
   it("writes run artifacts to the state directory and worktrees to .jfdi/", async () => {
     const context = fixture.context(async (spec, options) => {
       const stage = sessionKindOf(spec.prompt);
@@ -516,10 +544,11 @@ describe("runPipeline", () => {
   });
 
   it("escalation blocks the ticket and writes Questions with a recommendation", async () => {
+    const question = `Should auth use OAuth or magic links? ${"decision-context".repeat(12)}`;
     const context = fixture.context(async (spec) => {
       await writeVerdict(spec.prompt, {
         status: "escalate",
-        question: "Should auth use OAuth or magic links?",
+        question,
         recommendation: "Magic links — no third-party dependency.",
       });
       return { ok: true, text: "" };
@@ -534,6 +563,7 @@ describe("runPipeline", () => {
     expect(note).toContain("Magic links — no third-party dependency.");
     const blockedEvents = context.log.snapshot().tickets[ticket.id];
     expect(blockedEvents?.status).toBe("blocked");
+    expect(blockedEvents?.lastActivity).toBe(`escalated: ${question}`);
   });
 
   it("exhausted rounds block with accumulated history in the note", async () => {
@@ -1644,6 +1674,7 @@ describe("pipeline-owned commits", () => {
 
   it("commits a dead session's partial work under a WIP marker, and a re-dispatch continues it", async () => {
     let implementationCalls = 0;
+    const failureFirstLine = `the session was killed mid-edit: ${"cleanup-context".repeat(12)}`;
     const dying = fixture.context(async (spec, options) => {
       const stage = sessionKindOf(spec.prompt);
       if (stage !== "implementation") {
@@ -1655,7 +1686,7 @@ describe("pipeline-owned commits", () => {
       await fs.writeFile(path.join(options.cwd, "impl.txt"), `attempt ${implementationCalls}\n`);
       return {
         ok: false,
-        text: "the session was killed mid-edit\r\nsubprocess cleanup also failed",
+        text: `${failureFirstLine}\r\nsubprocess cleanup also failed`,
       };
     });
     const ticket = await resolveTicket("Killed mid-edit", fixture.ticketsDir);
@@ -1667,7 +1698,7 @@ describe("pipeline-owned commits", () => {
     for (const subject of subjects) expect(subject).toContain(`${ticket.id}: WIP — `);
     const message = await git(worktree, "log", "-1", "--format=%B");
     expect(message).toContain(
-      "JFDI Implementation interrupted: The previous implementation session failed: the session was killed mid-edit",
+      `JFDI Implementation interrupted: The previous implementation session failed: ${failureFirstLine}`,
     );
     expect(message).not.toContain("subprocess cleanup also failed");
     expect(message).toContain("JFDI-Round: 3/3");

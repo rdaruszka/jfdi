@@ -88,10 +88,10 @@ claude -p <prompt> --output-format stream-json --verbose
 ```
 
 - Parses the `stream-json` line protocol: assistant text and `tool_use` blocks
-  become `text`/`tool` events (with a truncated human-readable detail — file
-  path, command, pattern); the `system:init` line and the final `result` line
-  carry the session id (a continued session gets a *fresh* id — last one wins);
-  the `result` line becomes the `result` event.
+  become `text`/`tool` events (with the full human-readable detail — file path,
+  command, pattern; renderers own any truncation); the `system:init` line and
+  the final `result` line carry the session id (a continued session gets a
+  *fresh* id — last one wins); the `result` line becomes the `result` event.
 - **The settings injection is the provider-specific acceleration**: when
   `.jfdi/claude-settings.json` exists it is passed via `--settings`, wiring a
   PostToolUse hook that formats each edited file

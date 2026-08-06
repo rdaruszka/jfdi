@@ -114,10 +114,6 @@ export type PipelineOutcome =
   | { status: "blocked"; reason: string; observations: string[] }
   | { status: "failed"; reason: string; observations: string[] };
 
-/** One line of live session activity, trimmed to stay readable in the TUI. */
-const MAX_ACTIVITY_CHARS = 120;
-/** Blocked/escalation reasons carried on an event, trimmed for the same reason. */
-const MAX_REASON_CHARS = 120;
 export function worktreesDir(jfdiDir: string): string {
   return path.join(jfdiDir, "worktrees");
 }
@@ -216,7 +212,7 @@ function narrateSessionActivity(
     const line = event.text.split("\n")[0] ?? "";
     if (line.trim())
       context.log.emit("session_activity", ticketId, {
-        text: `${sessionKind}: ${line.slice(0, MAX_ACTIVITY_CHARS)}`,
+        text: `${sessionKind}: ${line}`,
       });
   }
 }
@@ -558,7 +554,7 @@ async function readStageVerdictWithCorrections<Verdict>(
   const failure = `${stage} agent failed to function properly after ${MAX_VERDICT_CORRECTION_ATTEMPTS} verdict correction attempts: ${error}`;
   await recordTransition(notePath, stage, round, `${failure}\n\n${BLOCKED_ROUTING}`);
   context.log.emit("blocked", ticket.id, {
-    reason: failure.slice(0, MAX_REASON_CHARS),
+    reason: failure,
   });
   return { verdict: null, outcome, invalidVerdictFailure: failure };
 }
@@ -1197,7 +1193,7 @@ async function implementationExitStep(
     step.recommendation,
   );
   context.log.emit("blocked", ticket.id, {
-    reason: `escalated: ${step.question.slice(0, MAX_REASON_CHARS)}`,
+    reason: `escalated: ${step.question}`,
   });
   return { kind: "blocked", reason: step.question };
 }
@@ -1480,11 +1476,8 @@ async function runQaPhase(
   };
 }
 
-/** Longest excerpt of a failure reason carried on a status line. */
-const MAX_OUTCOME_REASON_CHARS = 100;
-
 function firstLine(text: string): string {
-  return (text.split(/\r\n?|\n/)[0] ?? "").slice(0, MAX_OUTCOME_REASON_CHARS);
+  return text.split(/\r\n?|\n/)[0] ?? "";
 }
 
 /** What the Implementation session's commit says happened, and where the run went. */
@@ -1588,7 +1581,7 @@ async function judgeQa(
     const recommendation = qa.verdict.recommendation ?? "(no recommendation given)";
     await recordEscalation(context, ticket, notePath, "qa", question, recommendation);
     context.log.emit("blocked", ticket.id, {
-      reason: `QA escalated: ${question.slice(0, MAX_REASON_CHARS)}`,
+      reason: `QA escalated: ${question}`,
     });
     return { kind: "blocked", reason: question };
   }
@@ -1640,7 +1633,7 @@ export async function runPipeline(
       failure: error.failure,
     });
     context.log.emit("blocked", ticket.id, {
-      reason: error.message.slice(0, MAX_REASON_CHARS),
+      reason: error.message,
     });
     return { status: "blocked", reason: error.message, observations: [] };
   }

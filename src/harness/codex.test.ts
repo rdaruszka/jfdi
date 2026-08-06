@@ -28,6 +28,15 @@ describe("mapCodexLine", () => {
     expect(mapCodexLine(line)).toEqual([{ type: "tool", name: "command", detail: "pnpm test" }]);
   });
 
+  it("preserves the full command activity detail", () => {
+    const command = `pnpm test --filter ${"long-command".repeat(20)}`;
+    const line = JSON.stringify({
+      type: "item.started",
+      item: { type: "command_execution", command },
+    });
+    expect(mapCodexLine(line)).toEqual([{ type: "tool", name: "command", detail: command }]);
+  });
+
   it("maps failed turns", () => {
     const line = JSON.stringify({ type: "turn.failed", error: { message: "usage limit" } });
     expect(mapCodexLine(line)).toEqual([{ type: "result", ok: false, text: "usage limit" }]);
@@ -92,6 +101,14 @@ describe("classifyCodexFailure", () => {
     ]) {
       expect(classifyCodexFailure(text, NOW)?.kind).toBe("outage");
     }
+  });
+
+  it("preserves the full first line of a failure detail", () => {
+    const detail = `Connection failed: ${"provider-detail".repeat(20)}`;
+    expect(classifyCodexFailure(`${detail}\nsecondary diagnostics`, NOW)).toEqual({
+      kind: "outage",
+      detail,
+    });
   });
 
   it("leaves an ordinary task failure unclassified", () => {
