@@ -40,4 +40,38 @@ describe("loadReport", () => {
     expect(corrupt).toMatchObject({ kind: "corrupt", path: reportPath });
     expect(corrupt && "error" in corrupt ? corrupt.error : "").toContain("decisions");
   });
+
+  it("backfills model data when loading a report written before model reporting", async () => {
+    const ticketId = "old-report";
+    const reportPath = path.join(fixture.stateDir, "runs", ticketId, "report.json");
+    await fs.mkdir(path.dirname(reportPath), { recursive: true });
+    await fs.writeFile(
+      reportPath,
+      JSON.stringify({
+        summary: "done",
+        decisions: [],
+        observations: [],
+        testsAdded: "none",
+        rounds: 1,
+        commit: "abc123",
+        usageRows: [
+          {
+            label: "Implementation",
+            sessions: 1,
+            durationMs: 1,
+            knownCostUsd: 1,
+            unknownCostSessions: 0,
+            estimatedCostSessions: 0,
+            inputTokens: 1,
+            cachedInputTokens: 0,
+            outputTokens: 1,
+          },
+        ],
+        elapsedMs: 1,
+      }),
+    );
+
+    const report = await loadReport(fixture.stateDir, ticketId);
+    expect(report && !("kind" in report) ? report.usageRows[0]?.models : null).toEqual([]);
+  });
 });

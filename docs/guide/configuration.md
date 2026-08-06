@@ -179,8 +179,10 @@ naming only a harness can't pair one provider with another's model.
 The selection is fixed per stage, which is what makes
 [continuations](pipeline.md#fresh-sessions-vs-continuations) safe — a session id is
 only meaningful to the harness that minted it, and a stage always re-enters its
-own. Each session's harness, model and effort are recorded on its `stage_start`
-event, so `jfdi logs` answers "which model produced this" after the fact.
+own. Each session's configured harness, model and effort are recorded on its
+`stage_start` event. The provider-confirmed model, when reported, is recorded on
+`stage_end` and in the run's usage rows; otherwise those rows label the
+configured model as a fallback.
 
 `jfdi init` scaffolds the mix in the example above. Its two deliberate choices:
 

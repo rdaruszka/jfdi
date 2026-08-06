@@ -516,6 +516,9 @@ describe("CodexHarness prices from the configured model spelling verbatim", () =
     expect(result.ok).toBe(true);
     expect(result.usage?.costUsd).toBeCloseTo(1.6 + 0.04 + 6.0, 6);
     expect(result.usage?.isCostEstimated).toBe(true);
+    // Codex did not report a model in its stream; the configured pricing key is
+    // not promoted into the provider-confirmed usage field.
+    expect(result.usage?.model).toBeUndefined();
   });
 
   it("leaves a mixed-case model unpriced instead of lowercasing it into the table", async () => {

@@ -137,21 +137,54 @@ describe("UsageLedger", () => {
     ledger.add("qa", usage({ costUsd: null, inputTokens: 1_000, outputTokens: 200 }));
     expect(ledger.totals().costUsd).toBeNull();
   });
+
+  it("keeps provider-confirmed and configured fallback models distinct across sessions", () => {
+    const ledger = new UsageLedger();
+    ledger.add("implementation", usage({ model: "provider-model-a" }), "configured-model");
+    ledger.add("implementation", usage({ model: "provider-model-b" }), "configured-model");
+    ledger.add("implementation", usage(), "configured-model");
+
+    expect(ledger.snapshot()[0]?.models).toEqual([
+      { name: "provider-model-a", source: "provider" },
+      { name: "provider-model-b", source: "provider" },
+      { name: "configured-model", source: "configured" },
+    ]);
+  });
 });
 
 describe("renderUsageTable", () => {
   it("renders per-stage rows and a bold total with agent and elapsed labeled distinctly", () => {
     const ledger = new UsageLedger();
-    ledger.add("implementation", usage({ durationMs: 28 * 60_000, costUsd: 9.0 }));
-    ledger.add("code-review", usage({ durationMs: 6 * 60_000, costUsd: 2.5 }));
+    ledger.add(
+      "implementation",
+      usage({ durationMs: 28 * 60_000, costUsd: 9.0, model: "provider-model" }),
+      "configured-model",
+    );
+    ledger.add("code-review", usage({ durationMs: 6 * 60_000, costUsd: 2.5 }), "review-model");
     ledger.add("qa", usage({ durationMs: 7 * 60_000, costUsd: 1.87 }));
-    ledger.add("commit-message", usage({ durationMs: 60_000, costUsd: 0.04 }));
+    ledger.add("commit-message", usage({ durationMs: 60_000, costUsd: 0.04 }), "scribe-model");
 
     const table = renderUsageTable(ledger.snapshot(), (3 * 60 + 10) * 60_000);
-    expect(table).toContain("| Stage | Sessions | Time | Cost |");
-    expect(table).toContain("| Implementation | 1 | 28m | $9.00 |");
-    expect(table).toContain("| Scribe | 1 | 1m | $0.04 |");
-    expect(table).toContain("| **Total** | **4** | **agent 42m · elapsed 3h 10m** | **$13.41** |");
+    expect(table).toContain("| Stage | Model | Sessions | Time | Cost |");
+    expect(table).toContain(
+      "| Implementation | provider-model (provider-confirmed) | 1 | 28m | $9.00 |",
+    );
+    expect(table).toContain("| Code Review | review-model (configured) | 1 | 6m | $2.50 |");
+    expect(table).toContain("| QA | not reported | 1 | 7m | $1.87 |");
+    expect(table).toContain("| Scribe | scribe-model (configured) | 1 | 1m | $0.04 |");
+    expect(table).toContain(
+      "| **Total** |  | **4** | **agent 42m · elapsed 3h 10m** | **$13.41** |",
+    );
+  });
+
+  it("renders every provider-confirmed model used by continuations in one stage", () => {
+    const ledger = new UsageLedger();
+    ledger.add("implementation", usage({ model: "provider-model-a" }), "configured-model");
+    ledger.add("implementation", usage({ model: "provider-model-b" }), "configured-model");
+
+    expect(renderUsageTable(ledger.snapshot(), null)).toContain(
+      "| Implementation | provider-model-a (provider-confirmed), provider-model-b (provider-confirmed) |",
+    );
   });
 
   it("appends an estimate note when any dollars in the table came from the Codex table", () => {
@@ -176,7 +209,7 @@ describe("renderUsageTable", () => {
       usage({ durationMs: 60_000, costUsd: null, inputTokens: 1_000_000, outputTokens: 200_000 }),
     );
     const table = renderUsageTable(ledger.snapshot(), null);
-    expect(table).toContain("| QA | 1 | 1m | 1.2M tokens, price unavailable |");
+    expect(table).toContain("| QA | not reported | 1 | 1m | 1.2M tokens, price unavailable |");
     // No elapsed clause when elapsedMs is null.
     expect(table).toContain("**agent 1m**");
     expect(table).not.toContain("elapsed");

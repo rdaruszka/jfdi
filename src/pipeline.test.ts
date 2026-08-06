@@ -1630,7 +1630,7 @@ describe("runPipeline with per-stage harness selection", () => {
         "code-review-session",
       );
 
-      // The record answers "which model produced this" per stage.
+      // The record answers which model was configured per stage.
       const selectionOf = (stage: StageName) =>
         starts
           .filter((event) => event.data?.stage === stage)
@@ -1841,6 +1841,46 @@ describe("pipeline-owned commits", () => {
     // Both reviews judged that commit, and it is the one the run reports.
     expect(reviewedCommit).toBe(await git(outcome.worktree.path, "rev-parse", "HEAD"));
     expect(outcome.report.commit).toBe(reviewedCommit);
+  });
+
+  it("reports the completed session's confirmed model and configured fallback", async () => {
+    const context = fixture.context(async (prompt, options) => {
+      const stage = sessionKindOf(prompt);
+      if (stage === "implementation") {
+        await fs.writeFile(path.join(options.cwd, "impl.txt"), "the feature\n");
+        await writeVerdict(prompt, { status: "done", summary: "built the feature" });
+        return {
+          ok: true,
+          text: "",
+          usage: { ...usageFor(2.0), model: "provider-confirmed-model" },
+        };
+      }
+      await writeVerdict(prompt, { verdict: "pass" });
+      return { ok: true, text: "" };
+    });
+    const stageEnds: JfdiEvent[] = [];
+    context.log.on((event) => {
+      if (event.type === "stage_end") stageEnds.push(event);
+    });
+
+    const ticket = await resolveTicket("Model accounting", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    expect(outcome.status).toBe("passed");
+    if (outcome.status !== "passed") return;
+
+    const implementationEnd = stageEnds.find((event) => event.data?.stage === "implementation");
+    expect(implementationEnd?.data).toMatchObject({
+      model: "provider-confirmed-model",
+      modelSource: "provider",
+    });
+    const reviewEnd = stageEnds.find((event) => event.data?.stage === "code-review");
+    expect(reviewEnd?.data).toMatchObject({
+      model: context.config.stages["code-review"].model,
+      modelSource: "configured",
+    });
+    expect(outcome.report.usageRows.find((row) => row.label === "Implementation")?.models).toEqual([
+      { name: "provider-confirmed-model", source: "provider" },
+    ]);
   });
 
   it("narrates every transition into the note, failed round and exhaustion included", async () => {

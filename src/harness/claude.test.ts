@@ -81,6 +81,23 @@ describe("mapClaudeLine", () => {
     ]);
   });
 
+  it("surfaces the provider-reported model from the result line", () => {
+    const line = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      result: "done",
+      modelUsage: { "claude-opus-4-8-provider-ran": {} },
+      total_cost_usd: 0.05,
+      usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 0 },
+    });
+    const [event] = mapClaudeLine(line);
+    expect(event).toMatchObject({ type: "result", ok: true });
+    expect(event.type === "result" ? event.usage : undefined).toBeDefined();
+    expect(event.type === "result" ? event.usage?.model : "unset").toBe(
+      "claude-opus-4-8-provider-ran",
+    );
+  });
+
   it("maps error results as not ok", () => {
     const line = JSON.stringify({
       type: "result",

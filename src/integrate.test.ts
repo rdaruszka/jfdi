@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { git, isAncestor, isMergeInProgress, revParse } from "./git.js";
 import { IntegrationQueue, integrateTicket } from "./integrate.js";
 import { type PipelineContext, runPipeline } from "./pipeline.js";
+import { saveReport } from "./report.js";
 import {
   commitFile,
   type FakeHandler,
@@ -12,6 +13,7 @@ import {
   type Fixture,
   makeFixture,
   sessionKindOf,
+  usageFor,
   writeVerdict,
 } from "./test-helpers.js";
 import { parseTicketNote } from "./ticket-note.js";
@@ -37,7 +39,11 @@ function passingHandler(file: string) {
     } else {
       await writeVerdict(prompt, { verdict: "pass" });
     }
-    return { ok: true, text: "" };
+    return {
+      ok: true,
+      text: "",
+      usage: { ...usageFor(null), model: `provider-${stage}-model` },
+    };
   };
 }
 
@@ -80,6 +86,10 @@ describe("integrateTicket", () => {
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     if (outcome.status !== "passed") return;
+    expect(outcome.report.usageRows.find((row) => row.label === "Implementation")?.models).toEqual([
+      { name: "provider-implementation-model", source: "provider" },
+    ]);
+    await saveReport(fixture.stateDir, ticket.id, outcome.report);
     const signedOff = await revParse(fixture.repo, outcome.worktree.branch);
 
     // Move main forward (non-conflicting) so the merge has something to do.
@@ -116,11 +126,17 @@ describe("integrateTicket", () => {
     // The trail's closing entry says where the work went, naming the commit it landed as.
     const landed = await revParse(fixture.repo, "main");
     const comments = parseTicketNote(note).comments;
-    expect(comments.at(-1)).toMatchObject({
+    const closingComment = comments.at(-1);
+    expect(closingComment).toMatchObject({
       kind: "transition",
       stage: "integration",
-      body: `JFDI Integration merged — landed on \`main\` as \`${landed.slice(0, 7)}\``,
     });
+    expect(closingComment?.body).toContain(
+      `JFDI Integration merged — landed on \`main\` as \`${landed.slice(0, 7)}\``,
+    );
+    expect(closingComment?.body).toContain(
+      "| Implementation | provider-implementation-model (provider-confirmed) |",
+    );
   });
 
   /**

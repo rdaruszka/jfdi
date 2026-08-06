@@ -1,5 +1,5 @@
 /**
- * Cost and time accounting, and the one place their prose format lives.
+ * Per-model cost and time accounting, and the one place its prose format lives.
  *
  * A run's sessions each report a provider-neutral {@link SessionUsage}; the
  * {@link UsageLedger} tallies them per stage (Implementation / Code Review / QA
@@ -20,6 +20,11 @@ export const USAGE_ROW_LABELS = [
 ] as const;
 export type UsageRowLabel = (typeof USAGE_ROW_LABELS)[number];
 
+export interface UsageModel {
+  name: string;
+  source: "provider" | "configured";
+}
+
 /** Which table row a session's kind rolls up into. The scribe is not a stage. */
 const SESSION_KIND_ROW: Record<SessionKind, UsageRowLabel> = {
   implementation: "Implementation",
@@ -29,9 +34,11 @@ const SESSION_KIND_ROW: Record<SessionKind, UsageRowLabel> = {
   "commit-message": "Scribe",
 };
 
-/** One row's running totals across the sessions that rolled into it. */
+/** One row's models and running totals across the sessions that rolled into it. */
 export interface UsageRow {
   label: UsageRowLabel;
+  /** Distinct models used by this row's sessions, in first-seen order. */
+  models: UsageModel[];
   sessions: number;
   durationMs: number;
   /** Summed dollars for sessions whose price was known. */
@@ -73,10 +80,11 @@ function rowTokens(row: Pick<UsageRow, "inputTokens" | "outputTokens">): number 
 export class UsageLedger {
   private readonly rows = new Map<UsageRowLabel, UsageRow>();
 
-  add(kind: SessionKind, usage: SessionUsage): void {
+  add(kind: SessionKind, usage: SessionUsage, configuredModel?: string): void {
     const label = SESSION_KIND_ROW[kind];
     const row = this.rows.get(label) ?? {
       label,
+      models: [],
       sessions: 0,
       durationMs: 0,
       knownCostUsd: 0,
@@ -86,6 +94,14 @@ export class UsageLedger {
       cachedInputTokens: 0,
       outputTokens: 0,
     };
+    const model = resolveUsageModel(usage, configuredModel);
+    if (
+      model !== null &&
+      !row.models.some(
+        (existing) => existing.name === model.name && existing.source === model.source,
+      )
+    )
+      row.models.push(model);
     row.sessions += 1;
     row.durationMs += usage.durationMs;
     if (usage.costUsd === null) row.unknownCostSessions += 1;
@@ -132,8 +148,8 @@ export class UsageRegistry {
     return ledger;
   }
 
-  add(ticketId: string, kind: SessionKind, usage: SessionUsage): void {
-    this.of(ticketId).add(kind, usage);
+  add(ticketId: string, kind: SessionKind, usage: SessionUsage, configuredModel?: string): void {
+    this.of(ticketId).add(kind, usage, configuredModel);
   }
 
   /** Drop a completed run's ledger — call on merged/failed/blocked. */
@@ -200,23 +216,44 @@ function rowCostCell(row: UsageRow): string {
   return formatCostUsd(row.unknownCostSessions > 0 ? null : row.knownCostUsd, rowTokens(row));
 }
 
+/** Prefer what the provider says ran; use configured intent only when it says nothing. */
+export function resolveUsageModel(
+  usage: SessionUsage,
+  configuredModel: string | undefined,
+): UsageModel | null {
+  if (usage.model !== undefined) return { name: usage.model, source: "provider" };
+  if (configuredModel !== undefined) return { name: configuredModel, source: "configured" };
+  return null;
+}
+
+function rowModelCell(row: UsageRow): string {
+  if (row.models.length === 0) return "not reported";
+  return row.models
+    .map((model) =>
+      model.source === "provider"
+        ? `${model.name} (provider-confirmed)`
+        : `${model.name} (configured)`,
+    )
+    .join(", ");
+}
+
 /**
- * The per-stage cost/time table the ready-to-merge and merged comments carry.
+ * The per-stage model/cost/time table the ready-to-merge and merged comments carry.
  * `elapsedMs` is dispatch→now wall-clock, shown beside agent time in the Total
  * row and labeled distinctly (§1/§2 of the ticket); null omits the elapsed clause.
  */
 export function renderUsageTable(rows: readonly UsageRow[], elapsedMs: number | null): string {
   const totals = usageTotals(rows);
-  const header = ["| Stage | Sessions | Time | Cost |", "|---|---|---|---|"];
+  const header = ["| Stage | Model | Sessions | Time | Cost |", "|---|---|---|---|---|"];
   const body = rows.map(
     (row) =>
-      `| ${row.label} | ${row.sessions} | ${formatDurationMs(row.durationMs)} | ${rowCostCell(row)} |`,
+      `| ${row.label} | ${rowModelCell(row)} | ${row.sessions} | ${formatDurationMs(row.durationMs)} | ${rowCostCell(row)} |`,
   );
   const totalTime =
     elapsedMs === null
       ? `agent ${formatDurationMs(totals.durationMs)}`
       : `agent ${formatDurationMs(totals.durationMs)} · elapsed ${formatDurationMs(elapsedMs)}`;
-  const totalRow = `| **Total** | **${totals.sessions}** | **${totalTime}** | **${formatCostUsd(totals.costUsd, totals.totalTokens)}** |`;
+  const totalRow = `| **Total** |  | **${totals.sessions}** | **${totalTime}** | **${formatCostUsd(totals.costUsd, totals.totalTokens)}** |`;
   const table = [...header, ...body, totalRow].join("\n");
   // One brief note when any dollars in the table are Codex table estimates.
   const hasEstimate = rows.some((row) => row.estimatedCostSessions > 0);

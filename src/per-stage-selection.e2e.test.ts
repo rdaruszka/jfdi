@@ -342,8 +342,7 @@ describe("per-stage selection, end to end", () => {
         },
       ]);
 
-      // The record answers "which model produced this" per stage, absent
-      // fields included.
+      // The record answers which model was configured per stage, absent fields included.
       const starts = await stageStarts(sandbox);
       expect(starts.filter((data) => data.stage === "code-review")).toEqual([
         { stage: "code-review", harness: "codex", model: "review-model", effort: "minimal" },

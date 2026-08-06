@@ -22,7 +22,7 @@ import { isCorruptReport, loadReport, recordCorruptReport } from "./report.js";
 import { appendToSection, quoteAgentText } from "./ticket-note.js";
 import { ensureTicketNote, type Ticket } from "./tickets.js";
 import { BLOCKED_ROUTING, recordTransition, shortSha, statusLine } from "./transitions.js";
-import { renderUsageTable, type UsageRow } from "./usage.js";
+import { renderUsageTable, resolveUsageModel, type UsageRow } from "./usage.js";
 import { todayIsoDate } from "./util/dates.js";
 import { ensureDir, fileExists } from "./util/fsx.js";
 import {
@@ -98,6 +98,7 @@ async function runIntegrationAgent(
   await collectVerdict(agentVerdictPath(worktree.path, stage), verdictPath);
   const verdictResult = await readIntegrationVerdict(verdictPath);
   const verdict = verdictResult.status === "valid" ? verdictResult.verdict : null;
+  const model = resolveUsageModel(result.usage, context.config.stages[stage].model);
   // Only this session's own numbers: integration runs may be a separate process
   // whose ledger holds no pipeline stages, so it must not overwrite the run
   // total the pipeline's own stage_end events already set. Its cost still reaches
@@ -105,6 +106,7 @@ async function runIntegrationAgent(
   context.log.emit("stage_end", ticket.id, {
     stage,
     verdict: verdict?.resolution ?? (result.ok ? "invalid-verdict" : "session-failed"),
+    ...(model === null ? {} : { model: model.name, modelSource: model.source }),
     durationMs: result.usage.durationMs,
     costUsd: result.usage.costUsd,
     tokens: result.usage.inputTokens + result.usage.outputTokens,
@@ -403,7 +405,7 @@ export async function integrateTicket(
 }
 
 /**
- * The whole run's cost/time table for the merged comment: the pipeline's stages
+ * The whole run's model/cost/time table for the merged comment: the pipeline's stages
  * from the persisted report (it survives the process boundary a manual `jfdi
  * merge` crosses), plus the Integration row from this process's own ledger when
  * a conflict pulled in an integration agent. Null when there is nothing to show.
