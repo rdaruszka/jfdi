@@ -47,4 +47,32 @@ describe("parseResetTime", () => {
     expect(parseResetTime("25:00", NOW)).toBe(null);
     expect(parseResetTime("13pm", NOW)).toBe(null);
   });
+
+  // Regression: three prose shapes the parser once accepted on speculation were
+  // deleted — a 24-hour clock, a calendar date, and a weekday. Each is now
+  // unreadable, so the caller falls back to probe-with-backoff instead of
+  // reading (and mis-reading) a time no provider has ever been seen to print.
+  it("refuses the deleted 24-hour clock form", () => {
+    expect(parseResetTime("19:00", NOW)).toBe(null);
+    expect(parseResetTime("07:30", NOW)).toBe(null);
+  });
+
+  it("refuses the deleted calendar-date form even when it carries a valid clock", () => {
+    expect(parseResetTime("May 28 at 7pm", NOW)).toBe(null);
+    expect(parseResetTime("Aug 28 at 7pm (Europe/Madrid)", NOW)).toBe(null);
+    expect(parseResetTime("Mar 3rd, 2027 3:45 PM", NOW)).toBe(null);
+  });
+
+  it("refuses the deleted weekday form even when it carries a valid clock", () => {
+    expect(parseResetTime("Mon 12:00am", NOW)).toBe(null);
+    expect(parseResetTime("Wed 6pm", NOW)).toBe(null);
+  });
+
+  // The regex anchors the whole string to the clock, so a clock riding along
+  // with any other text — a bare timezone abbreviation, surrounding words — is
+  // not the observed bare form and reads as null, not as an embedded time.
+  it("refuses a clock embedded in surrounding text", () => {
+    expect(parseResetTime("3:45pm ET", NOW)).toBe(null);
+    expect(parseResetTime("at 3:45pm today", NOW)).toBe(null);
+  });
 });

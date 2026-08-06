@@ -128,6 +128,23 @@ describe("classifyClaudeFailure", () => {
     });
   });
 
+  // Regression: a limit whose prose carries a deleted speculative shape (weekday
+  // or calendar date) is still a usage-limit, but its reset is now unreadable —
+  // so the pipeline pauses and backs off instead of pausing until a misread
+  // instant. The calendar-date case is the one that once misread a past date.
+  it("still pauses on a limit but leaves the reset null for a deleted prose shape", () => {
+    for (const text of [
+      "You've hit your weekly limit, resets Mon 12:00am",
+      "You've hit your Opus limit · resets Aug 28 at 7pm",
+      "You've hit your session limit · resets 19:00",
+    ]) {
+      expect(classifyClaudeFailure(text, null, NOW)).toMatchObject({
+        kind: "usage-limit",
+        resetsAtMs: null,
+      });
+    }
+  });
+
   it("classifies the repairs only a human can make", () => {
     for (const text of [
       "Invalid API key · Please run /login",

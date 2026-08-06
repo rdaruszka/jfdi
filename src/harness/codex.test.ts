@@ -66,6 +66,15 @@ describe("classifyCodexFailure", () => {
     });
   });
 
+  // Regression: the deleted calendar-date form once read `Mar 3rd, 2027 3:45 PM`
+  // as a real instant. It is still a usage-limit, but now leaves the reset null
+  // so the pipeline backs off instead of trusting a speculative parse.
+  it("still pauses on a limit but leaves the reset null for a deleted prose shape", () => {
+    expect(
+      classifyCodexFailure("You are out of credits. Try again at Mar 3rd, 2027 3:45 PM.", NOW),
+    ).toMatchObject({ kind: "usage-limit", resetsAtMs: null });
+  });
+
   it("classifies the repairs only a human can make", () => {
     for (const text of [
       "The provided token could not be refreshed",
