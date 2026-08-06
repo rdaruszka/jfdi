@@ -12,11 +12,7 @@
  *   1. Every stage row names a model, honestly labeled by its source — so the
  *      configured value is never conflated with a provider-confirmed one.
  *   2. What actually reaches the table when only the *real* Claude harness runs:
- *      the configured model, labeled `(configured)`. The stub reports a distinct
- *      provider model on its result line, yet it does not surface — the sibling
- *      `claudeUsage` regression below pins why (the harness drops it). This test
- *      therefore records the delivered end-to-end behavior; the verdict for this
- *      ticket flags that the provider-confirmed / mismatch path never fires.
+ *      the distinct provider model, labeled `(provider-confirmed)`.
  */
 import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
@@ -70,7 +66,7 @@ if (match) {
 
 /**
  * Claude stub for every stage. Reports dollars, tokens, AND a provider model on
- * its result line — the field name Claude Code carries the run's model under.
+ * its result line under `modelUsage`, keyed by the model id Claude Code ran.
  */
 const STUB_CLAUDE = `#!/usr/bin/env node
 const argv = process.argv.slice(2);
@@ -83,7 +79,7 @@ process.stdout.write(JSON.stringify({
   subtype: "success",
   is_error: false,
   result: resultText,
-  model: "${PROVIDER_MODEL}",
+  modelUsage: { "${PROVIDER_MODEL}": {} },
   total_cost_usd: 0.05,
   usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 0 },
 }) + "\\n");
@@ -204,18 +200,10 @@ describe("provider-confirmed model reporting, end to end", () => {
         );
       }
 
-      // What the delivered artifact actually renders: the CONFIGURED model,
-      // labeled `(configured)`. The stub reported PROVIDER_MODEL on its result
-      // line, but the real Claude harness never surfaces it (see the
-      // `claudeUsage` regression), so the provider-confirmed / mismatch path the
-      // ticket exists for never fires end to end. This assertion pins the honest
-      // fallback that IS delivered; it must NOT show the provider model.
-      expect(note).toContain(`${CONFIGURED_MODEL} (configured)`);
-      expect(
-        note,
-        "the stub's provider model reached the table, so the harness now surfaces " +
-          "SessionUsage.model — update this test and re-check the ticket's mismatch path",
-      ).not.toContain(PROVIDER_MODEL);
+      // The provider-confirmed value wins over the deliberately different
+      // configured model, making the mismatch visible in the report itself.
+      expect(note).toContain(`${PROVIDER_MODEL} (provider-confirmed)`);
+      expect(note).not.toContain(`${CONFIGURED_MODEL} (configured)`);
     },
     PIPELINE_TIMEOUT_MS,
   );

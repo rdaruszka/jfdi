@@ -70,6 +70,8 @@ interface ClaudeStreamLine {
   session_id?: string;
   /** Dollars the CLI computed for the whole session — used verbatim, never recomputed. */
   total_cost_usd?: number;
+  /** Per-model usage keyed by the provider-confirmed model id. */
+  modelUsage?: Record<string, unknown>;
   /** Cumulative token usage the CLI reports on the result line. */
   usage?: {
     input_tokens?: number;
@@ -85,18 +87,20 @@ interface ClaudeStreamLine {
 /**
  * The provider-neutral usage for a Claude result line. Claude reports dollars
  * directly, so `costUsd` is its `total_cost_usd` verbatim (§3 of the ticket);
- * tokens ride along for the machine record and the price-unknown fallback.
+ * tokens and its `modelUsage` key ride along for the machine record and reports.
  * `durationMs` stays zero — agent time is pipeline-measured, not provider-read.
  */
 function claudeUsage(parsed: ClaudeStreamLine): SessionUsage | undefined {
   const usage = parsed.usage;
   if (parsed.total_cost_usd === undefined && usage === undefined) return undefined;
+  const model = Object.keys(parsed.modelUsage ?? {})[0];
   return {
     durationMs: 0,
     costUsd: parsed.total_cost_usd ?? null,
     inputTokens: usage?.input_tokens ?? 0,
     cachedInputTokens: usage?.cache_read_input_tokens ?? 0,
     outputTokens: usage?.output_tokens ?? 0,
+    ...(model === undefined ? {} : { model }),
   };
 }
 
