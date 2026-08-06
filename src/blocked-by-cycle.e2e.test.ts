@@ -14,7 +14,7 @@
  * `JFDI_HOME`/`HOME` always point inside the scratch tree; nothing here can
  * reach the real `~/.jfdi`.
  */
-import { type ChildProcess, execFile, spawn } from "node:child_process";
+import { type ChildProcess, execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -22,6 +22,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { findColumn, parseBoard } from "./board.js";
 import { git } from "./git.js";
+import { spawnTtyCli } from "./test-helpers.js";
 import { parseTicketNote } from "./ticket-note.js";
 import { ticketIdFromCard } from "./util/ids.js";
 
@@ -158,12 +159,12 @@ function delay(ms: number): Promise<void> {
   });
 }
 
-/** Launch `jfdi start` (no TTY → plain streaming, runs until killed). */
+/** Launch the built CLI's supported TTY mode while retaining pipe capture for the test. */
 function startCoordinator(sandbox: Sandbox): ChildProcess {
-  const child = spawn(process.execPath, [cliPath, "start"], {
+  const child = spawnTtyCli(cliPath, ["start"], {
     cwd: sandbox.project,
     env: envFor(sandbox),
-    stdio: "ignore",
+    stdio: ["pipe", "ignore", "ignore"],
   });
   running.push(child);
   return child;

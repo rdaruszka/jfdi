@@ -17,14 +17,14 @@
  * `JFDI_HOME`/`HOME` always point inside the scratch tree — nothing here can
  * reach the real `~/.jfdi`.
  */
-import { execFile, spawn } from "node:child_process";
+import { type ChildProcess, execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { git } from "./git.js";
-import { waitFor } from "./test-helpers.js";
+import { spawnTtyCli, waitFor } from "./test-helpers.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -247,10 +247,7 @@ describe("coordinator process-group cleanup", () => {
   });
 });
 
-async function stopCoordinator(
-  child: ReturnType<typeof spawn>,
-  exited: Promise<void>,
-): Promise<void> {
+async function stopCoordinator(child: ChildProcess, exited: Promise<void>): Promise<void> {
   if (child.exitCode === null && child.signalCode === null) {
     signalProcessGroup(child, "SIGTERM");
     try {
@@ -278,7 +275,7 @@ async function runCoordinatorUntil(
   isSettled: (board: string) => boolean,
   postCondition: CoordinatorPostCondition,
 ): Promise<string> {
-  const child = spawn(process.execPath, [cliPath, "start"], {
+  const child = spawnTtyCli(cliPath, ["start"], {
     cwd: sandbox.project,
     env: sandboxEnv(sandbox),
     detached: true,

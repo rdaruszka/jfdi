@@ -1,4 +1,9 @@
 /** Shared test fixtures (excluded from the build). */
+import {
+  type ChildProcess,
+  type SpawnOptions as ChildProcessSpawnOptions,
+  spawn,
+} from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -18,6 +23,40 @@ import type {
 import { PauseController, type PauseDelays } from "./pause.js";
 import type { PipelineContext } from "./pipeline.js";
 import { UsageRegistry } from "./usage.js";
+
+const TEST_TERMINAL_COLUMNS = 80;
+const TEST_TERMINAL_ROWS = 24;
+
+const TTY_CLI_LAUNCHER = `
+import { pathToFileURL } from "node:url";
+Object.defineProperties(process.stdout, {
+  isTTY: { value: true },
+  columns: { value: ${TEST_TERMINAL_COLUMNS} },
+  rows: { value: ${TEST_TERMINAL_ROWS} },
+});
+Object.defineProperty(process.stdin, "isTTY", { value: true });
+process.stdin.setRawMode = () => process.stdin;
+const cliPath = process.env.JFDI_TEST_CLI_PATH;
+const args = JSON.parse(process.env.JFDI_TEST_CLI_ARGS ?? "[]");
+process.argv = [process.execPath, cliPath, ...args];
+await import(pathToFileURL(cliPath).href);
+`;
+
+/** Spawn the built CLI with test pipes presented to Ink as a terminal. */
+export function spawnTtyCli(
+  cliPath: string,
+  args: string[],
+  options: ChildProcessSpawnOptions = {},
+): ChildProcess {
+  return spawn(process.execPath, ["--input-type=module", "--eval", TTY_CLI_LAUNCHER], {
+    ...options,
+    env: {
+      ...(options.env ?? process.env),
+      JFDI_TEST_CLI_ARGS: JSON.stringify(args),
+      JFDI_TEST_CLI_PATH: cliPath,
+    },
+  });
+}
 
 export type FakeHandler = (
   prompt: string,

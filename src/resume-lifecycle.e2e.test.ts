@@ -14,13 +14,14 @@
  * `JFDI_HOME`/`HOME` always point inside the scratch tree — nothing here can
  * reach the real `~/.jfdi`, and the stub guarantees no real agent CLI is spawned.
  */
-import { execFile, spawn } from "node:child_process";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { git, isMergeInProgress, mergeTargetIntoBranch } from "./git.js";
+import { spawnTtyCli } from "./test-helpers.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -293,21 +294,26 @@ interface Ended {
  * the outside while they are alive.
  */
 interface LiveCli {
-  child: ReturnType<typeof spawn>;
+  child: ChildProcess;
   output: () => string;
   exited: Promise<Ended>;
 }
 
-function spawnCli(sandbox: Sandbox, args: string[], options: StubOptions = {}): LiveCli {
-  const child = spawn(process.execPath, [cliPath, ...args], {
-    cwd: sandbox.project,
-    env: stubEnv(sandbox, options),
-  });
+function spawnCli(
+  sandbox: Sandbox,
+  args: string[],
+  options: StubOptions = {},
+  shouldUseTTY = false,
+): LiveCli {
+  const spawnOptions = { cwd: sandbox.project, env: stubEnv(sandbox, options) };
+  const child = shouldUseTTY
+    ? spawnTtyCli(cliPath, args, spawnOptions)
+    : spawn(process.execPath, [cliPath, ...args], spawnOptions);
   let output = "";
-  child.stdout.on("data", (chunk: Buffer) => {
+  child.stdout?.on("data", (chunk: Buffer) => {
     output += chunk.toString();
   });
-  child.stderr.on("data", (chunk: Buffer) => {
+  child.stderr?.on("data", (chunk: Buffer) => {
     output += chunk.toString();
   });
   return {
@@ -340,7 +346,7 @@ async function runCoordinatorUntil(
   isReady: () => Promise<boolean>,
   options: StubOptions = {},
 ): Promise<string> {
-  const coordinator = spawnCli(sandbox, ["start"], options);
+  const coordinator = spawnCli(sandbox, ["start"], options, true);
   try {
     await waitUntil(
       isReady,
@@ -568,7 +574,7 @@ describe("coordinator startup", () => {
         { tag: "second", promptSubdir: "run2" },
       );
 
-      expect(output).toContain("resuming");
+      expect(output).toContain("resumed");
       const prompt = await readPrompt(sandbox, "run2", "implementation-0.txt");
       expect(prompt).toContain("Resuming an interrupted attempt");
       expect(prompt).toContain("3 commits of partial work");
@@ -713,35 +719,6 @@ describe("a provider that is down", () => {
         expect(ended.signal ?? ended.code).toBeTruthy();
       } finally {
         run.child.kill("SIGKILL");
-      }
-    },
-    PIPELINE_TIMEOUT_MS,
-  );
-
-  it(
-    "keeps a paused coordinator alive with no TTY, its card still in flight",
-    async () => {
-      const sandbox = await makeSandbox();
-      await initProject(sandbox);
-      await putCardInColumn(sandbox, "Ready", "- [ ] Fix the parser");
-      const coordinator = spawnCli(sandbox, ["start"], {
-        stubMode: "needs-human",
-        promptSubdir: "held-start",
-      });
-      try {
-        await waitUntil(
-          () => hasPaused(sandbox),
-          () => `coordinator never paused. Output:\n${coordinator.output()}`,
-        );
-        await sleep(HOLD_PROOF_MS);
-        // A coordinator that quits under its own pause stops watching the
-        // board and drops every run it was holding.
-        expect(coordinator.child.exitCode).toBe(null);
-        expect(await cardsInColumn(sandbox, "In Progress")).toEqual(["- [ ] Fix the parser"]);
-        expect(await cardsInColumn(sandbox, "Blocked")).toEqual([]);
-      } finally {
-        coordinator.child.kill("SIGTERM");
-        await coordinator.exited;
       }
     },
     PIPELINE_TIMEOUT_MS,
