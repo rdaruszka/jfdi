@@ -85,6 +85,32 @@ process.stdout.write(JSON.stringify({
 }) + "\\n");
 `;
 
+/**
+ * Mixed-provenance stub: reports `modelUsage` on every stage EXCEPT code review,
+ * which reports none. Exercises, through the real artifact, a single run whose
+ * table carries both a provider-confirmed row and a configured-fallback row —
+ * proving the two sources coexist without being conflated.
+ */
+const STUB_CLAUDE_MIXED = `#!/usr/bin/env node
+const argv = process.argv.slice(2);
+const prompt = argv[argv.indexOf("-p") + 1] || "";
+const stageMatch = prompt.match(/(\\/\\S+\\.verdict\\.json)/);
+const stageName = stageMatch ? stageMatch[1].split("/").pop().replace(".verdict.json", "") : "";
+process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "sess-1" }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "stub" }] } }) + "\\n");
+${STUB_BODY}
+const resultLine = {
+  type: "result",
+  subtype: "success",
+  is_error: false,
+  result: resultText,
+  total_cost_usd: 0.05,
+  usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 0 },
+};
+if (stageName !== "code-review") resultLine.modelUsage = { "${PROVIDER_MODEL}": {} };
+process.stdout.write(JSON.stringify(resultLine) + "\\n");
+`;
+
 interface Sandbox {
   root: string;
   project: string;
@@ -95,7 +121,7 @@ interface Sandbox {
 
 const sandboxRoots: string[] = [];
 
-async function makeSandbox(): Promise<Sandbox> {
+async function makeSandbox(stub: string = STUB_CLAUDE): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-provider-model-"));
   const root = await fs.realpath(created);
   sandboxRoots.push(created);
@@ -105,9 +131,9 @@ async function makeSandbox(): Promise<Sandbox> {
   await fs.mkdir(project, { recursive: true });
   await fs.mkdir(home);
   await fs.mkdir(binDir);
-  await fs.writeFile(path.join(binDir, "claude"), STUB_CLAUDE, { mode: 0o755 });
+  await fs.writeFile(path.join(binDir, "claude"), stub, { mode: 0o755 });
   // Codex is never invoked (all stages point at Claude) but must exist on PATH.
-  await fs.writeFile(path.join(binDir, "codex"), STUB_CLAUDE, { mode: 0o755 });
+  await fs.writeFile(path.join(binDir, "codex"), stub, { mode: 0o755 });
 
   await git(project, "init", "-b", "main");
   await git(project, "config", "user.email", "test@jfdi.local");
@@ -204,6 +230,40 @@ describe("provider-confirmed model reporting, end to end", () => {
       // configured model, making the mismatch visible in the report itself.
       expect(note).toContain(`${PROVIDER_MODEL} (provider-confirmed)`);
       expect(note).not.toContain(`${CONFIGURED_MODEL} (configured)`);
+    },
+    PIPELINE_TIMEOUT_MS,
+  );
+
+  it(
+    "shows provider-confirmed and configured rows side by side when only some stages report a model",
+    async () => {
+      const sandbox = await makeSandbox(STUB_CLAUDE_MIXED);
+      expect((await runCli(sandbox, ["init", "--bare"])).code).toBe(0);
+
+      const configPath = path.join(sandbox.project, ".jfdi", "config.json");
+      const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
+        stages: Record<string, { harness: string; model?: string; effort?: string }>;
+      };
+      for (const stage of Object.keys(config.stages)) {
+        config.stages[stage] = { harness: "claude", model: CONFIGURED_MODEL, effort: "high" };
+      }
+      await fs.writeFile(configPath, JSON.stringify(config, null, 2));
+
+      const run = await runCli(sandbox, ["run", "Add a greeting"]);
+      expect(run.code, `${run.stdout}${run.stderr}`).toBe(0);
+
+      const note = await readTicketNote(sandbox);
+
+      // Implementation reported a model → provider-confirmed; code review reported
+      // none → the honest configured fallback. Both provenances appear in one
+      // table without either masking the other.
+      const rowFor = (label: string) =>
+        note
+          .split("\n")
+          .map((line) => line.replace(/^>\s?/, ""))
+          .find((line) => line.startsWith(`| ${label} |`));
+      expect(rowFor("Implementation")).toContain(`${PROVIDER_MODEL} (provider-confirmed)`);
+      expect(rowFor("Code Review")).toContain(`${CONFIGURED_MODEL} (configured)`);
     },
     PIPELINE_TIMEOUT_MS,
   );
