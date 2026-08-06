@@ -4,6 +4,7 @@ import * as path from "node:path";
 import {
   type BlockingNode,
   blockedByCycles,
+  blockedByLoop,
   type UnresolvedBlockers,
   unresolvedBlockers,
 } from "./blocking.js";
@@ -31,6 +32,7 @@ import {
 } from "./report.js";
 import { ensureJfdiGitignore } from "./scaffold.js";
 import { ensureTicketNote, resolveTicket, type Ticket } from "./tickets.js";
+import { recordTransition } from "./transitions.js";
 import { fileExists, readIfExists } from "./util/fsx.js";
 import { ticketIdFromCard } from "./util/ids.js";
 
@@ -43,6 +45,14 @@ interface ReadyToMergeReport {
   card: Card;
   id: string;
   report: RunReport | null;
+}
+
+interface BlockingCardNode {
+  card: Card;
+  id: string;
+  ticket: Ticket;
+  blockers: UnresolvedBlockers;
+  column: string;
 }
 
 /** How often the mtime poll runs when `fs.watch` misses (or is unavailable). */
@@ -63,8 +73,9 @@ export class Coordinator {
   private readonly blockedByEpisodes = new Set<string>();
   /**
    * Signatures of blocked-by cycles already reported, so each deadlock errors
-   * once. Pruned each scan to the cycles the board still holds, so an untied and
-   * re-formed cycle reports again.
+   * once. A signature remains live while its members wait in Blocked, allowing
+   * a returned member to be re-blocked without re-reporting the whole loop.
+   * Untying the loop prunes it, so a re-formed cycle reports again.
    */
   private readonly reportedCycles = new Set<string>();
   private readonly integrations = new IntegrationQueue();
@@ -386,22 +397,33 @@ export class Coordinator {
     // One shared policy for the whole gate: `unresolvedBlockers` deduplicates
     // links and computes the missing set, so dispatch, the event payload, and
     // the cycle nodes all read the same answer as `jfdi run`.
-    const nodes: Array<{ card: Card; id: string; blockers: UnresolvedBlockers }> = [];
-    for (const card of findColumn(board, columns.begin)?.cards ?? []) {
+    const candidates = [
+      ...(findColumn(board, columns.begin)?.cards ?? []).map((card) => ({
+        card,
+        column: columns.begin,
+      })),
+      ...(findColumn(board, columns.blocked)?.cards ?? []).map((card) => ({
+        card,
+        column: columns.blocked,
+      })),
+    ];
+    const nodes: BlockingCardNode[] = [];
+    for (const { card, column } of candidates) {
       const ticket = await resolveTicket(card.text, ticketsDir);
       nodes.push({
         card,
         id: ticketIdFromCard(card.text),
+        ticket,
         blockers: unresolvedBlockers(ticket.links, board, columns.done),
+        column,
       });
     }
-    this.reportBlockedByCycles(
-      nodes.map((node) => ({ id: node.id, blockedBy: node.blockers.ids })),
-    );
+    const beginNodes = nodes.filter((node) => node.column === columns.begin);
+    await this.reportBlockedByCycles(nodes, new Set(beginNodes.map((node) => node.id)), ticketsDir);
 
     const dispatchable: Card[] = [];
     const blockedNow = new Set<string>();
-    for (const node of nodes) {
+    for (const node of beginNodes) {
       if (node.blockers.ids.length === 0) {
         if (this.blockedByEpisodes.delete(node.id)) this.context.log.emit("unblocked", node.id);
         dispatchable.push(node.card);
@@ -425,25 +447,68 @@ export class Coordinator {
   }
 
   /**
-   * A blocked-by cycle among begin-column cards is a deadlock: every member
-   * waits on another that will never reach done, so none dispatch. The tool
-   * does not untie it — it names it once, as an error for the human, and forgets
-   * a cycle the board no longer holds so a re-formed one reports again.
+   * A blocked-by cycle touching the begin column is a deadlock: every member
+   * waits on another that will never reach done, so none dispatch. Its members
+   * remain part of the live cycle after moving to Blocked, which lets a card a
+   * human returns to begin be visibly refused again. The tool forgets the
+   * signature only after the links no longer form the cycle, so re-forming it
+   * starts a new reporting episode.
    */
-  private reportBlockedByCycles(nodes: BlockingNode[]): void {
+  private async reportBlockedByCycles(
+    nodes: BlockingCardNode[],
+    beginIds: Set<string>,
+    ticketsDir: string,
+  ): Promise<void> {
+    const nodesById = new Map(nodes.map((node) => [node.id, node]));
     const live = new Set<string>();
-    for (const cycle of blockedByCycles(nodes)) {
+    const blockingNodes: BlockingNode[] = nodes.map((node) => ({
+      id: node.id,
+      blockedBy: node.blockers.ids,
+    }));
+    for (const cycle of blockedByCycles(blockingNodes)) {
       const signature = cycle.join(",");
+      if (!this.reportedCycles.has(signature) && !cycle.some((id) => beginIds.has(id))) continue;
       live.add(signature);
-      if (this.reportedCycles.has(signature)) continue;
-      this.reportedCycles.add(signature);
+      const isNewEpisode = !this.reportedCycles.has(signature);
+      if (isNewEpisode) this.reportedCycles.add(signature);
+      await this.refuseBlockedByCycle(
+        cycle,
+        blockedByLoop(cycle, blockingNodes),
+        nodesById,
+        ticketsDir,
+        isNewEpisode,
+      );
+    }
+    for (const signature of [...this.reportedCycles])
+      if (!live.has(signature)) this.reportedCycles.delete(signature);
+  }
+
+  /** Move and annotate the members that this cycle episode visibly refuses. */
+  private async refuseBlockedByCycle(
+    cycle: string[],
+    loop: string[],
+    nodesById: Map<string, BlockingCardNode>,
+    ticketsDir: string,
+    isNewEpisode: boolean,
+  ): Promise<void> {
+    if (isNewEpisode)
       this.context.log.emit("error", undefined, {
         message: `blocked-by cycle among begin-column tickets: ${cycle.join(", ")} — none will dispatch until it is untied`,
         cycle,
       });
+    const comment = `Blocked-by loop: ${loop.join(" → ")}. A human must break the loop by removing one blocked-by link.`;
+    const blockedColumn = this.context.config.board.columns.blocked;
+    for (const id of cycle) {
+      const node = nodesById.get(id);
+      if (!node) throw new Error(`blocked-by cycle member "${id}" has no board card`);
+      const shouldBlock = node.column !== blockedColumn;
+      if (shouldBlock)
+        await moveCardSafe(this.context, node.card, node.column, blockedColumn, false);
+      if (isNewEpisode || shouldBlock) {
+        const notePath = await ensureTicketNote(node.ticket, ticketsDir);
+        await recordTransition(notePath, "coordinator", 0, comment);
+      }
     }
-    for (const signature of [...this.reportedCycles])
-      if (!live.has(signature)) this.reportedCycles.delete(signature);
   }
 
   /**

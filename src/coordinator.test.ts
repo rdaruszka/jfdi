@@ -15,6 +15,7 @@ import {
   sessionKindOf,
   writeVerdict,
 } from "./test-helpers.js";
+import { parseTicketNote } from "./ticket-note.js";
 import { resolveTicket } from "./tickets.js";
 import { ticketIdFromCard } from "./util/ids.js";
 
@@ -1270,6 +1271,11 @@ function recordEvents(context: ReturnType<Fixture["context"]>): JfdiEvent[] {
   return events;
 }
 
+async function noteComments(id: string): Promise<string[]> {
+  const content = await fs.readFile(path.join(fixture.ticketsDir, `${id}.md`), "utf8");
+  return parseTicketNote(content).comments.map((comment) => comment.body);
+}
+
 describe("Coordinator — blocked-by gating", () => {
   it("holds a begin-column card until its blocker reaches Done, then dispatches it", async () => {
     await writeNote("alpha", 'blocked-by:\n  - "[[blocker]]"');
@@ -1362,7 +1368,7 @@ describe("Coordinator — blocked-by gating", () => {
     expect(skips[0]?.data?.missing).toEqual(["ghost"]);
   });
 
-  it("reports a blocked-by cycle once and dispatches neither member", async () => {
+  it("moves every member of a two-ticket blocked-by cycle to Blocked with one comment", async () => {
     await writeNote("a", 'blocked-by:\n  - "[[b]]"');
     await writeNote("b", 'blocked-by:\n  - "[[a]]"');
     await fs.writeFile(
@@ -1388,6 +1394,82 @@ describe("Coordinator — blocked-by gating", () => {
     expect(cycleErrors).toHaveLength(1);
     expect(cycleErrors[0]?.data?.cycle).toEqual(["a", "b"]);
     expect(context.harness.calls).toHaveLength(0);
-    expect(findColumn(await readBoard(), "Ready")?.cards).toHaveLength(2);
+    const board = await readBoard();
+    expect(findColumn(board, "Ready")?.cards).toHaveLength(0);
+    expect(findColumn(board, "Blocked")?.cards.map((card) => ticketIdFromCard(card.text))).toEqual([
+      "a",
+      "b",
+    ]);
+    const message =
+      "Blocked-by loop: a → b → a. A human must break the loop by removing one blocked-by link.";
+    expect(await noteComments("a")).toEqual([message]);
+    expect(await noteComments("b")).toEqual([message]);
+  });
+
+  it("moves every member of a three-ticket blocked-by cycle to Blocked with one comment", async () => {
+    await writeNote("a", 'blocked-by:\n  - "[[c]]"');
+    await writeNote("b", 'blocked-by:\n  - "[[a]]"');
+    await writeNote("c", 'blocked-by:\n  - "[[b]]"');
+    await fs.writeFile(
+      boardPath(),
+      boardWithColumns([
+        ["Ready", ["a [[a]]", "b [[b]]", "c [[c]]"]],
+        ["In Progress", []],
+        ["Done", []],
+      ]),
+    );
+    const context = fixture.context(countingHandler([]));
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+
+    await startCoordinator(coordinator);
+    await coordinator.settleScan();
+    coordinator.stop();
+
+    expect(context.harness.calls).toHaveLength(0);
+    const board = await readBoard();
+    expect(findColumn(board, "Ready")?.cards).toHaveLength(0);
+    expect(findColumn(board, "Blocked")?.cards.map((card) => ticketIdFromCard(card.text))).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+    const message =
+      "Blocked-by loop: a → c → b → a. A human must break the loop by removing one blocked-by link.";
+    for (const id of ["a", "b", "c"]) expect(await noteComments(id)).toEqual([message]);
+  });
+
+  it("re-blocks a returned loop member until a human removes one link", async () => {
+    await writeNote("a", 'blocked-by:\n  - "[[b]]"');
+    await writeNote("b", 'blocked-by:\n  - "[[a]]"');
+    await fs.writeFile(
+      boardPath(),
+      boardWithColumns([
+        ["Ready", ["a [[a]]", "b [[b]]"]],
+        ["In Progress", []],
+        ["Done", []],
+      ]),
+    );
+    const context = fixture.context(countingHandler([]));
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+
+    await startCoordinator(coordinator);
+    await moveCard(boardPath(), "- [ ] a [[a]]", "Blocked", "Ready");
+    await coordinator.settleScan();
+    expect(findColumn(await readBoard(), "Blocked")?.cards).toHaveLength(2);
+    expect(await noteComments("a")).toHaveLength(2);
+    expect(await noteComments("b")).toHaveLength(1);
+    expect(context.harness.calls).toHaveLength(0);
+
+    const aNotePath = path.join(fixture.ticketsDir, "a.md");
+    const aNote = await fs.readFile(aNotePath, "utf8");
+    await fs.writeFile(aNotePath, aNote.replace('blocked-by:\n  - "[[b]]"\n', ""));
+    await moveCard(boardPath(), "- [ ] a [[a]]", "Blocked", "Ready");
+    await rescan(coordinator);
+    coordinator.stop();
+
+    expect(context.harness.calls.length).toBeGreaterThan(0);
+    expect(findColumn(await readBoard(), "Blocked")?.cards.map((card) => card.text)).toEqual([
+      "b [[b]]",
+    ]);
   });
 });

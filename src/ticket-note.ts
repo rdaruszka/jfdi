@@ -26,10 +26,11 @@ export interface TicketNote {
 }
 
 /**
- * One entry in the `## Comments` trail. A *transition* entry is the pipeline
- * narrating a round to humans; a *decision* entry is one assumption or
- * interpretation choice an agent logged — the JIRA emulation, where an agent's
- * decision lands in the same chronological trail a human's would.
+ * One entry in the `## Comments` trail. A *transition* entry is the tool
+ * narrating a round or coordinator-owned refusal to humans; a *decision* entry
+ * is one assumption or interpretation choice an agent logged — the JIRA
+ * emulation, where an agent's decision lands in the same chronological trail a
+ * human's would.
  */
 export interface TicketComment {
   kind: "transition" | "decision";

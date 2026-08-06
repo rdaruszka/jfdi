@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { blockedByCycles, describeBlockers, unresolvedBlockers } from "./blocking.js";
+import {
+  blockedByCycles,
+  blockedByLoop,
+  describeBlockers,
+  unresolvedBlockers,
+} from "./blocking.js";
 import type { Board, Card } from "./board.js";
 import type { TicketLink } from "./tickets.js";
 
@@ -101,5 +106,29 @@ describe("blockedByCycles", () => {
 
   it("ignores edges to tickets outside the begin-column set", () => {
     expect(blockedByCycles([{ id: "a", blockedBy: ["elsewhere"] }])).toEqual([]);
+  });
+});
+
+describe("blockedByLoop", () => {
+  it("follows real blocked-by edges instead of the sorted signature", () => {
+    const nodes = [
+      { id: "a", blockedBy: ["c"] },
+      { id: "b", blockedBy: ["a"] },
+      { id: "c", blockedBy: ["b"] },
+    ];
+    const [cycle] = blockedByCycles(nodes);
+
+    expect(blockedByLoop(cycle ?? [], nodes)).toEqual(["a", "c", "b", "a"]);
+  });
+
+  it("uses a closed walk when one simple cycle cannot name every component member", () => {
+    const nodes = [
+      { id: "a", blockedBy: ["b"] },
+      { id: "b", blockedBy: ["a", "c"] },
+      { id: "c", blockedBy: ["b"] },
+    ];
+    const [cycle] = blockedByCycles(nodes);
+
+    expect(blockedByLoop(cycle ?? [], nodes)).toEqual(["a", "b", "c", "b", "a"]);
   });
 });

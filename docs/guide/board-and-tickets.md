@@ -78,10 +78,16 @@ board stays the single visible truth of what is finished.
 - **A dangling blocker still blocks.** A `blocked-by` link whose target has no
   card anywhere on the board counts as unresolved, and the missing id is named in
   the skip event — a broken link is loud, not a silent pass.
-- **Cycles are reported, not solved.** If begin-column cards block one another in
-  a loop (A `blocked-by` B, B `blocked-by` A), none can ever reach Done, so none
-  dispatch. The coordinator emits one `error` event naming the members so you can
-  untie it; it never picks a winner.
+- **Cycles are visibly refused, not solved.** If begin-column cards block one
+  another in a loop of any size, none can ever reach Done, so the coordinator
+  moves every member to Blocked. Each member's ticket gets a comment naming the
+  full loop (`a → b → c → a`) and telling you to break it by removing one
+  `blocked-by` link; the existing `error` event names the same members. The
+  coordinator never picks a winner or removes a link itself. Dragging a member
+  back to the begin column without breaking the loop moves it straight back to
+  Blocked with the same comment on the next scan. After removing a link, move
+  the cards you want reconsidered back to the begin column; the next scan applies
+  the updated links normally.
 - **`blocks` does not gate.** Only `blocked-by`, read from the blocked ticket's
   own note, gates its dispatch. `blocks` is the human-facing inverse — mirror it
   as a `blocked-by` on the other ticket to enforce it.

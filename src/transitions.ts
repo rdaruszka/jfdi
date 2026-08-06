@@ -40,7 +40,8 @@ export function retryRouting(round: number, maxRounds: number): string {
 
 /**
  * Append one transition entry to the ticket note's `## Comments` trail — the
- * pipeline narrating a round to whoever reads the note instead of the log.
+ * tool narrating a round or coordinator-owned refusal to whoever reads the
+ * note instead of the log.
  */
 export function recordTransition(
   notePath: string,

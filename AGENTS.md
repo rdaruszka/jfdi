@@ -87,7 +87,7 @@ Use these terms exactly; introduce no synonyms. The list grows only by editing t
 - **card** — one line on the board; a pointer to work.
 - **ticket** — the markdown note in `.jfdi/tickets/` a card wikilinks to; frontmatter, an H1 title, a description, `## Questions` and `## Comments`.
 - **description** — a ticket's free-form body, from its H1 down to the first section JFDI owns. With the title, the open questions and the decision comments, it is the slice a stage prompt reads; nothing else in the note is.
-- **comment** — one entry in a ticket's append-only `## Comments` trail: a *transition* comment (`### <ISO timestamp> — <stage> round <n>`), the pipeline narrating a round, or a *decision* comment (`### <ISO timestamp> — Decision (<stage>, round <n>)`), one autonomous choice an agent logged.
+- **comment** — one entry in a ticket's append-only `## Comments` trail: a *transition* comment (`### <ISO timestamp> — <stage> round <n>`), the tool narrating a round or coordinator-owned refusal, or a *decision* comment (`### <ISO timestamp> — Decision (<stage>, round <n>)`), one autonomous choice an agent logged.
 - **run** — one ticket's trip through the pipeline; logs under the state directory's `runs/<ticket-id>/`.
 - **state directory** — `~/.jfdi/projects/<project-key>/`, where one project's run state lives: `runs/`, `events.jsonl`, `state.json`.
 - **stage** — one fresh agent session within a run: Implementation, Code Review, QA.
@@ -153,7 +153,7 @@ The generic rules with rationale and check questions live in [docs/coding-guidel
 
 ## Explicitly out of scope
 
-No PO/orchestrator agent, no PRD building or auto-decomposition, no pre-implementation ticket review, no standalone question queue, no multi-project support, no web UI. Ticket dependency handling is limited to **pairwise `blocked-by` gating at dispatch**: a card whose ticket lists a `blocked-by` ticket that is not yet in the done column is not dispatched (and a `blocked-by` cycle among begin-column cards is reported as an error, never auto-resolved). Still out of scope — transitive scheduling, critical paths, graph visualization, and auto-ordering. Don't build toward these; just don't preclude the extension seams (ticket sources, merge targets, harnesses, renderers — see [docs/architecture/overview.md](docs/architecture/overview.md)).
+No PO/orchestrator agent, no PRD building or auto-decomposition, no pre-implementation ticket review, no standalone question queue, no multi-project support, no web UI. Ticket dependency handling is limited to **`blocked-by` gating at dispatch and deadlock detection at any loop size**: a card whose ticket lists a `blocked-by` ticket that is not yet in the done column is not dispatched, and every member of a loop touching the begin column moves to Blocked with the loop named in its ticket comment. The tool reports the loop and never auto-resolves it. Still out of scope — transitive scheduling, critical paths, and auto-ordering. Don't build toward these; just don't preclude the extension seams (ticket sources, merge targets, harnesses, renderers — see [docs/architecture/overview.md](docs/architecture/overview.md)).
 
 ## Build sequence
 

@@ -78,6 +78,83 @@ export function blockedByCycles(nodes: BlockingNode[]): string[][] {
 }
 
 /**
+ * A directed closed walk through every member of one blocked-by component.
+ * `blockedByCycles` sorts members for a stable signature, so that order cannot
+ * label arrows. This starts at the signature's first member, joins each
+ * remaining member by a shortest in-component blocked-by path, then returns to
+ * the start. A component may lack a simple cycle containing every member, but
+ * strong connectivity guarantees this closed walk, and every rendered arrow
+ * is a link that actually exists. The outer loop terminates because each path
+ * reaches and removes its selected remaining member.
+ */
+export function blockedByLoop(cycle: string[], nodes: BlockingNode[]): string[] {
+  const firstMember = cycle[0];
+  if (firstMember === undefined)
+    throw new Error("cannot render blocked-by loop with no cycle members");
+  const cycleMembers = new Set(cycle);
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
+  if (cycle.length === 1) {
+    const node = nodesById.get(firstMember);
+    if (!node?.blockedBy.includes(firstMember))
+      throw new Error(
+        `cannot render blocked-by loop for "${firstMember}": its self-link is missing — inspect its blocked-by links`,
+      );
+    return [firstMember, firstMember];
+  }
+
+  const remainingMembers = new Set(cycle.slice(1));
+  const loop = [firstMember];
+  let currentMember = firstMember;
+  while (remainingMembers.size > 0) {
+    const targetMember = cycle.find((member) => remainingMembers.has(member));
+    if (targetMember === undefined)
+      throw new Error("cannot render blocked-by loop: remaining member is absent from its cycle");
+    const path = blockedByPath(currentMember, targetMember, cycleMembers, nodesById);
+    for (const member of path.slice(1)) {
+      loop.push(member);
+      remainingMembers.delete(member);
+    }
+    currentMember = targetMember;
+  }
+  loop.push(...blockedByPath(currentMember, firstMember, cycleMembers, nodesById).slice(1));
+  return loop;
+}
+
+/**
+ * Breadth-first path over actual in-component blocked-by edges. Each member is
+ * queued once through `visitedMembers`, bounding the loop to the component.
+ */
+function blockedByPath(
+  firstMember: string,
+  lastMember: string,
+  cycleMembers: Set<string>,
+  nodesById: Map<string, BlockingNode>,
+): string[] {
+  const pendingPaths = [[firstMember]];
+  const visitedMembers = new Set([firstMember]);
+  for (const path of pendingPaths) {
+    const currentMember = path[path.length - 1];
+    if (currentMember === undefined)
+      throw new Error("cannot render blocked-by loop: path queue lost its current member");
+    const node = nodesById.get(currentMember);
+    if (node === undefined)
+      throw new Error(
+        `cannot render blocked-by loop: member "${currentMember}" has no blocking node — inspect its board card`,
+      );
+    for (const nextMember of node.blockedBy) {
+      if (!cycleMembers.has(nextMember) || visitedMembers.has(nextMember)) continue;
+      const nextPath = [...path, nextMember];
+      if (nextMember === lastMember) return nextPath;
+      visitedMembers.add(nextMember);
+      pendingPaths.push(nextPath);
+    }
+  }
+  throw new Error(
+    `cannot render blocked-by loop: no in-cycle path from "${firstMember}" to "${lastMember}" — inspect their blocked-by links`,
+  );
+}
+
+/**
  * Tarjan's strongly-connected-components. Each id is assigned an index exactly
  * once and each edge is followed once, so `compute` terminates in O(V+E), with
  * recursion depth bounded by the node count — a begin column, never deep. The
