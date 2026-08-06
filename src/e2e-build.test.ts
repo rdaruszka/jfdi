@@ -62,7 +62,7 @@ describe("e2e build setup", () => {
     async function jsFilesUnder(dir: string): Promise<string[]> {
       const entries = await fs.readdir(dir, { withFileTypes: true });
       const nested = await Promise.all(
-        entries.map(async (entry) => {
+        entries.map((entry) => {
           const full = path.join(dir, entry.name);
           if (entry.isDirectory()) return jsFilesUnder(full);
           return entry.name.endsWith(".js") ? [full] : [];
