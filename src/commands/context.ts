@@ -8,16 +8,10 @@ import type { PipelineContext } from "../pipeline.js";
 import { projectStateDir } from "../state-dir.js";
 import { UsageRegistry } from "../usage.js";
 
-export interface CliContext extends PipelineContext {
-  repoRoot: string;
-  jfdiDir: string;
-  stateDir: string;
-}
-
 export async function buildContext(
   cwd: string = process.cwd(),
   injectedStateDir?: string,
-): Promise<CliContext> {
+): Promise<PipelineContext> {
   let root: string;
   try {
     root = await repoRoot(cwd);

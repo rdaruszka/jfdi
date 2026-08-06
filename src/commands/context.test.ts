@@ -1,8 +1,9 @@
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 import { EventLog } from "../events.js";
 import type { HarnessFailure } from "../harness/types.js";
 import { PauseController } from "../pause.js";
+import type { PipelineContext } from "../pipeline.js";
 import { projectStateDir } from "../state-dir.js";
 import { type Fixture, makeFixture } from "../test-helpers.js";
 import { attachRetryKey, buildContext, type KeyInput } from "./context.js";
@@ -172,6 +173,7 @@ describe("buildContext state directory injection", () => {
   it("derives the state dir from the repo when none is injected", async () => {
     const context = await buildContext(fixture.repo);
 
+    expectTypeOf(context).toEqualTypeOf<PipelineContext>();
     expect(context.stateDir).toBe(projectStateDir(context.repoRoot));
     expect(context.log.eventsPath).toBe(path.join(context.stateDir, "events.jsonl"));
   });
