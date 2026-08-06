@@ -23,8 +23,6 @@ import type {
 
 const STDERR_TAIL_CHARS = 4_000;
 const SIGKILL_DELAY_MS = 5_000;
-const MAX_TOOL_DETAIL_CHARS = 80;
-const ELLIPSIS = "...";
 
 /**
  * What `-c model_reasoning_effort=` accepts. Codex has no flag for it and
@@ -86,9 +84,6 @@ const CODEX_FAILURE_PATTERNS: ReadonlyArray<{ pattern: RegExp; kind: HarnessFail
 
 /** `Try again at 3:45 PM.` — local time, no timezone marker. `Try again later.` carries none. */
 const CODEX_TRY_AGAIN_AT = /try again at ([^.\n]+)/i;
-/** Failure text quoted into a pause banner — one line, terminal-width-ish. */
-const MAX_FAILURE_DETAIL_CHARS = 160;
-
 /**
  * A session that never announced its thread did not run at all — the
  * detached-TTY regression (openai/codex#19945). Nothing in the exit code says
@@ -98,7 +93,7 @@ const CODEX_NO_THREAD_DETAIL = "codex exited without starting a thread";
 
 function failureDetail(text: string): string {
   const line = text.split("\n").find((candidate) => candidate.trim() !== "") ?? text;
-  return line.trim().slice(0, MAX_FAILURE_DETAIL_CHARS);
+  return line.trim();
 }
 
 /** Classify a Codex failure message. Undefined means "the agent's problem, not the provider's". */
@@ -178,12 +173,6 @@ function parseStreamLine(line: string): CodexStreamLine | null {
   }
 }
 
-function truncateDetail(detail: string): string {
-  return detail.length > MAX_TOOL_DETAIL_CHARS
-    ? `${detail.slice(0, MAX_TOOL_DETAIL_CHARS - ELLIPSIS.length)}${ELLIPSIS}`
-    : detail;
-}
-
 /**
  * Fill a session's cost from the price table, once the model is known. Codex
  * reports no dollars, so an unpriced model leaves `costUsd` null (unknown).
@@ -248,14 +237,14 @@ export function mapCodexLine(line: string): HarnessEvent[] {
 
 function mapToolItem(item: CodexStreamLine["item"]): HarnessEvent[] {
   if (item?.type === "command_execution" && item.command) {
-    return [{ type: "tool", name: "command", detail: truncateDetail(item.command) }];
+    return [{ type: "tool", name: "command", detail: item.command }];
   }
   if (item?.type === "mcp_tool_call" && item.tool) {
     const name = item.server ? `${item.server}.${item.tool}` : item.tool;
     return [{ type: "tool", name }];
   }
   if (item?.type === "web_search" && item.query) {
-    return [{ type: "tool", name: "web_search", detail: truncateDetail(item.query) }];
+    return [{ type: "tool", name: "web_search", detail: item.query }];
   }
   return [];
 }

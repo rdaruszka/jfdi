@@ -17,6 +17,8 @@ export type FakeHandler = (
   text: string;
   sessionId?: string;
   failure?: HarnessFailure;
+  /** Optional progress events emitted before the result. */
+  events?: HarnessEvent[];
   /** Optional usage a test can pin, so cost/token assertions stay deterministic. */
   usage?: SessionUsage;
 }>;
@@ -41,13 +43,15 @@ export class FakeHarness implements Harness {
     const events: HarnessEvent[] = [];
     const run = this.handler(promptSpec, options)
       .then((result) => {
+        const { events: progressEvents = [], ...harnessResult } = result;
+        events.push(...progressEvents);
         events.push({
           type: "result",
           ok: result.ok,
           text: result.text,
           ...(result.usage ? { usage: result.usage } : {}),
         });
-        resolveDone({ ...result, exitCode: result.ok ? 0 : 1 });
+        resolveDone({ ...harnessResult, exitCode: result.ok ? 0 : 1 });
       })
       .catch((error: Error) => {
         resolveDone({ ok: false, text: error.message, exitCode: 1 });

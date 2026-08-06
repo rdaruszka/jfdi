@@ -56,9 +56,6 @@ function claudePermissionArgs(
     : ["--permission-mode", "acceptEdits", "--allowedTools", "Bash"];
 }
 
-/** Longest tool-input excerpt shown as a progress detail. */
-const MAX_TOOL_DETAIL_CHARS = 80;
-const ELLIPSIS = "...";
 /** How much stderr is kept to explain a non-zero exit. */
 const STDERR_TAIL_CHARS = 4_000;
 /** Grace period between SIGTERM and SIGKILL when a session is killed. */
@@ -136,12 +133,9 @@ const CLAUDE_LEGACY_RESET = /usage limit reached\|(\d+)/i;
 /** The only machine-free form the CLI prints: `resets 3:45pm`. */
 const CLAUDE_RESETS_AT = /resets\s+([^.\n]+)/i;
 const MS_PER_SECOND = 1_000;
-/** Failure text quoted into a pause banner — one line, terminal-width-ish. */
-const MAX_FAILURE_DETAIL_CHARS = 160;
-
 function failureDetail(text: string): string {
   const line = text.split("\n").find((candidate) => candidate.trim() !== "") ?? text;
-  return line.trim().slice(0, MAX_FAILURE_DETAIL_CHARS);
+  return line.trim();
 }
 
 function claudeResetTime(text: string, nowMs: number): number | null {
@@ -242,10 +236,7 @@ function summarizeInput(input: unknown): string | undefined {
   const fields = input as Record<string, unknown>;
   for (const key of ["file_path", "command", "path", "pattern", "description"]) {
     const value = fields[key];
-    if (typeof value === "string")
-      return value.length > MAX_TOOL_DETAIL_CHARS
-        ? `${value.slice(0, MAX_TOOL_DETAIL_CHARS - ELLIPSIS.length)}${ELLIPSIS}`
-        : value;
+    if (typeof value === "string") return value;
   }
   return undefined;
 }
