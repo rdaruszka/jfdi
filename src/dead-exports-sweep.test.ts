@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import * as board from "./board.js";
 import * as git from "./git.js";
-import { FakeHarness } from "./harness/fake.js";
+import * as harnessModule from "./harness/index.js";
 import * as integrate from "./integrate.js";
 import * as pipeline from "./pipeline.js";
+import { FakeHarness } from "./test-helpers.js";
 import * as tickets from "./tickets.js";
 import * as usage from "./usage.js";
 
@@ -53,5 +54,9 @@ describe("dead-exports sweep stays swept", () => {
     // The interface members that survive still exist.
     expect(typeof harness.spawn).toBe("function");
     expect(typeof harness.spawnInteractive).toBe("function");
+  });
+
+  it("the production harness surface does not export its test double", () => {
+    expect(surface(harnessModule).FakeHarness).toBeUndefined();
   });
 });

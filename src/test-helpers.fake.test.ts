@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FakeHarness } from "./fake.js";
+import { FakeHarness } from "./test-helpers.js";
 
 describe("FakeHarness", () => {
   it("passes a bare prompt to its handler without fabricating process data", async () => {

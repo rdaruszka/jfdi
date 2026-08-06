@@ -3,11 +3,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { git, isAncestor, isMergeInProgress, revParse } from "./git.js";
-import { type FakeHandler, FakeHarness } from "./harness/fake.js";
 import { IntegrationQueue, integrateTicket } from "./integrate.js";
 import { type PipelineContext, runPipeline } from "./pipeline.js";
 import {
   commitFile,
+  type FakeHandler,
+  FakeHarness,
   type Fixture,
   makeFixture,
   sessionKindOf,
