@@ -139,12 +139,17 @@ async function nextRunDir(stateDir: string, ticketId: string): Promise<RunDirs> 
   const base = runsDir(stateDir, ticketId);
   await ensureDir(base);
   const entries = await fs.readdir(base);
-  const runCount = entries.filter((e) => /^run-\d+$/.test(e)).length;
-  const current = path.join(base, `run-${runCount + 1}`);
+  const runNumbers = entries.flatMap((entry) => {
+    const match = /^run-(\d+)$/.exec(entry);
+    return match?.[1] ? [Number(match[1])] : [];
+  });
+  const latestRunNumber = Math.max(0, ...runNumbers);
+  const nextRunNumber = latestRunNumber + 1;
+  const current = path.join(base, `run-${nextRunNumber}`);
   return {
     current,
-    previous: runCount > 0 ? path.join(base, `run-${runCount}`) : null,
-    runNumber: runCount + 1,
+    previous: runNumbers.length > 0 ? path.join(base, `run-${latestRunNumber}`) : null,
+    runNumber: nextRunNumber,
   };
 }
 

@@ -112,6 +112,86 @@ describe("runPipeline", () => {
     expect(outcome.worktree.path).toBe(path.join(fixture.jfdiDir, "worktrees", ticket.id));
   });
 
+  it("uses max run index plus one and carries history across a deleted run directory", async () => {
+    const carriedFeedback = "feedback from the latest existing run";
+    const ticket = await resolveTicket("Build after a run directory gap", fixture.ticketsDir);
+    const runBase = path.join(fixture.stateDir, "runs", ticket.id);
+    await fs.mkdir(path.join(runBase, "run-1"), { recursive: true });
+    await fs.mkdir(path.join(runBase, "run-3"), { recursive: true });
+    await fs.writeFile(
+      path.join(runBase, "run-3", "history.json"),
+      JSON.stringify([
+        {
+          run: 3,
+          round: 1,
+          source: "code-review",
+          feedback: carriedFeedback,
+        },
+      ]),
+    );
+
+    const implementationPrompts: string[] = [];
+    const context = fixture.context(async (spec, options) => {
+      const stage = sessionKindOf(spec.prompt);
+      if (stage === "implementation") {
+        implementationPrompts.push(spec.prompt);
+        await commitFile(options.cwd, "impl.txt", "the feature\n", "implement");
+        await writeVerdict(spec.prompt, { status: "done", summary: "done" });
+      } else {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    });
+
+    expect((await runPipeline(context, ticket)).status).toBe("passed");
+    expect(implementationPrompts).toHaveLength(1);
+    expect(implementationPrompts[0]).toContain(carriedFeedback);
+    expect((await fs.readdir(runBase)).sort()).toEqual(["run-1", "run-3", "run-4"]);
+    expect(await fs.readdir(path.join(runBase, "run-4", "round-1"))).toContain(
+      "implementation.verdict.json",
+    );
+  });
+
+  it("numbers by the max index even when a gap keeps count+1 from colliding", async () => {
+    // Adversarial gap the collision case misses: run-1, run-2, run-4 present,
+    // run-3 deleted. The old count-based code (count=3) would name the next run
+    // run-3 — below the max, so NO collision — yet still regress the numbering
+    // and point `previous` at the never-existing run-3, reading history empty.
+    // max+1 must land run-5 and resolve `previous` to run-4.
+    const carriedFeedback = "feedback from the highest surviving run";
+    const ticket = await resolveTicket("Build after a non-colliding gap", fixture.ticketsDir);
+    const runBase = path.join(fixture.stateDir, "runs", ticket.id);
+    for (const existing of ["run-1", "run-2", "run-4"]) {
+      await fs.mkdir(path.join(runBase, existing), { recursive: true });
+    }
+    await fs.writeFile(
+      path.join(runBase, "run-4", "history.json"),
+      JSON.stringify([{ run: 4, round: 1, source: "code-review", feedback: carriedFeedback }]),
+    );
+
+    const implementationPrompts: string[] = [];
+    const context = fixture.context(async (spec, options) => {
+      const stage = sessionKindOf(spec.prompt);
+      if (stage === "implementation") {
+        implementationPrompts.push(spec.prompt);
+        await commitFile(options.cwd, "impl.txt", "the feature\n", "implement");
+        await writeVerdict(spec.prompt, { status: "done", summary: "done" });
+      } else {
+        await writeVerdict(spec.prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    });
+
+    expect((await runPipeline(context, ticket)).status).toBe("passed");
+    expect(implementationPrompts).toHaveLength(1);
+    expect(implementationPrompts[0]).toContain(carriedFeedback);
+    expect((await fs.readdir(runBase)).sort()).toEqual(["run-1", "run-2", "run-4", "run-5"]);
+    expect(await fs.readdir(runBase)).not.toContain("run-3");
+    expect(await fs.readdir(path.join(runBase, "run-5", "round-1"))).toContain(
+      "implementation.verdict.json",
+    );
+  });
+
   it("code review failure skips QA and feeds back into round 2", async () => {
     const stages: string[] = [];
     let implementationRounds = 0;
