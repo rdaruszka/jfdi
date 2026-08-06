@@ -17,7 +17,6 @@ function usage(overrides: Partial<SessionUsage> = {}): SessionUsage {
     inputTokens: 0,
     cachedInputTokens: 0,
     outputTokens: 0,
-    reasoningTokens: 0,
     ...overrides,
   };
 }
@@ -81,20 +80,6 @@ describe("codexCostUsd", () => {
       outputTokens: 0,
     });
     expect(cost).toBeCloseTo(-0.16, 6);
-  });
-
-  it("does not double-bill reasoning: the priced output is the output count, reasoning excluded", () => {
-    // Decision (logged on the ticket): Codex's output_tokens already includes
-    // reasoning tokens, so cost depends on output alone. Two sessions with the
-    // same output but different reasoning subtotals must cost the same.
-    const withReasoning = codexCostUsd("gpt-5.6-sol", {
-      inputTokens: 0,
-      cachedInputTokens: 0,
-      outputTokens: 100_000,
-    });
-    // reasoningTokens is not even a parameter of the price call — proof it can't
-    // be added on top. The output-only figure is the whole bill: 100K × $30/M.
-    expect(withReasoning).toBeCloseTo(3.0, 6);
   });
 });
 

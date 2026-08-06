@@ -86,7 +86,7 @@ async function runIntegrationAgent(
     context,
     ticket.id,
     stage,
-    { prompt },
+    prompt,
     { cwd: worktree.path, logPath: path.join(runDir, "integration.log.jsonl") },
     (event) => {
       if (event.type === "tool")

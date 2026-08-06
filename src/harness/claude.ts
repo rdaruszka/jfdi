@@ -15,7 +15,6 @@ import type {
   HarnessSelection,
   HarnessSession,
   InteractiveSpawnOptions,
-  PromptSpec,
   SessionUsage,
   SpawnOptions,
 } from "./types.js";
@@ -98,7 +97,6 @@ function claudeUsage(parsed: ClaudeStreamLine): SessionUsage | undefined {
     inputTokens: usage?.input_tokens ?? 0,
     cachedInputTokens: usage?.cache_read_input_tokens ?? 0,
     outputTokens: usage?.output_tokens ?? 0,
-    reasoningTokens: 0,
   };
 }
 
@@ -217,16 +215,8 @@ export function mapClaudeLine(line: string): HarnessEvent[] {
   if (parsed.type === "assistant") {
     return (parsed.message?.content ?? []).flatMap(mapAssistantBlock);
   }
-  // A continued session gets a fresh id, so the init line and the result line
-  // both report it; the last one seen wins.
-  if (parsed.type === "system" && parsed.subtype === "init" && parsed.session_id) {
-    return [{ type: "session", sessionId: parsed.session_id }];
-  }
   if (parsed.type === "result") {
-    const events: HarnessEvent[] = [];
-    if (parsed.session_id) events.push({ type: "session", sessionId: parsed.session_id });
-    events.push(mapResultLine(parsed));
-    return events;
+    return [mapResultLine(parsed)];
   }
   return [];
 }
@@ -252,10 +242,10 @@ export class ClaudeHarness implements Harness {
     private readonly executable: string = "claude",
   ) {}
 
-  spawn(promptSpec: PromptSpec, options: SpawnOptions): HarnessSession {
+  spawn(prompt: string, options: SpawnOptions): HarnessSession {
     const args = [
       "-p",
-      promptSpec.prompt,
+      prompt,
       "--output-format",
       "stream-json",
       "--verbose",
@@ -298,13 +288,15 @@ export class ClaudeHarness implements Harness {
       : null;
     stdoutLines?.on("line", (line) => {
       log?.write(`${line}\n`);
+      // A continued session gets a fresh id, so the init and result lines can
+      // both report it; the last one seen is attached to the final result.
+      const parsed = parseStreamLine(line);
+      if (parsed?.session_id) sessionId = parsed.session_id;
       for (const event of mapClaudeLine(line)) {
-        if (event.type === "session") sessionId = event.sessionId;
         if (event.type === "result") {
           result = {
             ok: event.ok,
             text: event.text,
-            exitCode: 0,
             ...(event.usage ? { usage: event.usage } : {}),
           };
           resultFailure = event.failure;
@@ -320,7 +312,6 @@ export class ClaudeHarness implements Harness {
         resolve({
           ok: false,
           text: spawnFailureText(this.executable, this.selection, error.message),
-          exitCode: EXIT_COMMAND_NOT_EXECUTABLE,
         });
         notify?.();
       });
@@ -329,11 +320,10 @@ export class ClaudeHarness implements Harness {
         log?.end();
         const closed: HarnessResult =
           result && code === 0
-            ? { ...result, exitCode: 0 }
+            ? result
             : {
                 ok: false,
                 text: result?.text ?? exitText(code, stderrTail),
-                exitCode: code ?? 1,
               };
         // A session that died before any result line leaves its only evidence
         // in stderr, so the exit text is classified too, not just the result.
@@ -377,14 +367,14 @@ export class ClaudeHarness implements Harness {
     };
   }
 
-  spawnInteractive(promptSpec: PromptSpec, options: InteractiveSpawnOptions): Promise<number> {
+  spawnInteractive(prompt: string, options: InteractiveSpawnOptions): Promise<number> {
     // Both flags are session-scoped on the interactive CLI too, so an
     // interactive launch runs the same agent the implementation stage would.
     const args = [
       ...claudePermissionArgs(this.permissionMode, "interactive"),
       ...claudeSelectionArgs(this.selection),
       ...(options.isSystemPrompt ? ["--append-system-prompt"] : []),
-      promptSpec.prompt,
+      prompt,
     ];
     const child = spawn(this.executable, args, { cwd: options.cwd, stdio: "inherit" });
     return interactiveResult(child, this.executable, this.selection);

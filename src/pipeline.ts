@@ -7,7 +7,6 @@ import { createWorktree, git, hasStagedChanges, revParse, type Worktree } from "
 import type {
   HarnessEvent,
   HarnessResult,
-  PromptSpec,
   SessionHarnesses,
   SessionKind,
   SessionUsage,
@@ -269,7 +268,6 @@ function withDuration(result: HarnessResult, durationMs: number): HarnessResult 
         inputTokens: 0,
         cachedInputTokens: 0,
         outputTokens: 0,
-        reasoningTokens: 0,
       };
   return { ...result, usage };
 }
@@ -278,11 +276,11 @@ function withDuration(result: HarnessResult, durationMs: number): HarnessResult 
 async function runOneSession(
   context: PipelineContext,
   sessionKind: SessionKind,
-  promptSpec: PromptSpec,
+  prompt: string,
   options: SpawnOptions,
   onEvent: (event: HarnessEvent) => void,
 ): Promise<HarnessResult> {
-  const session = context.harnesses[sessionKind].spawn(promptSpec, options);
+  const session = context.harnesses[sessionKind].spawn(prompt, options);
   context.sessions?.add(session);
   const startedMs = nowMs(context);
   try {
@@ -311,7 +309,7 @@ export async function runHeldSession(
   context: PipelineContext,
   ticketId: string,
   sessionKind: SessionKind,
-  promptSpec: PromptSpec,
+  prompt: string,
   options: SpawnOptions,
   onEvent: (event: HarnessEvent) => void,
 ): Promise<HarnessResult> {
@@ -322,7 +320,7 @@ export async function runHeldSession(
   let accumulatedMs = 0;
   for (let attempt = 1; ; attempt++) {
     await context.pause.waitWhilePaused();
-    const result = await runOneSession(context, sessionKind, promptSpec, attemptOptions, onEvent);
+    const result = await runOneSession(context, sessionKind, prompt, attemptOptions, onEvent);
     accumulatedMs += result.usage?.durationMs ?? 0;
     if (!result.failure) {
       context.pause.reportHealthy();
@@ -371,7 +369,7 @@ async function runStageSession(
     context,
     ticket.id,
     stage,
-    { prompt },
+    prompt,
     { cwd: worktree.path, logPath, ...(continueSessionId ? { continueSessionId } : {}) },
     (event) => narrateSessionActivity(context, ticket.id, stage, event),
   );
@@ -396,7 +394,6 @@ function zeroUsage(): SessionUsage {
     inputTokens: 0,
     cachedInputTokens: 0,
     outputTokens: 0,
-    reasoningTokens: 0,
   };
 }
 
@@ -707,7 +704,7 @@ async function renderHandoffMessage(
     context,
     ticket.id,
     "commit-message",
-    { prompt },
+    prompt,
     {
       cwd: input.worktree.path,
       logPath: path.join(input.roundDir, `${input.handoff.stage}.commit-message.log.jsonl`),

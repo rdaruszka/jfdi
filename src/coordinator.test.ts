@@ -218,17 +218,17 @@ async function recordSignOff(ticketId: string, commit: string): Promise<void> {
 
 /** Handler that implements each ticket by writing a file named for its card. */
 function autoHandler() {
-  return async (spec: { prompt: string }, options: { cwd: string }) => {
-    const stage = sessionKindOf(spec.prompt);
+  return async (prompt: string, options: { cwd: string }) => {
+    const stage = sessionKindOf(prompt);
     if (stage === "implementation") {
-      const match = /feature (\w+)/.exec(spec.prompt);
+      const match = /feature (\w+)/.exec(prompt);
       const name = match?.[1] ?? "unknown";
       await commitFile(options.cwd, `${name}.txt`, `${name}\n`, `implement ${name}`);
-      await writeVerdict(spec.prompt, { status: "done", summary: `built ${name}` });
+      await writeVerdict(prompt, { status: "done", summary: `built ${name}` });
     } else if (stage === "integration") {
-      await writeVerdict(spec.prompt, { resolution: "clean" });
+      await writeVerdict(prompt, { resolution: "clean" });
     } else {
-      await writeVerdict(spec.prompt, { verdict: "pass" });
+      await writeVerdict(prompt, { verdict: "pass" });
     }
     return { ok: true, text: "" };
   };
@@ -311,18 +311,18 @@ function boardPath(): string {
 /** Handler whose implementation stage makes a distinct commit on every run. */
 function countingHandler(stages: string[]) {
   let implementations = 0;
-  return async (spec: { prompt: string }, options: { cwd: string }) => {
-    const stage = sessionKindOf(spec.prompt);
+  return async (prompt: string, options: { cwd: string }) => {
+    const stage = sessionKindOf(prompt);
     stages.push(stage);
     if (stage === "implementation") {
       implementations++;
       const file = `impl-${implementations}.txt`;
       await commitFile(options.cwd, file, `${implementations}\n`, `implement ${file}`);
-      await writeVerdict(spec.prompt, { status: "done", summary: `built ${file}` });
+      await writeVerdict(prompt, { status: "done", summary: `built ${file}` });
     } else if (stage === "integration") {
-      await writeVerdict(spec.prompt, { resolution: "clean" });
+      await writeVerdict(prompt, { resolution: "clean" });
     } else {
-      await writeVerdict(spec.prompt, { verdict: "pass" });
+      await writeVerdict(prompt, { verdict: "pass" });
     }
     return { ok: true, text: "" };
   };
@@ -478,8 +478,8 @@ describe("Coordinator", () => {
   });
 
   it("blocked tickets move to the Blocked column", async () => {
-    const context = fixture.context(async (spec) => {
-      await writeVerdict(spec.prompt, {
+    const context = fixture.context(async (prompt) => {
+      await writeVerdict(prompt, {
         status: "escalate",
         question: "which db?",
         recommendation: "sqlite",
@@ -866,20 +866,20 @@ describe("Coordinator", () => {
   });
 
   it("materializes stage observations as inbox cards and never dispatches them", async () => {
-    const context = fixture.context(async (spec, options) => {
-      const stage = sessionKindOf(spec.prompt);
+    const context = fixture.context(async (prompt, options) => {
+      const stage = sessionKindOf(prompt);
       if (stage === "implementation") {
-        const match = /feature (\w+)/.exec(spec.prompt);
+        const match = /feature (\w+)/.exec(prompt);
         await commitFile(options.cwd, `${match?.[1]}.txt`, "x\n", "impl");
-        await writeVerdict(spec.prompt, {
+        await writeVerdict(prompt, {
           status: "done",
           observations: ["Dead code in legacy module"],
         });
       } else if (stage === "integration") {
-        await writeVerdict(spec.prompt, { resolution: "clean" });
+        await writeVerdict(prompt, { resolution: "clean" });
       } else {
         // QA repeats the same observation — must not produce a duplicate card.
-        await writeVerdict(spec.prompt, {
+        await writeVerdict(prompt, {
           verdict: "pass",
           observations: ["Dead code in legacy module"],
         });
@@ -910,20 +910,20 @@ describe("Coordinator", () => {
 
   it("materializes an observation from a failing code review verdict", async () => {
     const implementationAttempts = new Map<string, number>();
-    const context = fixture.context(async (spec, options) => {
-      const stage = sessionKindOf(spec.prompt);
-      const name = featureName(spec.prompt);
+    const context = fixture.context(async (prompt, options) => {
+      const stage = sessionKindOf(prompt);
+      const name = featureName(prompt);
       if (stage === "implementation") {
         const attempt = (implementationAttempts.get(name) ?? 0) + 1;
         implementationAttempts.set(name, attempt);
         await commitFile(options.cwd, `${name}.txt`, `${attempt}\n`, `implement ${name}`);
-        await writeVerdict(spec.prompt, { status: "done", summary: `built ${name}` });
+        await writeVerdict(prompt, { status: "done", summary: `built ${name}` });
       } else if (stage === "code-review") {
-        await writeVerdict(spec.prompt, observedReviewVerdict(implementationAttempts.get(name)));
+        await writeVerdict(prompt, observedReviewVerdict(implementationAttempts.get(name)));
       } else if (stage === "integration") {
-        await writeVerdict(spec.prompt, { resolution: "clean" });
+        await writeVerdict(prompt, { resolution: "clean" });
       } else {
-        await writeVerdict(spec.prompt, { verdict: "pass" });
+        await writeVerdict(prompt, { verdict: "pass" });
       }
       return { ok: true, text: "" };
     });
@@ -940,17 +940,17 @@ describe("Coordinator", () => {
 
   it("materializes earlier-round observations when the run blocks", async () => {
     fixture.config.pipeline.max_rounds = 1;
-    const context = fixture.context(async (spec, options) => {
-      const stage = sessionKindOf(spec.prompt);
+    const context = fixture.context(async (prompt, options) => {
+      const stage = sessionKindOf(prompt);
       if (stage === "implementation") {
-        const name = featureName(spec.prompt);
+        const name = featureName(prompt);
         await commitFile(options.cwd, `${name}.txt`, `${name}\n`, `implement ${name}`);
-        await writeVerdict(spec.prompt, {
+        await writeVerdict(prompt, {
           status: "done",
           observations: ["The legacy command still uses an obsolete flag"],
         });
       } else if (stage === "code-review") {
-        await writeVerdict(spec.prompt, { verdict: "fail", feedback: "ticket work is incomplete" });
+        await writeVerdict(prompt, { verdict: "fail", feedback: "ticket work is incomplete" });
       }
       return { ok: true, text: "" };
     });
@@ -1056,20 +1056,20 @@ describe("Coordinator", () => {
   it("respects max_concurrent", async () => {
     let peak = 0;
     let current = 0;
-    const context = fixture.context(async (spec, options) => {
-      const stage = sessionKindOf(spec.prompt);
+    const context = fixture.context(async (prompt, options) => {
+      const stage = sessionKindOf(prompt);
       if (stage === "implementation") {
         current++;
         peak = Math.max(peak, current);
         await new Promise((resolve) => setImmediate(resolve));
         current--;
-        const match = /feature (\w+)/.exec(spec.prompt);
+        const match = /feature (\w+)/.exec(prompt);
         await commitFile(options.cwd, `${match?.[1]}.txt`, "x\n", "impl");
-        await writeVerdict(spec.prompt, { status: "done" });
+        await writeVerdict(prompt, { status: "done" });
       } else if (stage === "integration") {
-        await writeVerdict(spec.prompt, { resolution: "clean" });
+        await writeVerdict(prompt, { resolution: "clean" });
       } else {
-        await writeVerdict(spec.prompt, { verdict: "pass" });
+        await writeVerdict(prompt, { verdict: "pass" });
       }
       return { ok: true, text: "" };
     });
@@ -1101,10 +1101,10 @@ describe("Coordinator under a broken provider", () => {
     fixture.config.integration.mode = "on-approval";
     const resetsAtMs = Date.now() + FAR_RESET_MS;
     let implementationAttempts = 0;
-    const context = fixture.context(async (spec, options) => {
-      const stage = sessionKindOf(spec.prompt);
+    const context = fixture.context(async (prompt, options) => {
+      const stage = sessionKindOf(prompt);
       if (stage !== "implementation") {
-        await writeVerdict(spec.prompt, { verdict: "pass" });
+        await writeVerdict(prompt, { verdict: "pass" });
         return { ok: true, text: "" };
       }
       implementationAttempts++;
@@ -1119,7 +1119,7 @@ describe("Coordinator under a broken provider", () => {
           },
         };
       await commitFile(options.cwd, "impl.txt", "work\n", "implement");
-      await writeVerdict(spec.prompt, { status: "done", summary: "built alpha" });
+      await writeVerdict(prompt, { status: "done", summary: "built alpha" });
       return { ok: true, text: "" };
     });
     const pauses: JfdiEvent[] = [];
@@ -1167,22 +1167,22 @@ describe("Coordinator under a broken provider", () => {
     let alphaImplementations = 0;
     let hasBetaImplementationFinished = false;
     const healthy = autoHandler();
-    const context = fixture.context(async (spec, options) => {
-      const stage = sessionKindOf(spec.prompt);
-      const name = /feature (\w+)/.exec(spec.prompt)?.[1] ?? "unknown";
+    const context = fixture.context(async (prompt, options) => {
+      const stage = sessionKindOf(prompt);
+      const name = /feature (\w+)/.exec(prompt)?.[1] ?? "unknown";
       sessions.push(`${name}:${stage}`);
       // Beta's session is live when the tool pauses and survives it, so the
       // boundary it holds at is its next stage — the thing under test.
       if (stage === "implementation" && name === "beta") {
         betaStarted.resolve();
         await pauseSeen.promise;
-        const result = await healthy(spec, options);
+        const result = await healthy(prompt, options);
         hasBetaImplementationFinished = true;
         return result;
       }
       const isFirstAlpha =
         stage === "implementation" && name === "alpha" && ++alphaImplementations === 1;
-      if (!isFirstAlpha) return healthy(spec, options);
+      if (!isFirstAlpha) return healthy(prompt, options);
       // Only a human ends this one, so nothing resumes behind the test's back.
       await betaStarted.promise;
       return { ok: false, text: "", failure: { kind: "needs-human" as const, detail: "/login" } };

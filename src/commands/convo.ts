@@ -20,5 +20,5 @@ export async function convoCommand(): Promise<number> {
     "implementation",
     config.stages.implementation,
     config.permissions.mode,
-  ).spawnInteractive({ prompt }, { cwd: root, isSystemPrompt: true });
+  ).spawnInteractive(prompt, { cwd: root, isSystemPrompt: true });
 }

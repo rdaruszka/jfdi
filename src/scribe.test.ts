@@ -15,7 +15,6 @@ const HANDOFF: SessionHandoff = {
     inputTokens: 120_000,
     cachedInputTokens: 0,
     outputTokens: 8_000,
-    reasoningTokens: 0,
   },
 };
 
@@ -58,7 +57,6 @@ describe("assembleCommitMessage", () => {
         inputTokens: 1_000_000,
         cachedInputTokens: 0,
         outputTokens: 200_000,
-        reasoningTokens: 50_000,
       },
     });
     expect(unknown).toContain("JFDI-Cost: 1.2M tokens, price unavailable");

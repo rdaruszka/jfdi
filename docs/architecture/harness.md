@@ -15,11 +15,9 @@ Source: [src/harness/types.ts](../../src/harness/types.ts) (the interface),
 
 ```ts
 interface Harness {
-  spawn(promptSpec: PromptSpec, options: SpawnOptions): HarnessSession;
-  spawnInteractive(promptSpec: PromptSpec, options: InteractiveSpawnOptions): Promise<number>;
+  spawn(prompt: string, options: SpawnOptions): HarnessSession;
+  spawnInteractive(prompt: string, options: InteractiveSpawnOptions): Promise<number>;
 }
-
-interface PromptSpec { prompt: string }
 
 interface SpawnOptions {
   cwd: string;                 // the ticket's worktree
@@ -36,11 +34,10 @@ interface HarnessSession {
 type HarnessEvent =
   | { type: "text";    text: string }
   | { type: "tool";    name: string; detail?: string }
-  | { type: "session"; sessionId: string }   // provider id for continuation
   | { type: "result";  ok: boolean; text: string; failure?: HarnessFailure };
 
 interface HarnessResult {
-  ok: boolean; text: string; exitCode: number;
+  ok: boolean; text: string;
   sessionId?: string;
   failure?: HarnessFailure;   // set only when the provider failed, not the agent
 }
