@@ -391,8 +391,8 @@ export class CodexHarness implements Harness {
   }
 
   spawnInteractive(prompt: string, options: InteractiveSpawnOptions): Promise<number> {
-    // `-m` and `-c` are top-level Codex options, so an interactive launch runs
-    // the same agent the implementation stage would.
+    // `-m` and `-c` are top-level Codex options, so the interactive launch
+    // honors the selection supplied for conversational init.
     const child = spawn(
       this.executable,
       [...codexPermissionArgs(this.permissionMode), ...codexSelectionArgs(this.selection), prompt],
@@ -409,7 +409,7 @@ function interactiveResult(
 ): Promise<number> {
   return new Promise<number>((resolve) => {
     child.on("error", (error) => {
-      console.error(spawnFailureText(executable, selection, error.message));
+      console.error(spawnFailureText(executable, selection, error.message, "init-flags"));
       resolve(EXIT_COMMAND_NOT_EXECUTABLE);
     });
     child.on("close", (code) => resolve(code ?? 0));

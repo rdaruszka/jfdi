@@ -31,7 +31,7 @@ export async function ensureJfdiGitignore(jfdiDir: string): Promise<void> {
 const SANDBOX_TEMPLATE = `# QA Sandbox Contract
 
 How the QA agent builds, launches, drives, and tears down this product.
-(\`jfdi init\` seeded this file; refine it with \`jfdi convo\`.)
+(\`jfdi init\` seeded this file; rerun it to refine the setup conversationally.)
 
 ## Build
 

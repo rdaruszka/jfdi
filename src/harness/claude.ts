@@ -372,12 +372,11 @@ export class ClaudeHarness implements Harness {
   }
 
   spawnInteractive(prompt: string, options: InteractiveSpawnOptions): Promise<number> {
-    // Both flags are session-scoped on the interactive CLI too, so an
-    // interactive launch runs the same agent the implementation stage would.
+    // Both flags are session-scoped on the interactive CLI too, so it honors
+    // the selection supplied for conversational init.
     const args = [
       ...claudePermissionArgs(this.permissionMode, "interactive"),
       ...claudeSelectionArgs(this.selection),
-      ...(options.isSystemPrompt ? ["--append-system-prompt"] : []),
       prompt,
     ];
     const child = spawn(this.executable, args, { cwd: options.cwd, stdio: "inherit" });
@@ -392,7 +391,7 @@ function interactiveResult(
 ): Promise<number> {
   return new Promise<number>((resolve) => {
     child.on("error", (error) => {
-      console.error(spawnFailureText(executable, selection, error.message));
+      console.error(spawnFailureText(executable, selection, error.message, "init-flags"));
       resolve(EXIT_COMMAND_NOT_EXECUTABLE);
     });
     child.on("close", (code) => resolve(code ?? 0));

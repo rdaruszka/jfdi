@@ -3,7 +3,7 @@
  *
  * The harness unit suites construct a `ClaudeHarness`/`CodexHarness` with a
  * permission mode by hand and assert the argv it builds. The interactive-provider
- * suite covers `jfdi init`/`jfdi convo`. Nothing pinned the *pipeline* path: that
+ * suite covers interactive `jfdi init`. Nothing pinned the *pipeline* path: that
  * `config.permissions.mode` is read once, threaded through
  * `createSessionHarnesses`, and reaches every headless and continued session's
  * CLI — across both providers a single run spans.

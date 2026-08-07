@@ -66,10 +66,9 @@ Contracts worth knowing:
 - **Provider stream lines are untrusted.** A line that doesn't parse into a
   known event shape is simply not an event; raw output still lands in the log
   file for `jfdi logs`.
-- `spawnInteractive` hands the terminal to the provider (used by `jfdi init`
-  and `jfdi convo`) and resolves with its exit code. `isSystemPrompt: true`
-  requests true system-prompt semantics where the provider supports it; others
-  approximate it as an initial message.
+- `spawnInteractive` hands the terminal to the provider (used by `jfdi init`)
+  and resolves with its exit code. The prompt is the first user message, so the
+  agent acts first by surveying the repository.
 
 ## Provider implementations
 
@@ -96,8 +95,7 @@ claude -p <prompt> --output-format stream-json --verbose
   ([details](../guide/prompts-and-customization.md#the-format-hook)).
 - Effort levels: `low`, `medium`, `high`, `xhigh`, `max` (`CLAUDE_EFFORT_LEVELS`).
 - Interactive: `claude --permission-mode <auto|bypassPermissions> [--model …]
-  [--effort …] <prompt>`, with
-  `--append-system-prompt` before the prompt when `isSystemPrompt` is set.
+  [--effort …] <prompt>`.
 
 ### Codex
 
@@ -124,8 +122,7 @@ codex exec resume --json <permission-args> \
   locally: it forwards the value to the API, which answers an unknown one with a
   400 mid-session. `CODEX_EFFORT_LEVELS` (`none`, `minimal`, `low`, `medium`,
   `high`, `xhigh`, `max`) is what turns that into a config error at startup.
-- Interactive: `codex <permission-args> [--model …] [-c …] <prompt>`;
-  `isSystemPrompt` is ignored.
+- Interactive: `codex <permission-args> [--model …] [-c …] <prompt>`.
 
 Both implementations share the same shape deliberately: line-by-line stdout
 parsing mirrored to the log file, a rolling stderr tail for diagnostics when the
@@ -241,9 +238,9 @@ spawn that fails names the `stages` entry that selected the missing binary.
 
 Fixing the harness per stage is also what keeps continuations honest — a session
 id is only meaningful to the harness that minted it, and a stage always
-re-enters its own. `jfdi init` and `jfdi convo` use the `implementation` stage's
-harness, model and effort included, under the same instance-wide permission
-mode as pipeline sessions.
+re-enters its own. Interactive init is not a stage and selects its harness,
+model, and effort directly from command-line flags; only the instance-wide
+permission mode comes from config.
 
 Each implementation declares the effort values its CLI accepts in a table beside
 the flag mapping it feeds; `EFFORT_LEVELS_BY_HARNESS` gathers them for

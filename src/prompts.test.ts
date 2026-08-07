@@ -21,14 +21,13 @@ describe("renderPrompt", () => {
 });
 
 describe("ensurePrompts / loadPrompt", () => {
-  it("seeds all ten prompt files", async () => {
+  it("seeds all nine prompt files", async () => {
     await ensurePrompts(dir);
     const files = await fs.readdir(path.join(dir, "prompts"));
     expect(files.sort()).toEqual([
       "code-review-continue.md",
       "code-review.md",
       "commit-message.md",
-      "convo.md",
       "implementation-continue.md",
       "implementation.md",
       "init.md",
@@ -53,6 +52,17 @@ describe("ensurePrompts / loadPrompt", () => {
     const guidelinesIndex = prompt.indexOf("{{CODING_GUIDELINES}}");
     expect(operationsIndex).toBeGreaterThan(-1);
     expect(guidelinesIndex).toBeGreaterThan(operationsIndex);
+  });
+
+  it("makes init conversational and forbids writes before plan approval", async () => {
+    const prompt = await loadPrompt(dir, "init");
+    expect(prompt).toContain("Survey without writing");
+    expect(prompt).toContain("Interview one question at a time");
+    expect(prompt).toContain("anything else they want to cover");
+    expect(prompt).toContain("Get explicit approval");
+    expect(prompt).toContain("write anything until they do");
+    expect(prompt).toContain("project's AGENTS.md");
+    expect(prompt).toContain(".jfdi/scripts/");
   });
 
   it("seeds the default on load when the file is absent, and the file is authoritative", async () => {

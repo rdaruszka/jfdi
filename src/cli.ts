@@ -1,3 +1,5 @@
+import type { InitOptions } from "./commands/init.js";
+
 const USAGE = `jfdi — Just F'ing Do It
 
 Usage:
@@ -8,9 +10,55 @@ Usage:
   jfdi status [--json]  Snapshot of coordinator state
   jfdi logs <ticket>    Dump a ticket's raw session logs
   jfdi merge <ticket>   Approve a Ready-to-Merge ticket (on-approval mode)
-  jfdi convo            Interactive session scoped to the JFDI layer itself
-  jfdi init             Scaffold .jfdi/ and set up the mechanical gate
+  jfdi init [options]   Scaffold .jfdi/ and conversationally tune the setup
+
+Init options:
+  --bare                Scaffold only; do not launch an interactive session
+  --harness <provider>  claude or codex (default: claude)
+  --model <model>       Provider model (default: claude-fable-5)
+  --effort <level>      Provider effort (default: provider default)
 `;
+
+function initOptionValue(args: string[], index: number): string {
+  const option = args[index];
+  const value = args[index + 1];
+  if (value === undefined || value.startsWith("--")) {
+    throw new Error(`${option} requires a value`);
+  }
+  return value;
+}
+
+export function parseInitOptions(args: string[]): InitOptions {
+  const options: InitOptions = {};
+  for (let index = 0; index < args.length; index += 1) {
+    const option = args[index];
+    switch (option) {
+      case "--bare":
+        options.isBare = true;
+        break;
+      case "--harness": {
+        const harness = initOptionValue(args, index);
+        if (harness !== "claude" && harness !== "codex") {
+          throw new Error(`--harness must be "claude" or "codex", got "${harness}"`);
+        }
+        options.harness = harness;
+        index += 1;
+        break;
+      }
+      case "--model":
+        options.model = initOptionValue(args, index);
+        index += 1;
+        break;
+      case "--effort":
+        options.effort = initOptionValue(args, index);
+        index += 1;
+        break;
+      default:
+        throw new Error(`unknown init option "${option}"`);
+    }
+  }
+  return options;
+}
 
 export async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
@@ -46,13 +94,9 @@ export async function main(argv: string[]): Promise<number> {
         const { mergeCommand } = await import("./commands/merge.js");
         return await mergeCommand(id);
       }
-      case "convo": {
-        const { convoCommand } = await import("./commands/convo.js");
-        return await convoCommand();
-      }
       case "init": {
         const { initCommand } = await import("./commands/init.js");
-        return await initCommand({ isBare: rest.includes("--bare") });
+        return await initCommand(parseInitOptions(rest));
       }
       case undefined:
       case "help":

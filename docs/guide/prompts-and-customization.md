@@ -8,7 +8,9 @@ preference:
 2. **The sandbox contract** — teach QA how to exercise *your* product.
 3. **The prompts** — edit the stage prompt templates themselves.
 
-`jfdi convo` exists to evolve all three interactively.
+Rerun `jfdi init` to evolve all three interactively. It surveys the current
+setup first, so the same conversation works for a fresh scaffold and a mature
+project.
 
 ## Stage prompts
 
@@ -18,7 +20,7 @@ compiles in defaults, but if a file exists it is used verbatim, and a missing
 file is written out before use — what ran is always on disk, never a silent
 in-code fallback. Edit freely; delete a file to get the current default back.
 
-Ten files:
+Nine files:
 
 | File | Used by |
 |---|---|
@@ -30,8 +32,7 @@ Ten files:
 | `qa-continue.md` | Continuing QA in a later round |
 | `integration.md` | The conflict-resolution session during integration |
 | `commit-message.md` | The [scribe](pipeline.md#commits-and-the-scribe) — every commit message the pipeline writes |
-| `convo.md` | The `jfdi convo` scoping prompt |
-| `init.md` | The `jfdi init` agent-assisted setup prompt |
+| `init.md` | The conversational `jfdi init` setup prompt |
 
 ### Template variables
 
@@ -60,8 +61,7 @@ Stage-specific additions:
 | `qa-continue` | `LAST_SEEN_COMMIT`, `HEAD_COMMIT`, `PROVENANCE`, `NEW_COMMITS`, `TOUCHED_FILES` |
 | `integration` | (common set only) |
 | `commit-message` | `TICKET_ID`, `SPEC`, `STAGE`, `ROUND`, `MAX_ROUNDS`, `STAGE_SUMMARY` (what the session reported it did), `STAGED_DIFF` (what is about to be committed), `RECENT_LOG` (the house style), `STATUS_LINE` (the line the pipeline appends) — and no `VERDICT_PATH`: the scribe answers with the message itself |
-| `init` | `CODING_GUIDELINES` (the generic guidelines JFDI ships, compiled from [docs/coding-guidelines.md](../coding-guidelines.md)) |
-| `convo` | (none) |
+| `init` | `JFDI_OPERATIONS` (the operational brief compiled from [docs/jfdi-operations.md](../jfdi-operations.md)), `CODING_GUIDELINES` (the generic guidelines compiled from [docs/coding-guidelines.md](../coding-guidelines.md)) |
 
 If you edit a prompt, keep two blocks intact unless you know what you're doing:
 the **verdict instructions** (the pipeline reads outcomes only from the verdict
@@ -120,12 +120,19 @@ This is a provider-specific acceleration: Codex has no hook system, so its
 sessions simply run without it — degraded, not broken. The settings file applies
 only to JFDI-spawned sessions, never to your own `.claude/` setup.
 
-## `jfdi convo`
+## Conversational init
 
-`jfdi convo` launches an interactive harness session whose system prompt scopes
-it to the JFDI layer itself: the gate config, the sandbox contract, board
-config, and the stage prompts — explicitly *not* your product code. Use it to
-have the conversation "QA keeps missing X" or "reviews keep nitpicking Y" and
-land the fix in the right file. Its first instinct, by design, is a lint rule,
-not a prompt tweak: when a standard can be encoded into tooling, review tokens
-stop being spent on it forever.
+`jfdi init` launches the provider's native interactive CLI with `init.md` as its
+first user message. The prompt requires a survey before questions, one question
+at a time, a complete setup plan, and explicit approval before any write. Use it
+both for first setup and later conversations such as "QA keeps missing X" or
+"reviews keep nitpicking Y." Its first instinct is a mechanical rule rather
+than more prompt prose: when tooling can enforce a standard, review tokens stop
+being spent on it forever.
+
+The scaffold always runs first and never overwrites existing files. A prompt,
+sandbox contract, or config still at its recognizable seed is available to
+fill; human-tuned content is proposed for change and remains untouched until
+the plan is approved. The on-disk prompt remains authoritative, so projects
+scaffolded by an older JFDI keep their existing `init.md` until they replace or
+edit it.

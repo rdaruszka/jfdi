@@ -11,8 +11,13 @@ Usage:
   jfdi status [--json]  Snapshot of coordinator state
   jfdi logs <ticket>    Dump a ticket's raw session logs
   jfdi merge <ticket>   Approve a Ready-to-Merge ticket (on-approval mode)
-  jfdi convo            Interactive session scoped to the JFDI layer itself
-  jfdi init [--bare]    Scaffold .jfdi/ and set up the mechanical gate
+  jfdi init [options]   Scaffold .jfdi/ and conversationally tune the setup
+
+Init options:
+  --bare                Scaffold only; do not launch an interactive session
+  --harness <provider>  claude or codex (default: claude)
+  --model <model>       Provider model (default: claude-fable-5)
+  --effort <level>      Provider effort (default: provider default)
 ```
 
 Run every command from inside the project's git repository (any subdirectory
@@ -115,28 +120,29 @@ and close the card itself.
 | 1 | No such branch |
 | 2 | Integration blocked — reason in the ticket note; worktree kept |
 
-## `jfdi convo`
+## `jfdi init [options]`
 
-Launches an interactive harness session scoped to the JFDI layer itself — gate
-config, sandbox contract, board config, stage prompts — not your product code.
-See [Prompts & Customization](prompts-and-customization.md#jfdi-convo).
-
-## `jfdi init [--bare]`
-
-Bootstraps JFDI in the current repo, in two parts:
+Sets up or revisits JFDI in the current repo, in three parts:
 
 1. **Scaffold** (idempotent — existing files are never overwritten):
    `.jfdi/config.json` with defaults, the board with all six columns, the
    tickets directory, the nine prompt files, a sandbox contract skeleton, the
    Claude settings + format-hook pair, and `.jfdi/.gitignore`.
-2. **Agent-assisted setup**: an interactive session inspects the repo, fills the
-   gate with real build/test/lint commands that exit zero *right now* (tightening
-   or installing tooling as needed), instantiates the shipped coding guidelines
-   into the repo's `CLAUDE.md`, writes a real sandbox contract, and wires the
-   format hook.
+2. **Conversational setup**: an interactive session surveys the repo and current
+   `.jfdi/` state, infers what it can, then interviews you one question at a time.
+   It presents a complete setup plan and writes nothing until you explicitly
+   approve it. The approved setup gives the gate real build/test/lint commands,
+   instantiates the coding guidelines in `AGENTS.md`, fills the sandbox contract,
+   and tunes prompts and tooling. Rerun the same command to revisit an existing
+   setup; human-tuned files are proposed changes, never silently replaced.
+3. **Gate epilogue**: after the interactive CLI exits, JFDI reloads the config,
+   runs the gate itself, and prints either `gate verified` or the failing step
+   with a suggestion to rerun init.
 
-`--bare` skips the agent step and leaves you to fill in the gate and sandbox by
-hand — useful in scripts and sandboxes.
+`--bare` stops after the idempotent scaffold. The interactive session defaults
+to Claude with `claude-fable-5`; `--harness`, `--model`, and `--effort` select it
+directly and do not borrow a pipeline stage's selection. The provider's native
+interactive CLI is the frontend, so exit with its usual `/exit` or Ctrl-C.
 
 ## Exit code conventions
 

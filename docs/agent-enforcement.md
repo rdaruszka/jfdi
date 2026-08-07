@@ -16,7 +16,7 @@ With agents as primary maintainers, every session starts amnesiac. Nothing holds
 
 **Tier 3 — Prompt-time.** The implementing agent gets the guidelines before writing a line. Prevention, not detection: a rule that only exists at review time costs a full feedback round every time it fires; the same rule applied at write time is free.
 
-One artifact can serve tiers 2 and 3 simultaneously: put the guidelines in the always-loaded project context (CLAUDE.md), and every stage — implementer and reviewer alike — has them. But see "Background context gets skimmed," below.
+One artifact can serve tiers 2 and 3 simultaneously: put the guidelines in the always-loaded project context (AGENTS.md), and every stage — implementer and reviewer alike — has them. But see "Background context gets skimmed," below.
 
 ## Tier 1 mechanics
 
@@ -46,7 +46,7 @@ This has exactly the right incentive shape for agents: the cheap path (silently 
 
 ## Tier 2 mechanics
 
-**Background context gets skimmed.** Guidelines sitting in CLAUDE.md are ambient prose to a reviewer. The review stage prompt must contain an *active instruction*: "check the diff against the code guidelines; for each judgment rule, answer its check question." Content lives in one place; the prompt points at it and activates it as a task.
+**Background context gets skimmed.** Guidelines sitting in AGENTS.md are ambient prose to a reviewer. The review stage prompt must contain an *active instruction*: "check the diff against the code guidelines; for each judgment rule, answer its check question." Content lives in one place; the prompt points at it and activates it as a task.
 
 **Check questions, not vibes.** Every judgment rule must be phrased as a question with an answer, checkable against a diff:
 
@@ -111,7 +111,7 @@ The merger judges the *integration*, never the *code*. Every refusal is a stated
 
 Docs are the institutional memory of an amnesiac workforce, and they fail two different ways:
 
-- **Always-loaded docs** (CLAUDE.md, glossary) scale against *attention* — every token loads into every session, and past a size they get skimmed. Give them a budget; growth forces demotion to reference docs.
+- **Always-loaded docs** (AGENTS.md, glossary) scale against *attention* — every token loads into every session, and past a size they get skimmed. Give them a budget; growth forces demotion to reference docs.
 - **Reference docs** (spec, guides) scale against *staleness*. The rot rate is proportional to how much the doc restates the code: a file map changes every time anything moves (and agents grep fast enough that it's now negative-value); a glossary changes only when *concepts* change. Hence: docs record what the code cannot say — intent, decisions, vocabulary, invariants.
 
 Staleness is fixed by binding updates to diffs, not to a separate task: if a change falsifies a doc, updating the doc is part of that change (implementer duty, reviewer check). Deferred doc maintenance is doc rot with extra steps. Residual drift gets a periodic curation ticket — consolidate, prune, demote — which in a self-hosted system is just a card on the board.
