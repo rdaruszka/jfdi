@@ -16,10 +16,10 @@ flowchart TD
     START([merge_start]) --> FETCH{fetch_before and<br/>a remote exists?}
     FETCH -->|yes| RF[Fetch target branch]
     RF -->|failure after retries| BLOCKED
-    RF --> SYNC{Local target behind<br/>fetched ref?}
-    SYNC -->|yes| FF[Fast-forward local target]
-    SYNC -->|equal| AM
-    SYNC -->|local-only commits| BLOCKED
+    RF --> SYNC{Local target vs<br/>fetched ref?}
+    SYNC -->|behind| FF[Fast-forward local target]
+    SYNC -->|equal or ahead| AM
+    SYNC -->|diverged| BLOCKED
     FF --> AM
     FETCH -->|no| AM{Branch already<br/>contained in target?}
     AM -->|yes| DIRTY{Worktree dirty?}
@@ -56,8 +56,11 @@ In detail:
 1. **Optional remote fetch.** Before inspecting or merging the ticket branch,
    Integration fetches only the target branch when `fetch_before` is enabled.
    A local target strictly behind its fetched remote-tracking ref is
-   fast-forwarded. If the local target has commits the fetched ref lacks, JFDI
-   blocks and names both refs; it never resolves or overwrites divergent history.
+   fast-forwarded; one strictly ahead (the fetched ref is an ancestor of the
+   local target) needs no sync and proceeds untouched — `push_after`, when
+   enabled, advances the remote after landing. Only if the two have truly
+   diverged — each holds commits the other lacks — does JFDI block, naming
+   both refs; it never resolves or overwrites divergent history.
 2. **Already-merged short-circuit.** If the branch is already contained in the
    target (you merged it by hand) and its worktree is clean, the card is closed
    without another merge. If the worktree is dirty, Integration checkpoints the

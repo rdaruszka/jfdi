@@ -203,7 +203,12 @@ async function runRemoteOperation(
   throw new Error(`remote ${operation} retry loop exhausted without returning an outcome`);
 }
 
-/** Fetch and, only when strictly behind, fast-forward the local target. */
+/**
+ * Fetch and, only when strictly behind, fast-forward the local target. A
+ * target strictly ahead of the fetched ref needs no sync — push_after, when
+ * enabled, advances the remote. Only true divergence (each ref holds commits
+ * the other lacks) blocks.
+ */
 async function fetchTarget(
   context: PipelineContext,
   remote: IntegrationRemote,
@@ -218,6 +223,7 @@ async function fetchTarget(
   const localCommit = await revParse(context.repoRoot, target);
   const remoteCommit = await revParse(context.repoRoot, remote.trackingRef);
   if (localCommit === remoteCommit) return null;
+  if (await isAncestor(context.repoRoot, remote.trackingRef, target)) return null;
   if (!(await isAncestor(context.repoRoot, target, remote.trackingRef))) {
     const reason = `local target ref ${target} (${localCommit}) has diverged from fetched ref ${remote.trackingRef} (${remoteCommit}); JFDI will not resolve or overwrite either ref`;
     narration.record({
