@@ -29,7 +29,12 @@ afterEach(async () => {
   );
 });
 
-async function runInitAndCapturePrompt(staleInitPrompt?: string): Promise<string> {
+interface InitRun {
+  prompt: string;
+  project: string;
+}
+
+async function runInitAndCapturePrompt(staleInitPrompt?: string): Promise<InitRun> {
   const createdSandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-init-operations-"));
   sandboxRoots.push(createdSandboxRoot);
   const sandboxRoot = await fs.realpath(createdSandboxRoot);
@@ -74,12 +79,12 @@ fs.writeFileSync(process.env.TRACE_PATH, JSON.stringify({ args: process.argv.sli
   const trace = JSON.parse(await fs.readFile(tracePath, "utf8")) as { args: string[] };
   const renderedPrompt = trace.args.at(-1);
   if (renderedPrompt === undefined) throw new Error("init launched no agent prompt");
-  return renderedPrompt;
+  return { prompt: renderedPrompt, project };
 }
 
 describe("jfdi init compiles the operations brief into the init prompt", () => {
   it("injects the full operations brief, substituted, ahead of the coding guidelines", async () => {
-    const prompt = await runInitAndCapturePrompt();
+    const { prompt } = await runInitAndCapturePrompt();
 
     // The {{JFDI_OPERATIONS}} placeholder is fully substituted — not dropped,
     // not left literal.
@@ -99,10 +104,34 @@ describe("jfdi init compiles the operations brief into the init prompt", () => {
 
   it("ignores a stale on-disk init prompt", async () => {
     const staleInitPrompt = "You are bootstrapping a JFDI skeleton";
-    const prompt = await runInitAndCapturePrompt(staleInitPrompt);
+    const { prompt } = await runInitAndCapturePrompt(staleInitPrompt);
 
     expect(prompt).toContain("configuring **JFDI**");
     expect(prompt).toContain("through a conversation with the human");
     expect(prompt).not.toContain(staleInitPrompt);
+  });
+
+  // The bug this ticket fixes: a project's own .jfdi/prompts/init.md, seeded by an
+  // older JFDI with the pre-conversational bootstrap text, shadowed the new default.
+  // Verify the real legacy phrasing is fully ignored — the internal template wins.
+  it("renders the internal template over the real legacy bootstrap prompt text", async () => {
+    const legacyBootstrapPrompt =
+      "You are bootstrapping **JFDI** (an automated implement → review → QA → merge\n" +
+      "pipeline) for this repository. A skeleton .jfdi/ directory has just been scaffolded.";
+    const { prompt } = await runInitAndCapturePrompt(legacyBootstrapPrompt);
+
+    expect(prompt).toContain("configuring **JFDI**");
+    expect(prompt).not.toContain("bootstrapping **JFDI**");
+    expect(prompt).not.toContain("A skeleton .jfdi/ directory");
+  });
+
+  // Point 3 of the ticket: the stale file is ignored, NOT deleted or refreshed.
+  // A human keeps ownership of the inert file; init must leave it byte-for-byte.
+  it("leaves a stale on-disk init.md untouched after init runs", async () => {
+    const staleInitPrompt = "legacy bootstrap text — SENTINEL-DO-NOT-TOUCH\n";
+    const { project } = await runInitAndCapturePrompt(staleInitPrompt);
+
+    const onDisk = await fs.readFile(path.join(project, ".jfdi/prompts/init.md"), "utf8");
+    expect(onDisk).toBe(staleInitPrompt);
   });
 });
