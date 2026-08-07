@@ -974,7 +974,28 @@ describe("integrateTicket", () => {
     expect(note).toContain("Fast-forwarded local target `main`");
   });
 
-  it("blocks before merging when the local target holds commits the fetched ref lacks", async () => {
+  it("proceeds without syncing when the local target is strictly ahead of the fetched ref", async () => {
+    const remote = await addOrigin();
+    const context = fixture.context(passingHandler("ahead-ticket.txt"));
+    context.config.integration.remote.fetch_before = true;
+    const ticket = await resolveTicket("Ahead local target", fixture.ticketsDir);
+    const outcome = await runPipeline(context, ticket);
+    if (outcome.status !== "passed") throw new Error("pipeline should pass");
+
+    // Local main advances past the remote with no diverging remote commit:
+    // the fetched ref is an ancestor of the local target, not a divergence.
+    await commitFile(fixture.repo, "unpushed-landing.txt", "local\n", "unpushed local work");
+    const remoteHead = await revParse(remote, "refs/heads/main");
+    expect(await isAncestor(fixture.repo, remoteHead, "main")).toBe(true);
+
+    expect(await integrateTicket(context, ticket, outcome.worktree)).toEqual({ status: "merged" });
+    // The landing built on the ahead local history; without push_after the
+    // remote is left untouched.
+    expect(await isAncestor(fixture.repo, remoteHead, "main")).toBe(true);
+    expect(await revParse(remote, "refs/heads/main")).toBe(remoteHead);
+  });
+
+  it("blocks before merging when the local target and the fetched ref have truly diverged", async () => {
     const remote = await addOrigin();
     const context = fixture.context(passingHandler("unmerged-ticket.txt"));
     context.config.integration.remote.fetch_before = true;

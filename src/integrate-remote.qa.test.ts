@@ -5,7 +5,7 @@
  * product runs in. These sit alongside the implementation's own tests in
  * integrate.test.ts and target gaps in that suite plus the ticket's boundaries:
  * push via a non-origin upstream, the fetch-scope guarantee (only the target
- * branch), the "local-only commits block" edge, and the recovery affordances a
+ * branch), the strictly-ahead-target edge, and the recovery affordances a
  * rejected push must leave behind.
  */
 import * as fs from "node:fs/promises";
@@ -167,19 +167,18 @@ describe("remote integration — QA regression", () => {
   });
 
   /**
-   * Ticket point 3: after a landing that is not pushed, "the next integration's
-   * fetch surfaces any resulting divergence." A local target that merely holds
-   * commits the fetched ref lacks (ahead, not diverged in the strict sense) is
-   * therefore blocked, not silently merged over — the docs call this the
-   * "local-only commits" block. This pins that intended behavior and its
-   * consequence: fetch_before without push_after blocks after the first ticket.
+   * A local target strictly ahead of the fetched ref — the fetched ref is an
+   * ancestor of local, no remote-only commits — is not a divergence: there is
+   * nothing to sync, and a plain push would fast-forward the remote. The
+   * original implementation blocked here and called the target "diverged",
+   * which froze self-hosted integration the first time a landing went unpushed
+   * ([[ahead-is-not-divergence]]). Only true divergence may block.
    */
-  it("blocks when the local target holds commits the fetched ref lacks, though only ahead", async () => {
+  it("proceeds when the local target is strictly ahead of the fetched ref", async () => {
     const remote = await addOrigin();
     // Local main advances past the remote without any diverging remote commit.
     await commitFile(fixture.repo, "unpushed-landing.txt", "local\n", "unpushed local work");
     const remoteHead = await revParse(remote, "refs/heads/main");
-    const localHead = await revParse(fixture.repo, "main");
     // This is the ahead case, not a true divergence: remote is an ancestor of local.
     expect(await isAncestor(fixture.repo, remoteHead, "main")).toBe(true);
 
@@ -189,21 +188,17 @@ describe("remote integration — QA regression", () => {
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
-    const result = await integrateTicket(context, ticket, outcome.worktree);
-    expect(result.status).toBe("blocked");
-    if (result.status !== "blocked") return;
-    expect(result.reason).toContain("local target ref main");
-    expect(result.reason).toContain("refs/remotes/origin/main");
-    // Nothing merged: local target and the ticket branch are untouched.
-    expect(await revParse(fixture.repo, "main")).toBe(localHead);
-    expect(await isAncestor(fixture.repo, outcome.worktree.branch, "main")).toBe(false);
+    expect(await integrateTicket(context, ticket, outcome.worktree)).toEqual({ status: "merged" });
+    // The landing built on top of the ahead local history, and the fetch-only
+    // config never touched the remote.
+    expect(await isAncestor(fixture.repo, remoteHead, "main")).toBe(true);
+    expect(await revParse(remote, "refs/heads/main")).toBe(remoteHead);
   });
 
   /**
-   * The complement of the block above: with push_after ALSO on, each landing is
-   * pushed, so the local target never runs ahead of the remote and the intended
-   * both-flags config stays green across several tickets — the ahead-block does
-   * not bite the configuration the ticket's example shows.
+   * With push_after ALSO on, each landing is pushed, so remote and local stay
+   * in lockstep across several tickets — the both-flags config the ticket's
+   * example shows stays green with no drift in either direction.
    */
   it("keeps both flags green across multiple tickets, remote and local in lockstep", async () => {
     const remote = await addOrigin();
