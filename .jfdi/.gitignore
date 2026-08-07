@@ -7,3 +7,6 @@ state.json
 # Work tracking lives outside product history (often a symlink into a vault)
 board.md
 tickets
+
+# Prompt sets retired by a re-init — kept for the human, never loaded
+prompts.backup-*/

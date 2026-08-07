@@ -8,7 +8,7 @@ Every rule is tagged with its enforcement tier — a rule with no enforcement ro
 - **[R]** review — a check question the reviewing agent answers about the diff
 - **[P]** prompt-time — the implementing agent applies it while writing
 
-JFDI wires these tiers in for you: the gate is tier M, the Code Review stage prompt asks the tier-R check questions, and every stage loads the project's AGENTS.md for tier P. The design rationale behind the tiers lives with JFDI (docs/agent-enforcement.md).
+The workflow wires these tiers in for you: the gate is tier M, the Code Review stage prompt asks the tier-R check questions, and every stage loads the project's AGENTS.md for tier P.
 
 ## Structure and control flow
 

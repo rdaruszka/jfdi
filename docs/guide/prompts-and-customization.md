@@ -121,21 +121,35 @@ only to JFDI-spawned sessions, never to your own `.claude/` setup.
 
 ## Conversational init
 
-`jfdi init` launches the provider's native interactive CLI with JFDI's internal
-init prompt as its first user message. Unlike unattended stage prompts, the init
-prompt is not seeded on disk or user-tunable: the human watches this bootstrap
-session live, and its prompt must not depend on files the bootstrap creates. The
-internal prompt includes the current operational brief and generic coding
-guidelines, requires a survey before questions, asks one question at a time, and
-requires a complete setup plan with explicit approval before any write. Use init
-both for first setup and later conversations such as "QA keeps missing X" or
-"reviews keep nitpicking Y." Its first instinct is a mechanical rule rather than
-more prompt prose: when tooling can enforce a standard, review tokens stop being
-spent on it forever.
+`jfdi init` launches the provider's native interactive CLI as a **fresh-eyes
+session**, deliberately isolated from everything that could pre-frame it:
 
-The scaffold always runs first and never overwrites existing files. A stage
-prompt, sandbox contract, or config still at its recognizable seed is available
-to fill; human-tuned content is proposed for change and remains untouched until
-the plan is approved. Projects scaffolded by older versions may retain
-`.jfdi/prompts/init.md` or `.jfdi/prompts/convo.md`; both files are inert and
-`jfdi init` ignores them.
+- The session's worldview — the current operational brief and the generic
+  coding guidelines — is appended to the provider's system prompt
+  (`--append-system-prompt` on Claude; Codex, which has no system-prompt seam,
+  gets it as a preamble on the opening message). It is deliberately
+  brand-free: the agent configures "an agentic coding workflow," not a named
+  product.
+- The project's own agent instructions (AGENTS.md/CLAUDE.md) are **not**
+  ingested (`--bare` on Claude, `project_doc_max_bytes=0` on Codex). The
+  agent reads them during exploration as material to evaluate and rewrite,
+  never as instructions to itself.
+- The opening user message is the action sequence: explore the project's
+  *code* first — languages, what it builds into, how it runs, how it tests,
+  the conventions actually in use — then read the workflow configuration,
+  interview one question at a time, and write only after the human approves
+  the complete plan.
+
+Unlike unattended stage prompts, the init prompts are source-owned: never
+seeded on disk, never user-tunable, and never dependent on files the setup
+creates. Use init both for first setup and later full-setup revisits. Its
+first instinct is a mechanical rule rather than more prompt prose: when
+tooling can enforce a standard, review tokens stop being spent on it forever.
+
+The scaffold always runs first, never overwrites existing files, and **seeds
+no prompts** — the pipeline materializes stage prompt defaults on first use.
+If a `prompts/` directory already exists (a re-init, or a project scaffolded
+by an older version), the scaffold retires it wholesale to a timestamped
+`.jfdi/prompts.backup-*/` directory: preserved byte-for-byte for the human,
+gitignored, and explicitly off-limits to the setup agent, so no earlier
+prompt text can shadow or contaminate the fresh look.

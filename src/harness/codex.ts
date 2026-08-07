@@ -392,12 +392,21 @@ export class CodexHarness implements Harness {
 
   spawnInteractive(prompt: string, options: InteractiveSpawnOptions): Promise<number> {
     // `-m` and `-c` are top-level Codex options, so the interactive launch
-    // honors the selection supplied for conversational init.
-    const child = spawn(
-      this.executable,
-      [...codexPermissionArgs(this.permissionMode), ...codexSelectionArgs(this.selection), prompt],
-      { cwd: options.cwd, stdio: "inherit" },
-    );
+    // honors the selection supplied for conversational init. Project-context
+    // isolation maps to project_doc_max_bytes=0 (Codex reads no AGENTS.md).
+    // Codex has no append-system-prompt seam, so the caller's system framing
+    // degrades gracefully to a preamble on the opening user message.
+    const args = [
+      ...codexPermissionArgs(this.permissionMode),
+      ...codexSelectionArgs(this.selection),
+    ];
+    if (options.shouldIgnoreProjectContext) args.push("-c", "project_doc_max_bytes=0");
+    const openingMessage =
+      options.systemPrompt === undefined ? prompt : `${options.systemPrompt}\n\n---\n\n${prompt}`;
+    const child = spawn(this.executable, [...args, openingMessage], {
+      cwd: options.cwd,
+      stdio: "inherit",
+    });
     return interactiveResult(child, this.executable, this.selection);
   }
 }

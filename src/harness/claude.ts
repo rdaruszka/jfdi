@@ -372,11 +372,18 @@ export class ClaudeHarness implements Harness {
   }
 
   spawnInteractive(prompt: string, options: InteractiveSpawnOptions): Promise<number> {
-    // Both flags are session-scoped on the interactive CLI too, so it honors
-    // the selection supplied for conversational init.
+    // Selection and permission flags are session-scoped on the interactive
+    // CLI too. --bare keeps the project's own CLAUDE.md/AGENTS.md, hooks, and
+    // memory out of the session; --append-system-prompt layers the caller's
+    // framing on the stock system prompt rather than replacing it, so the
+    // CLI's own operating behavior stays intact.
     const args = [
       ...claudePermissionArgs(this.permissionMode, "interactive"),
       ...claudeSelectionArgs(this.selection),
+      ...(options.shouldIgnoreProjectContext ? ["--bare"] : []),
+      ...(options.systemPrompt === undefined
+        ? []
+        : ["--append-system-prompt", options.systemPrompt]),
       prompt,
     ];
     const child = spawn(this.executable, args, { cwd: options.cwd, stdio: "inherit" });

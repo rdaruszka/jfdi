@@ -2,7 +2,6 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { createBoardIfMissing } from "./board.js";
 import { defaultConfig, type JfdiConfig } from "./config.js";
-import { ensurePrompts } from "./prompts.js";
 import { atomicWrite, ensureDir, fileExists } from "./util/fsx.js";
 
 /**
@@ -20,6 +19,9 @@ worktrees/
 # Work tracking lives outside product history (often a symlink into a vault)
 board.md
 tickets
+
+# Prompt sets retired by a re-init — kept for the human, never loaded
+prompts.backup-*/
 `;
 
 export async function ensureJfdiGitignore(jfdiDir: string): Promise<void> {
@@ -95,15 +97,27 @@ exit 0
 `;
 
 /**
- * Full .jfdi/ scaffold for \`jfdi init\`: config, board, tickets dir, prompts,
- * sandbox contract. Idempotent — existing files are never overwritten.
+ * Full .jfdi/ scaffold for \`jfdi init\`: config, board, tickets dir, sandbox
+ * contract. Idempotent — existing files are never overwritten. Deliberately
+ * absent: stage prompts. The init agent must see the project with fresh eyes,
+ * so nothing pre-seeds \`prompts/\` (the pipeline materializes defaults on
+ * first use via loadPrompt), and an existing prompts directory is retired to
+ * a timestamped backup the agent is instructed never to read. Returns the
+ * backup's path when that happened, so the caller can tell the human.
  */
 export async function scaffoldJfdi(
   repoRoot: string,
   jfdiDir: string,
   config: JfdiConfig = defaultConfig(),
-): Promise<void> {
+): Promise<{ retiredPromptsPath: string | null }> {
   await ensureJfdiGitignore(jfdiDir);
+  const promptsPath = path.join(jfdiDir, "prompts");
+  let retiredPromptsPath: string | null = null;
+  if (await fileExists(promptsPath)) {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    retiredPromptsPath = path.join(jfdiDir, `prompts.backup-${timestamp}`);
+    await fs.rename(promptsPath, retiredPromptsPath);
+  }
   const configPath = path.join(jfdiDir, "config.json");
   if (!(await fileExists(configPath))) {
     await atomicWrite(configPath, `${JSON.stringify(config, null, 2)}\n`);
@@ -118,7 +132,6 @@ export async function scaffoldJfdi(
     columns.readyToMerge,
     columns.inbox,
   ]);
-  await ensurePrompts(jfdiDir);
   const sandboxPath = path.join(jfdiDir, "sandbox.md");
   if (!(await fileExists(sandboxPath))) await atomicWrite(sandboxPath, SANDBOX_TEMPLATE);
   const settingsPath = path.join(jfdiDir, "claude-settings.json");
@@ -128,4 +141,5 @@ export async function scaffoldJfdi(
     await atomicWrite(formatHookPath, FORMAT_HOOK_TEMPLATE);
     await fs.chmod(formatHookPath, EXECUTABLE_FILE_MODE);
   }
+  return { retiredPromptsPath };
 }

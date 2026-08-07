@@ -122,8 +122,14 @@ describe("interactive provider selection", () => {
       "gpt-5.6-sol",
       "-c",
       "model_reasoning_effort=low",
-      expect.stringContaining("You are configuring **JFDI**"),
+      // Fresh-eyes isolation: Codex must not ingest the project's AGENTS.md.
+      "-c",
+      "project_doc_max_bytes=0",
+      // No system-prompt seam on Codex: the system framing degrades to a
+      // preamble on the opening message, followed by the action sequence.
+      expect.stringContaining("You are configuring an agentic coding workflow"),
     ]);
+    expect(trace.args.at(-1)).toContain("Explore the project first");
     expect(trace.cwd).toBe(sandbox.project);
   });
 
@@ -140,7 +146,14 @@ describe("interactive provider selection", () => {
       "claude-fable-5",
     ]);
     expect(trace.args).not.toContain("--effort");
-    expect(trace.args.at(-1)).toContain("You are configuring **JFDI**");
+    // Fresh-eyes isolation plus the appended (never replaced) system prompt.
+    expect(trace.args).toContain("--bare");
+    const systemPromptFlagIndex = trace.args.indexOf("--append-system-prompt");
+    expect(systemPromptFlagIndex).toBeGreaterThan(-1);
+    expect(trace.args[systemPromptFlagIndex + 1]).toContain(
+      "You are configuring an agentic coding workflow",
+    );
+    expect(trace.args.at(-1)).toContain("Explore the project first");
     expect(trace.cwd).toBe(sandbox.project);
   });
 

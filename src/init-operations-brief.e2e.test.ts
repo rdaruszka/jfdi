@@ -9,11 +9,13 @@ import { CODING_GUIDELINES } from "./guidelines.js";
 import { JFDI_OPERATIONS } from "./jfdi-operations.js";
 
 /**
- * Behavioral proof that `jfdi init` compiles the operations brief into the init
- * prompt and injects it ahead of the coding guidelines. It drives the built CLI
- * end to end: real scaffold, internal init template rendering, real init.ts wiring.
- * A stub `claude` captures the fully rendered prompt — the last CLI argv element
- * on the interactive Claude launch (see harness/claude.ts spawnInteractive).
+ * Behavioral proof that `jfdi init` builds the setup session the fresh-eyes
+ * way: the operations brief and coding guidelines land in the appended system
+ * prompt (--append-system-prompt), the opening user message is the action
+ * sequence, the session is isolated from the project's own agent instructions
+ * (--bare), and a pre-existing prompts directory is retired to a backup the
+ * agent never reads. It drives the built CLI end to end with a stub `claude`
+ * that dumps its argv (see harness/claude.ts spawnInteractive).
  */
 const execFileAsync = promisify(execFile);
 const repoRoot = path.dirname(import.meta.dirname);
@@ -30,7 +32,9 @@ afterEach(async () => {
 });
 
 interface InitRun {
-  prompt: string;
+  systemPrompt: string;
+  userPrompt: string;
+  args: string[];
   project: string;
 }
 
@@ -77,61 +81,71 @@ fs.writeFileSync(process.env.TRACE_PATH, JSON.stringify({ args: process.argv.sli
   });
 
   const trace = JSON.parse(await fs.readFile(tracePath, "utf8")) as { args: string[] };
-  const renderedPrompt = trace.args.at(-1);
-  if (renderedPrompt === undefined) throw new Error("init launched no agent prompt");
-  return { prompt: renderedPrompt, project };
+  const systemPromptFlagIndex = trace.args.indexOf("--append-system-prompt");
+  const systemPrompt = systemPromptFlagIndex === -1 ? "" : trace.args[systemPromptFlagIndex + 1];
+  const userPrompt = trace.args.at(-1);
+  if (systemPrompt === undefined || systemPrompt === "" || userPrompt === undefined)
+    throw new Error("init launched no agent session with a system prompt and opening message");
+  return { systemPrompt, userPrompt, args: trace.args, project };
 }
 
-describe("jfdi init compiles the operations brief into the init prompt", () => {
-  it("injects the full operations brief, substituted, ahead of the coding guidelines", async () => {
-    const { prompt } = await runInitAndCapturePrompt();
+describe("jfdi init builds an isolated fresh-eyes setup session", () => {
+  it("injects the operations brief and guidelines into the system prompt, brief first", async () => {
+    const { systemPrompt, userPrompt } = await runInitAndCapturePrompt();
 
     // The {{JFDI_OPERATIONS}} placeholder is fully substituted — not dropped,
     // not left literal.
-    expect(prompt).not.toContain("{{JFDI_OPERATIONS}}");
+    expect(systemPrompt).not.toContain("{{JFDI_OPERATIONS}}");
 
-    // The verbatim compiled operations constant reaches the agent...
-    expect(prompt).toContain(JFDI_OPERATIONS);
-    // ...as does the coding guidelines constant it already carried.
-    expect(prompt).toContain(CODING_GUIDELINES);
+    // Both compiled constants reach the agent verbatim, in the system prompt.
+    expect(systemPrompt).toContain(JFDI_OPERATIONS);
+    expect(systemPrompt).toContain(CODING_GUIDELINES);
 
     // Placement: the machine before the rules it instantiates.
-    expect(prompt.indexOf(JFDI_OPERATIONS)).toBeLessThan(prompt.indexOf(CODING_GUIDELINES));
-    expect(prompt.indexOf("# How JFDI runs your project")).toBeLessThan(
-      prompt.indexOf("# Coding Guidelines"),
+    expect(systemPrompt.indexOf(JFDI_OPERATIONS)).toBeLessThan(
+      systemPrompt.indexOf(CODING_GUIDELINES),
     );
+    expect(systemPrompt.indexOf("# How the workflow runs your project")).toBeLessThan(
+      systemPrompt.indexOf("# Coding Guidelines"),
+    );
+
+    // The opening user message is the action sequence, exploration first.
+    expect(userPrompt).toContain("Explore the project first");
   });
 
-  it("ignores a stale on-disk init prompt", async () => {
-    const staleInitPrompt = "You are bootstrapping a JFDI skeleton";
-    const { prompt } = await runInitAndCapturePrompt(staleInitPrompt);
+  it("isolates the session from the project's own agent instructions", async () => {
+    const { args, systemPrompt } = await runInitAndCapturePrompt();
 
-    expect(prompt).toContain("configuring **JFDI**");
-    expect(prompt).toContain("through a conversation with the human");
-    expect(prompt).not.toContain(staleInitPrompt);
+    // --bare keeps CLAUDE.md/AGENTS.md auto-discovery, hooks, and memory out
+    // of the session; the appended system prompt is deliberately brand-free.
+    expect(args).toContain("--bare");
+    expect(systemPrompt).toContain("agentic coding workflow");
+    expect(systemPrompt).not.toContain("JFDI");
   });
 
-  // The bug this ticket fixes: a project's own .jfdi/prompts/init.md, seeded by an
-  // older JFDI with the pre-conversational bootstrap text, shadowed the new default.
-  // Verify the real legacy phrasing is fully ignored — the internal template wins.
-  it("renders the internal template over the real legacy bootstrap prompt text", async () => {
+  // A stale prompts directory (from any earlier era) is retired before the
+  // session, so no on-disk prompt can shadow or contaminate the setup agent.
+  it("retires a pre-existing prompts directory before the session", async () => {
     const legacyBootstrapPrompt =
       "You are bootstrapping **JFDI** (an automated implement → review → QA → merge\n" +
       "pipeline) for this repository. A skeleton .jfdi/ directory has just been scaffolded.";
-    const { prompt } = await runInitAndCapturePrompt(legacyBootstrapPrompt);
+    const { systemPrompt, userPrompt, project } =
+      await runInitAndCapturePrompt(legacyBootstrapPrompt);
 
-    expect(prompt).toContain("configuring **JFDI**");
-    expect(prompt).not.toContain("bootstrapping **JFDI**");
-    expect(prompt).not.toContain("A skeleton .jfdi/ directory");
+    expect(systemPrompt).not.toContain("bootstrapping **JFDI**");
+    expect(userPrompt).not.toContain("bootstrapping **JFDI**");
+    await expect(fs.access(path.join(project, ".jfdi/prompts"))).rejects.toThrow();
   });
 
-  // Point 3 of the ticket: the stale file is ignored, NOT deleted or refreshed.
-  // A human keeps ownership of the inert file; init must leave it byte-for-byte.
-  it("leaves a stale on-disk init.md untouched after init runs", async () => {
+  // Retired means preserved for the human, byte-for-byte — never deleted.
+  it("preserves a retired prompt file in the backup directory unchanged", async () => {
     const staleInitPrompt = "legacy bootstrap text — SENTINEL-DO-NOT-TOUCH\n";
     const { project } = await runInitAndCapturePrompt(staleInitPrompt);
 
-    const onDisk = await fs.readFile(path.join(project, ".jfdi/prompts/init.md"), "utf8");
+    const jfdiEntries = await fs.readdir(path.join(project, ".jfdi"));
+    const backupName = jfdiEntries.find((entry) => entry.startsWith("prompts.backup-"));
+    if (backupName === undefined) throw new Error("no prompts backup directory was created");
+    const onDisk = await fs.readFile(path.join(project, ".jfdi", backupName, "init.md"), "utf8");
     expect(onDisk).toBe(staleInitPrompt);
   });
 });

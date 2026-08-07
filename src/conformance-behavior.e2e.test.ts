@@ -301,25 +301,16 @@ describe("CLI surface", () => {
 
       const jfdiDir = path.join(sandbox.project, ".jfdi");
       const entries = await fs.readdir(jfdiDir);
+      // No prompts/ — init seeds none; the pipeline materializes stage
+      // prompt defaults on first use so the setup agent starts fresh.
       expect(entries.sort()).toEqual([
         ".gitignore",
         "board.md",
         "claude-settings.json",
         "config.json",
         "hooks",
-        "prompts",
         "sandbox.md",
         "tickets",
-      ]);
-      expect((await fs.readdir(path.join(jfdiDir, "prompts"))).sort()).toEqual([
-        "code-review-continue.md",
-        "code-review.md",
-        "commit-message.md",
-        "implementation-continue.md",
-        "implementation.md",
-        "integration.md",
-        "qa-continue.md",
-        "qa.md",
       ]);
 
       // The board skeleton is the Obsidian-Kanban format the coordinator parses.

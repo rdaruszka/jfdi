@@ -32,10 +32,12 @@ From your project's repo root:
 jfdi init
 ```
 
-This scaffolds `.jfdi/` — config, board, tickets directory, prompt templates,
-sandbox contract — and then launches a conversational agent session. It surveys
-the repo first, interviews you one question at a time, presents a complete plan,
-and writes only after you approve it:
+This scaffolds `.jfdi/` — config, board, tickets directory, sandbox contract
+(stage prompts materialize later, on the pipeline's first use) — and then
+launches a conversational agent session with fresh eyes: isolated from your
+repo's existing agent instructions, so it evaluates them instead of obeying
+them. It explores your project's code first, interviews you one question at a
+time, presents a complete plan, and writes only after you approve it:
 
 - fills `.jfdi/config.json`'s **gate** with real build/test/lint commands that
   all exit zero *right now*, setting up or tightening tooling as needed;
@@ -46,8 +48,9 @@ and writes only after you approve it:
 
 After you exit the provider's interactive CLI, init reloads the config and runs
 the gate itself, reporting the first failing step or `gate verified`. Rerun init
-at any time to tune an existing setup; it preserves human-tuned files unless you
-approve the proposed changes.
+at any time for a fresh full-setup pass; an existing `prompts/` directory is
+retired to a timestamped `.jfdi/prompts.backup-*/` (preserved for you, never
+read by the agent), and everything else is proposed before it is changed.
 
 The gate matters more than anything else in the setup: it is the cheapest
 reviewer, it runs before every review round, and "done" isn't done until it

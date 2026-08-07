@@ -19,7 +19,7 @@ afterEach(async () => {
 });
 
 describe("scaffoldJfdi", () => {
-  it("creates config, board, tickets dir, prompts, sandbox, and state gitignore", async () => {
+  it("creates config, board, tickets dir, sandbox, and state gitignore — no prompts", async () => {
     await scaffoldJfdi(root, jfdiDir);
     const scaffoldedConfig = JSON.parse(
       await fs.readFile(path.join(jfdiDir, "config.json"), "utf8"),
@@ -37,7 +37,9 @@ describe("scaffoldJfdi", () => {
     ]);
     const stats = await fs.stat(path.join(jfdiDir, "tickets"));
     expect(stats.isDirectory()).toBe(true);
-    expect(await fs.readdir(path.join(jfdiDir, "prompts"))).toHaveLength(8);
+    // No prompts are seeded: the setup agent starts fresh, and the pipeline
+    // materializes stage prompt defaults on first use (loadPrompt).
+    await expect(fs.access(path.join(jfdiDir, "prompts"))).rejects.toThrow();
     expect(await fs.readFile(path.join(jfdiDir, "sandbox.md"), "utf8")).toContain(
       "Sandbox Contract",
     );
@@ -50,9 +52,31 @@ describe("scaffoldJfdi", () => {
     // Worktrees plus the board and tickets — work tracking stays out of
     // product history (work tracking is external to the product). "tickets" has no trailing slash so the
     // pattern also matches a symlink into a vault.
-    for (const entry of ["worktrees/", "board.md", "tickets"]) expect(ignore).toContain(entry);
+    for (const entry of ["worktrees/", "board.md", "tickets", "prompts.backup-*/"])
+      expect(ignore).toContain(entry);
     // Run state lives under ~/.jfdi/projects/<key>/, so it needs no entry here.
     for (const gone of ["runs/", "events.jsonl", "state.json"]) expect(ignore).not.toContain(gone);
+  });
+
+  it("retires an existing prompts directory to a backup and reports it", async () => {
+    const promptsDir = path.join(jfdiDir, "prompts");
+    await fs.mkdir(promptsDir, { recursive: true });
+    await fs.writeFile(path.join(promptsDir, "implementation.md"), "tuned prompt — keep me");
+
+    const { retiredPromptsPath } = await scaffoldJfdi(root, jfdiDir);
+
+    expect(retiredPromptsPath).not.toBeNull();
+    expect(path.basename(retiredPromptsPath ?? "")).toMatch(/^prompts\.backup-/);
+    // The prompts directory is gone; the tuned file survives in the backup.
+    await expect(fs.access(promptsDir)).rejects.toThrow();
+    const preserved = await fs.readFile(
+      path.join(retiredPromptsPath ?? "", "implementation.md"),
+      "utf8",
+    );
+    expect(preserved).toBe("tuned prompt — keep me");
+    // With nothing left to retire, a rerun reports no backup.
+    const rerun = await scaffoldJfdi(root, jfdiDir);
+    expect(rerun.retiredPromptsPath).toBeNull();
   });
 
   it("is idempotent and never overwrites user files", async () => {

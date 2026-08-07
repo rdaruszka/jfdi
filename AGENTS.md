@@ -55,7 +55,8 @@ scripts/playground.mjs     — `pnpm playground`: mint a disposable half-app cop
   board.md             Kanban board (Obsidian Kanban plugin format)
   tickets/             one markdown note per non-trivial ticket
   sandbox.md           QA sandbox contract
-  prompts/             stage prompt templates (plus the scribe's commit-message.md)
+  prompts/             stage prompt templates (plus the scribe's commit-message.md);
+                       materialized on the pipeline's first use, never by init
   worktrees/<ticket-id>/ — per-run isolated checkout (gitignored)
 
 ~/.jfdi/projects/<project-key>/  — run state, outside the project:

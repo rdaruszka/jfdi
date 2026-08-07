@@ -9,7 +9,7 @@ import { CODING_GUIDELINES } from "../guidelines.js";
 import { createHarness, EFFORT_LEVELS_BY_HARNESS } from "../harness/index.js";
 import type { HarnessName } from "../harness/types.js";
 import { JFDI_OPERATIONS } from "../jfdi-operations.js";
-import { INIT_PROMPT, renderPrompt } from "../prompts.js";
+import { INIT_SYSTEM_PROMPT, INIT_USER_PROMPT, renderPrompt } from "../prompts.js";
 import { scaffoldJfdi } from "../scaffold.js";
 
 const DEFAULT_INIT_HARNESS: HarnessName = "claude";
@@ -56,15 +56,24 @@ async function verifyGate(root: string): Promise<boolean> {
 }
 
 /**
- * `jfdi init` — scaffold .jfdi/ (config, board, tickets dir, prompts, sandbox
- * contract), then hand off to a conversational agent session that surveys and
- * tunes the setup with the human. `--bare` skips the agent step.
+ * `jfdi init` — scaffold .jfdi/ (config, board, tickets dir, sandbox
+ * contract; never prompts — see scaffoldJfdi), then hand off to a
+ * conversational agent session that explores the project and builds the
+ * setup with the human. The session runs isolated from the project's own
+ * agent instructions and carries its worldview as an appended system prompt,
+ * so it looks at the repo with fresh eyes. `--bare` skips the agent step.
  */
 export async function initCommand(options: InitOptions = {}): Promise<number> {
   const root = await repoRoot(process.cwd());
   const jfdiDir = path.join(root, JFDI_DIR);
-  await scaffoldJfdi(root, jfdiDir);
-  console.log(`scaffolded ${JFDI_DIR}/ (config, board, tickets, prompts, sandbox contract)`);
+  const { retiredPromptsPath } = await scaffoldJfdi(root, jfdiDir);
+  console.log(`scaffolded ${JFDI_DIR}/ (config, board, tickets, sandbox contract)`);
+  if (retiredPromptsPath !== null) {
+    console.log(
+      `retired existing prompts to ${path.relative(root, retiredPromptsPath)} — ` +
+        "the setup agent never reads them; the pipeline reseeds defaults on first use",
+    );
+  }
 
   const config = await loadConfig(root);
   if (options.isBare) {
@@ -73,12 +82,16 @@ export async function initCommand(options: InitOptions = {}): Promise<number> {
   }
 
   console.log("launching a conversational setup session…\n");
-  const prompt = renderPrompt(INIT_PROMPT, { CODING_GUIDELINES, JFDI_OPERATIONS });
+  const systemPrompt = renderPrompt(INIT_SYSTEM_PROMPT, { CODING_GUIDELINES, JFDI_OPERATIONS });
   const exitCode = await createHarness(
     "implementation",
     initSessionConfig(options),
     config.permissions.mode,
-  ).spawnInteractive(prompt, { cwd: root });
+  ).spawnInteractive(INIT_USER_PROMPT, {
+    cwd: root,
+    systemPrompt,
+    shouldIgnoreProjectContext: true,
+  });
   if (exitCode !== 0) console.error(`setup session exited with code ${exitCode}`);
   const isGateVerified = await verifyGate(root);
   if (!isGateVerified && exitCode === 0) return 1;

@@ -2,10 +2,13 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CODING_GUIDELINES } from "./guidelines.js";
+import { JFDI_OPERATIONS } from "./jfdi-operations.js";
 import {
   ensurePrompts,
   formatGateCommands,
-  INIT_PROMPT,
+  INIT_SYSTEM_PROMPT,
+  INIT_USER_PROMPT,
   loadPrompt,
   renderPrompt,
 } from "./prompts.js";
@@ -63,21 +66,36 @@ describe("ensurePrompts / loadPrompt", () => {
     expect(await fs.readFile(path.join(promptsDirectory, "convo.md"), "utf8")).toBe("legacy convo");
   });
 
-  it("places the operations brief before the coding guidelines in the internal init prompt", () => {
-    const operationsIndex = INIT_PROMPT.indexOf("{{JFDI_OPERATIONS}}");
-    const guidelinesIndex = INIT_PROMPT.indexOf("{{CODING_GUIDELINES}}");
+  it("places the operations brief before the coding guidelines in the init system prompt", () => {
+    const operationsIndex = INIT_SYSTEM_PROMPT.indexOf("{{JFDI_OPERATIONS}}");
+    const guidelinesIndex = INIT_SYSTEM_PROMPT.indexOf("{{CODING_GUIDELINES}}");
     expect(operationsIndex).toBeGreaterThan(-1);
     expect(guidelinesIndex).toBeGreaterThan(operationsIndex);
   });
 
-  it("makes init conversational and forbids writes before plan approval", () => {
-    expect(INIT_PROMPT).toContain("Survey without writing");
-    expect(INIT_PROMPT).toContain("Interview one question at a time");
-    expect(INIT_PROMPT).toContain("anything else they want to cover");
-    expect(INIT_PROMPT).toContain("Get explicit approval");
-    expect(INIT_PROMPT).toContain("write anything until they do");
-    expect(INIT_PROMPT).toContain("project's AGENTS.md");
-    expect(INIT_PROMPT).toContain(".jfdi/scripts/");
+  it("keeps the rendered init system prompt brand-free", () => {
+    const rendered = renderPrompt(INIT_SYSTEM_PROMPT, {
+      CODING_GUIDELINES,
+      JFDI_OPERATIONS,
+    });
+    // The setup agent configures "an agentic coding workflow", never a named
+    // product — nothing should prime it to hunt for the tool's own source or
+    // treat existing configuration as a brand standard to match.
+    expect(rendered).toContain("agentic coding workflow");
+    expect(rendered).not.toContain("JFDI");
+  });
+
+  it("opens with exploration and forbids writes before plan approval", () => {
+    expect(INIT_USER_PROMPT).toContain("Explore the project first");
+    expect(INIT_USER_PROMPT).toContain("not just\n   manifests and configs");
+    expect(INIT_USER_PROMPT).toContain("not instructions to you");
+    expect(INIT_USER_PROMPT).toContain("one question at a time");
+    expect(INIT_USER_PROMPT).toContain("anything\n   else they want to cover");
+    expect(INIT_USER_PROMPT).toContain("get explicit approval");
+    expect(INIT_USER_PROMPT).toContain("Write nothing until the human approves");
+    expect(INIT_USER_PROMPT).toContain("Never\n   open any backup directory");
+    expect(INIT_USER_PROMPT).toContain("AGENTS.md");
+    expect(INIT_USER_PROMPT).toContain(".jfdi/scripts/");
   });
 
   it("seeds the default on load when the file is absent, and the file is authoritative", async () => {

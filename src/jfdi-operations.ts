@@ -7,26 +7,24 @@
  * carries it. Injected into the init prompt so the init agent can configure a
  * target project with an accurate understanding of the pipeline.
  */
-export const JFDI_OPERATIONS = `# How JFDI runs your project
+export const JFDI_OPERATIONS = `# How the workflow runs your project
 
-You are configuring JFDI — an automated implement → review → QA → merge
-pipeline — for the project in this repository. You are not building that
-project: you are configuring the files under \`.jfdi/\`, and the project's
-AGENTS.md, which will run and guide the agents that do. Everything below is
-what those agent sessions experience; every file you touch is a lever on
-their behavior.
+Everything below is what the workflow's agent sessions experience when they
+work on this project. Every file you configure is a lever on their behavior —
+and there is no other channel: nothing reaches those sessions except what
+lands in the files described here.
 
 ## The pipeline
 
-JFDI watches a Kanban board (\`.jfdi/board.md\`). When a card reaches the begin
-column, the coordinator dispatches a **run**: an isolated git worktree on
-branch \`jfdi/<ticket-id>\`, and a pipeline of fresh agent sessions —
+The workflow watches a Kanban board (\`.jfdi/board.md\`). When a card reaches
+the begin column, the coordinator dispatches a **run**: an isolated git
+worktree on its own branch, and a pipeline of fresh agent sessions —
 **Implementation → mechanical gate → Code Review → QA** — with feedback
 rounds (cap: \`pipeline.max_rounds\`, default 3). When both reviews sign off,
-**Integration** merges the branch into the target branch: globally serialized,
-one merge at a time, landing a merge commit after re-running the gate on the
-merged tree. Several runs proceed concurrently (\`max_concurrent\`), but
-integration never does.
+**Integration** merges the branch into the target branch: globally
+serialized, one merge at a time, landing a merge commit after re-running the
+gate on the merged tree. Several runs proceed concurrently
+(\`max_concurrent\`), but integration never does.
 
 ## What each session sees — and doesn't
 
@@ -48,7 +46,7 @@ What it knows is exactly what the pipeline hands it:
 The consequence that shapes your whole job: **anything an agent must know
 about this project has to live in a file you configure.** The project's
 AGENTS.md (read by every session), the stage prompts, the sandbox contract —
-there is no other channel. Nothing you say during init reaches future
+there is no other channel. Nothing you learn during setup reaches future
 sessions unless it lands in one of those files.
 
 ## The gate
@@ -61,14 +59,14 @@ Agents are told not to run it themselves.
 A gate failure is cheap by design: it feeds straight back into the same
 implementation session (up to 10 fix sessions) *without consuming a round*.
 A review failure costs a round. This asymmetry is the point: **the gate is
-JFDI's cheapest reviewer**, and every standard you can encode mechanically —
-lint rule, type check, format check, naming convention, test suite — is one
-that review sessions never spend tokens or rounds on again.
+the workflow's cheapest reviewer**, and every standard you can encode
+mechanically — lint rule, type check, format check, naming convention, test
+suite — is one that review sessions never spend tokens or rounds on again.
 
 Checks too big for a one-line command live in **\`.jfdi/scripts/\`** — drop a
 script there and reference it from a gate entry (e.g.
 \`sh .jfdi/scripts/check-docs-sync.sh\`). The directory is versioned like the
-rest of the JFDI configuration.
+rest of the workflow configuration.
 
 Two properties matter when you fill it in: the gate must exit zero at setup
 time (a gate that starts red teaches every agent that red is normal), and it
@@ -123,10 +121,13 @@ human asks otherwise.
   \`permissions.mode\` (\`auto\` = sandboxed autonomous, default; \`bypass\` =
   opt-in full access); \`max_concurrent\`; per-stage \`stages\` entries
   (harness, model, effort per stage plus the scribe).
-- **\`.jfdi/prompts/*.md\`** — the stage prompt templates. Seeded with
-  defaults; the on-disk copy is authoritative and user-tunable. This is where
-  durable per-project steering for a *stage* belongs. Preserve the \`{{VAR}}\`
-  placeholders: an unknown or dropped variable degrades silently.
+- **\`.jfdi/prompts/*.md\`** — the stage prompt templates. Materialized from
+  built-in defaults the first time the pipeline runs; the on-disk copy is
+  authoritative and user-tunable afterwards. The defaults are deliberately
+  project-agnostic and work everywhere; durable per-project steering for a
+  *stage* is a later tuning exercise, not part of initial setup. Preserve
+  the \`{{VAR}}\` placeholders: an unknown or dropped variable degrades
+  silently.
 - **\`.jfdi/sandbox.md\`** — the QA sandbox contract. Write it for a stranger
   with no context: exact build and launch commands, expected outputs, scratch
   space rules (always outside the repo), teardown. If QA can't drive the real
