@@ -317,7 +317,6 @@ describe("CLI surface", () => {
         "commit-message.md",
         "implementation-continue.md",
         "implementation.md",
-        "init.md",
         "integration.md",
         "qa-continue.md",
         "qa.md",

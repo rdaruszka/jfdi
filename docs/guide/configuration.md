@@ -235,7 +235,7 @@ pages:
 
 | File | Purpose | Docs |
 |---|---|---|
-| `prompts/*.md` | The ten stage/command prompt templates. On disk, editable, authoritative. | [Prompts & Customization](prompts-and-customization.md) |
+| `prompts/*.md` | The eight unattended prompt templates. On disk, editable, authoritative. | [Prompts & Customization](prompts-and-customization.md) |
 | `sandbox.md` | The QA sandbox contract — how to build, launch, drive, and tear down your product. | [Prompts & Customization](prompts-and-customization.md#the-sandbox-contract) |
 | `claude-settings.json` | Settings injected into JFDI-spawned Claude Code sessions (wires the format hook). | [Prompts & Customization](prompts-and-customization.md#the-format-hook) |
 | `hooks/format.sh` | Per-file format hook invoked after each edit in Claude sessions. | [Prompts & Customization](prompts-and-customization.md#the-format-hook) |

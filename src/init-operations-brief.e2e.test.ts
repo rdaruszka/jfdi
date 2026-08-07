@@ -11,7 +11,7 @@ import { JFDI_OPERATIONS } from "./jfdi-operations.js";
 /**
  * Behavioral proof that `jfdi init` compiles the operations brief into the init
  * prompt and injects it ahead of the coding guidelines. It drives the built CLI
- * end to end: real scaffold, real loadPrompt + renderPrompt, real init.ts wiring.
+ * end to end: real scaffold, internal init template rendering, real init.ts wiring.
  * A stub `claude` captures the fully rendered prompt — the last CLI argv element
  * on the interactive Claude launch (see harness/claude.ts spawnInteractive).
  */
@@ -29,7 +29,7 @@ afterEach(async () => {
   );
 });
 
-async function runInitAndCaptureprompt(): Promise<string> {
+async function runInitAndCapturePrompt(staleInitPrompt?: string): Promise<string> {
   const createdSandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-init-operations-"));
   sandboxRoots.push(createdSandboxRoot);
   const sandboxRoot = await fs.realpath(createdSandboxRoot);
@@ -40,6 +40,10 @@ async function runInitAndCaptureprompt(): Promise<string> {
   await fs.mkdir(project, { recursive: true });
   await fs.mkdir(binDir);
   await fs.mkdir(jfdiHome);
+  if (staleInitPrompt !== undefined) {
+    await fs.mkdir(path.join(project, ".jfdi/prompts"), { recursive: true });
+    await fs.writeFile(path.join(project, ".jfdi/prompts/init.md"), staleInitPrompt);
+  }
 
   // The default scaffold routes the interactive launch through Claude; stub both
   // so the inner session never reaches a real agent CLI, dumping argv instead.
@@ -75,7 +79,7 @@ fs.writeFileSync(process.env.TRACE_PATH, JSON.stringify({ args: process.argv.sli
 
 describe("jfdi init compiles the operations brief into the init prompt", () => {
   it("injects the full operations brief, substituted, ahead of the coding guidelines", async () => {
-    const prompt = await runInitAndCaptureprompt();
+    const prompt = await runInitAndCapturePrompt();
 
     // The {{JFDI_OPERATIONS}} placeholder is fully substituted — not dropped,
     // not left literal.
@@ -91,5 +95,14 @@ describe("jfdi init compiles the operations brief into the init prompt", () => {
     expect(prompt.indexOf("# How JFDI runs your project")).toBeLessThan(
       prompt.indexOf("# Coding Guidelines"),
     );
+  });
+
+  it("ignores a stale on-disk init prompt", async () => {
+    const staleInitPrompt = "You are bootstrapping a JFDI skeleton";
+    const prompt = await runInitAndCapturePrompt(staleInitPrompt);
+
+    expect(prompt).toContain("configuring **JFDI**");
+    expect(prompt).toContain("through a conversation with the human");
+    expect(prompt).not.toContain(staleInitPrompt);
   });
 });

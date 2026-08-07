@@ -9,8 +9,7 @@ export type PromptName =
   | "qa"
   | "qa-continue"
   | "integration"
-  | "commit-message"
-  | "init";
+  | "commit-message";
 
 /**
  * Carried by the QA prompt, whose sandbox habits otherwise end in a commit.
@@ -413,8 +412,10 @@ just ended, and the pipeline is committing what it left behind.
 
 - Read-only, single shot: create, modify or delete no file, and run no git command
   that writes. \`git diff --cached\`, \`git log\` and reading files are all you need.`,
+};
 
-  init: `You are configuring **JFDI** (an automated implement → review → QA → merge
+/** Interactive init is source-owned and never seeded or loaded from disk. */
+export const INIT_PROMPT = `You are configuring **JFDI** (an automated implement → review → QA → merge
 pipeline) for this repository through a conversation with the human. A mechanical,
 idempotent scaffold has already ensured that every JFDI file exists. It may be a
 fresh generic setup or a mature setup the human wants to revisit; determine which
@@ -476,8 +477,7 @@ the human's explicit plan approval.
 
 ## Coding guidelines (generic reference — instantiate, don't copy verbatim)
 
-{{CODING_GUIDELINES}}`,
-};
+{{CODING_GUIDELINES}}`;
 
 /** Render a template, replacing {{VAR}} placeholders. */
 export function renderPrompt(template: string, variables: Record<string, string>): string {
