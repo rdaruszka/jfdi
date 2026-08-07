@@ -21,7 +21,7 @@ Kanban board and it does that continuously, several tickets at a time. The
 - **[Configuration](guide/configuration.md)** — every `.jfdi/config.json`
   field, the other files under `.jfdi/`, environment variables.
 - **[Prompts & Customization](guide/prompts-and-customization.md)** — editing
-  stage prompts, the QA sandbox contract, the format hook, `jfdi convo`.
+  stage prompts, the QA sandbox contract, the format hook, conversational init.
 - **[CLI Reference](guide/cli.md)** — every command, flag, and exit code.
 
 ## Understanding & extending JFDI

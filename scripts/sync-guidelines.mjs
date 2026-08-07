@@ -31,8 +31,8 @@ compileDocument({
   exportName: "CODING_GUIDELINES",
   description: ` * The generic, language-agnostic coding guidelines JFDI ships with, compiled in
  * so the installed CLI carries them. Injected into the init prompt so the init
- * agent can instantiate them for a target repo (into its CLAUDE.md and lint
- * config). JFDI's own TypeScript instantiation lives in this repo's CLAUDE.md —
+ * agent can instantiate them for a target repo (into its AGENTS.md and lint
+ * config). JFDI's own TypeScript instantiation lives in this repo's AGENTS.md —
  * keep it in step when a rule changes.`,
 });
 

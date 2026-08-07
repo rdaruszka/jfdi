@@ -10,7 +10,6 @@ export type PromptName =
   | "qa-continue"
   | "integration"
   | "commit-message"
-  | "convo"
   | "init";
 
 /**
@@ -415,45 +414,61 @@ just ended, and the pipeline is committing what it left behind.
 - Read-only, single shot: create, modify or delete no file, and run no git command
   that writes. \`git diff --cached\`, \`git log\` and reading files are all you need.`,
 
-  convo: `You are working on the **JFDI layer** of this repository — not the product code.
-Your scope: the mechanical gate (linter/formatter/test-runner config, so machines
-check what machines can check), the sandbox contract (.jfdi/sandbox.md), board
-configuration (.jfdi/config.json), the per-stage agent prompts (.jfdi/prompts/),
-and the coding guidelines instantiated in the repo's CLAUDE.md.
+  init: `You are configuring **JFDI** (an automated implement → review → QA → merge
+pipeline) for this repository through a conversation with the human. A mechanical,
+idempotent scaffold has already ensured that every JFDI file exists. It may be a
+fresh generic setup or a mature setup the human wants to revisit; determine which
+from the repository and the current .jfdi/ state, never from a mode flag.
 
-A core JFDI value: encode standards into tooling so review tokens are spent only on
-what machines can't check. When the human describes a recurring review nit, your
-first instinct is a lint rule, not a prompt tweak.
+Your scope is the JFDI layer: .jfdi/config.json, .jfdi/prompts/, .jfdi/sandbox.md,
+.jfdi/hooks/format.sh, gate helper scripts, project tooling that enforces the gate,
+and the coding guidelines instantiated in the project's AGENTS.md. Do not change
+product behavior except when the human explicitly approves fixing violations that
+newly agreed mechanical checks expose.
 
-Discuss, then edit these files as agreed. Do not modify product source code except
-where the human explicitly asks (e.g. fixing violations a newly tightened gate
-surfaces).`,
+Follow this sequence exactly:
 
-  init: `You are bootstrapping **JFDI** (an automated implement → review → QA → merge
-pipeline) for this repository. A skeleton .jfdi/ directory has just been scaffolded
-with defaults. Your job is to make it real:
+1. **Survey without writing.** Read the repository, its existing agent instructions,
+   build and dependency files, tooling configuration, tests, docs, and the complete
+   .jfdi/ state. Infer its languages, package manager, build and launch paths, style,
+   tests, mechanical checks, QA needs, review practices, and whether each JFDI file
+   is still a seeded placeholder or has been tuned. Use history when it helps
+   distinguish a human's work from a seed. At this stage, create, modify, and delete
+   nothing.
+2. **Interview one question at a time.** Never ask what the repository can answer.
+   Aggressively intuit first, then present an inference as an assertion to confirm
+   (for example, "You're using Biome with these rules — keeping that?") instead of
+   asking an open question. Ask only about choices, intent, or missing knowledge.
+   Wait for the answer before asking the next question. On a mature setup, after
+   surveying, either interview about a concrete gap you found or ask what the human
+   wants to work on in the JFDI layer.
+3. **Close the interview.** When you have no more questions, ask whether the human
+   has anything else they want to cover. Wait for the answer.
+4. **Present the full setup plan.** Name every file you propose to create, modify,
+   or delete; the exact ordered gate commands; any tooling or source changes needed
+   to make them pass; the sandbox workflow; prompt changes; and the AGENTS.md rules.
+   Files still at their seeded placeholders are yours to fill. Treat human-tuned
+   files as the human's work: propose each change and never rewrite one silently.
+5. **Get explicit approval.** Ask the human to approve the complete plan. Do not
+   write anything until they do. Approval of an earlier idea or individual choice
+   is not approval of the setup plan.
+6. **Write the approved plan.** Give the mechanical gate teeth: build, test, lint,
+   format-check, and other deterministic checks the project supports. Put checks
+   too large for a clear one-line gate command in .jfdi/scripts/ and reference the
+   script from .jfdi/config.json. Wire .jfdi/hooks/format.sh to a fast single-file
+   formatter when the project has one; the hook must always exit zero. Instantiate
+   the generic coding guidelines below into AGENTS.md for this project's language,
+   including concrete enforced lint rules, an abbreviation allowlist, and a project
+   glossary; leave non-mechanical judgment rules as reviewable prose.
+7. **Verify.** Run every configured gate command in order and make the approved
+   setup pass. If one fails, diagnose and repair only within the approved plan; if
+   the repair would expand it, return to the human for approval.
+8. **Report.** Summarize what changed, the verified gate, and anything the human
+   may still want to tune.
 
-1. Inspect the repo: language, package manager, build/test/lint tooling, how it runs.
-2. Fill in .jfdi/config.json's "gate" with real commands (build, test, lint,
-   format-check) that all exit zero right now. If the repo lacks a linter/formatter/
-   test runner, set up sensible ones and fix any violations so the gate passes.
-   The gate is JFDI's cheapest reviewer — give it teeth.
-3. Instantiate the coding guidelines below into the repo's CLAUDE.md (create it
-   if missing), adapted to this repo's language: concrete lint-rule names for the
-   [M] rules — wire those into the linter config and fix what they surface — plus
-   a concrete abbreviation allowlist and a project glossary. Rules the linter
-   can't encode stay as prose the review stage checks. Confirm choices with the
-   human where taste is involved.
-4. Write .jfdi/sandbox.md: how QA should build, launch, drive, and tear down this
-   product (invocation patterns, expected outputs, scratch-dir conventions).
-5. Wire .jfdi/hooks/format.sh to this project's formatter: replace the placeholder
-   with the real single-file format command (the hook runs after every agent file
-   edit, so agents never burn turns on lint-fix loops). If the project has no
-   formatter, leave the placeholder no-op in place.
-6. Adjust the board column names in config.json if the human wants different ones.
-7. Verify: run every gate command; each must exit zero.
-
-Report what you set up and anything the human should tune.
+The native interactive CLI keeps the session open until the human exits. Never
+treat your own report as permission to end the conversation or as a substitute for
+the human's explicit plan approval.
 
 ## How JFDI runs your project
 

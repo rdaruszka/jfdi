@@ -315,7 +315,6 @@ describe("CLI surface", () => {
         "code-review-continue.md",
         "code-review.md",
         "commit-message.md",
-        "convo.md",
         "implementation-continue.md",
         "implementation.md",
         "init.md",

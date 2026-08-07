@@ -411,7 +411,7 @@ describe("ClaudeHarness selection flags", () => {
       { sessionKind: "implementation", model: "claude-opus-4-8", effort: "high" },
       "bypass",
       recorder.executable,
-    ).spawnInteractive("brief", { cwd: dir, isSystemPrompt: true });
+    ).spawnInteractive("brief", { cwd: dir });
     expect(await recorder.argv()).toEqual([
       "--permission-mode",
       "bypassPermissions",
@@ -419,7 +419,6 @@ describe("ClaudeHarness selection flags", () => {
       "claude-opus-4-8",
       "--effort",
       "high",
-      "--append-system-prompt",
       "brief",
     ]);
   });

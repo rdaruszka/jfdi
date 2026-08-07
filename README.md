@@ -71,8 +71,8 @@ To upgrade, rebuild and reinstall the same way.
 From the root of the project you want it to work on:
 
 ```bash
-jfdi init      # scaffold .jfdi/ — an agent session then sets up your
-               # mechanical gate, sandbox contract, and coding guidelines
+jfdi init      # scaffold .jfdi/, then conversationally tune the gate,
+               # sandbox contract, prompts, and coding guidelines
 
 jfdi run add a --version flag    # one ticket, no board needed
 
@@ -90,8 +90,7 @@ jfdi start            Watch the board, run continuously (live TUI)
 jfdi status [--json]  Coordinator state snapshot
 jfdi logs <ticket>    A ticket's raw session logs
 jfdi merge <ticket>   Approve a Ready-to-Merge ticket (on-approval mode)
-jfdi convo            Tune the JFDI layer itself (gate, prompts, sandbox)
-jfdi init [--bare]    Scaffold .jfdi/ and set up the mechanical gate
+jfdi init [options]   Scaffold .jfdi/ and conversationally tune the setup
 ```
 
 ## Design in one paragraph
@@ -103,8 +102,8 @@ Every transition appends to a per-project `events.jsonl`; state and UIs (the
 TUI today, anything else tomorrow) are pure derivations of that stream. Agent
 CLIs sit behind a **harness** interface, so pipeline logic never touches
 provider specifics. The cheapest reviewer is the mechanical gate, and the
-system's core value is moving standards *into* it: `jfdi init` and `jfdi convo`
-exist to encode your conventions into lint/test/build config so agent review
+system's core value is moving standards *into* it: conversational `jfdi init`
+encodes your conventions into lint/test/build config so agent review
 tokens are spent only on what machines can't check.
 
 ## Documentation
@@ -118,14 +117,14 @@ tokens are spent only on what machines can't check.
 | [The Pipeline](docs/guide/pipeline.md) | Stages, gate, rounds, escalation, resume |
 | [Integration & Merging](docs/guide/integration.md) | Serialized merges, approval modes |
 | [Configuration](docs/guide/configuration.md) | Every config field |
-| [Prompts & Customization](docs/guide/prompts-and-customization.md) | Stage prompts, sandbox contract, `jfdi convo` |
+| [Prompts & Customization](docs/guide/prompts-and-customization.md) | Stage prompts, sandbox contract, conversational init |
 | [CLI Reference](docs/guide/cli.md) | Commands, flags, exit codes |
 | [Architecture](docs/architecture/overview.md) | Components, invariants, extension seams |
 | [Development Guide](docs/development.md) | Working on JFDI itself |
 
 ## Status
 
-JFDI is young and moving fast. All four milestones — single-ticket pipeline,
-coordinator, convo mode, init — are implemented and tested, and JFDI is
+JFDI is young and moving fast. All three milestones — single-ticket pipeline,
+coordinator, and conversational init — are implemented and tested, and JFDI is
 **self-hosting**: improvements to JFDI flow through JFDI, from its own board.
 Interfaces (config, prompts, events) may still change between versions.

@@ -90,6 +90,9 @@ An empty gate always passes — legal, but it means "done" is whatever the agent
 says it is. Give the gate teeth: build, test, lint, format-check. `jfdi init`
 sets this up for your repo, and encoding standards into the gate instead of
 review prose is the core system value — the gate is the cheapest reviewer.
+Checks too large for a clear one-line command belong in `.jfdi/scripts/`, with
+the gate entry invoking the script (for example,
+`sh .jfdi/scripts/check-docs-sync.sh`).
 
 ### `pipeline`
 
@@ -147,8 +150,8 @@ denies every write — the worktree included. Headless and continued sessions
 therefore run `acceptEdits` (edits auto-approved, confined to the session's
 working directories) with the Bash tool allowed, the documented spelling for an
 autonomous headless session that can still run builds, tests, and git;
-interactive launches (`jfdi init`, `jfdi convo`) keep `auto`, where the human
-at the terminal answers the classifier.
+interactive `jfdi init` keeps `auto`, where the human at the terminal answers
+the classifier.
 
 ### `max_concurrent`
 
@@ -209,8 +212,11 @@ configured model as a fallback.
   code-producing session — the one selection where volume, not stakes, sets the
   price. It names no `effort` at all.
 
-Whichever harness `implementation` names also runs the interactive commands —
-`jfdi init` and `jfdi convo` — with that stage's model and effort.
+Interactive init is selected independently of these stage entries. `jfdi init`
+uses `--harness` (`claude` or `codex`), `--model`, and optional `--effort`, with
+defaults of Claude, `claude-fable-5`, and the provider's default effort. The
+instance-wide `permissions.mode` still applies. There is deliberately no
+`stages.init` entry: init must work before a new user has config to edit.
 
 Both selected CLIs must be on your `PATH`. Beyond model, effort, and the
 provider-neutral permission mode, provider-specific flags are supplied by JFDI

@@ -33,15 +33,21 @@ jfdi init
 ```
 
 This scaffolds `.jfdi/` — config, board, tickets directory, prompt templates,
-sandbox contract — and then launches an interactive agent session that inspects
-your repo and gives the setup teeth:
+sandbox contract — and then launches a conversational agent session. It surveys
+the repo first, interviews you one question at a time, presents a complete plan,
+and writes only after you approve it:
 
 - fills `.jfdi/config.json`'s **gate** with real build/test/lint commands that
   all exit zero *right now*, setting up or tightening tooling as needed;
-- instantiates the shipped coding guidelines into your repo's `CLAUDE.md`;
+- instantiates the shipped coding guidelines into your repo's `AGENTS.md`;
 - writes a **sandbox contract** (`.jfdi/sandbox.md`) so QA knows how to build,
   launch, and drive your product;
 - wires the per-file format hook.
+
+After you exit the provider's interactive CLI, init reloads the config and runs
+the gate itself, reporting the first failing step or `gate verified`. Rerun init
+at any time to tune an existing setup; it preserves human-tuned files unless you
+approve the proposed changes.
 
 The gate matters more than anything else in the setup: it is the cheapest
 reviewer, it runs before every review round, and "done" isn't done until it
@@ -136,5 +142,5 @@ From a second terminal, `jfdi status` snapshots the state and
   modes, hand-merge detection
 - [Configuration](guide/configuration.md) — every config field
 - [Prompts & Customization](guide/prompts-and-customization.md) — tuning agent
-  behavior, the sandbox contract, `jfdi convo`
+  behavior, the sandbox contract, conversational init
 - [CLI Reference](guide/cli.md) — every command and exit code

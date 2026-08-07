@@ -5,13 +5,13 @@
 /**
  * The generic, language-agnostic coding guidelines JFDI ships with, compiled in
  * so the installed CLI carries them. Injected into the init prompt so the init
- * agent can instantiate them for a target repo (into its CLAUDE.md and lint
- * config). JFDI's own TypeScript instantiation lives in this repo's CLAUDE.md —
+ * agent can instantiate them for a target repo (into its AGENTS.md and lint
+ * config). JFDI's own TypeScript instantiation lives in this repo's AGENTS.md —
  * keep it in step when a rule changes.
  */
 export const CODING_GUIDELINES = `# Coding Guidelines
 
-Language-agnostic rules for codebases where agents are the primary maintainers. Drop this into a project's CLAUDE.md verbatim, or hand it to an agent to instantiate for the local language (concrete lint rules, concrete allowlist, concrete glossary).
+Language-agnostic rules for codebases where agents are the primary maintainers. Drop this into a project's AGENTS.md verbatim, or hand it to an agent to instantiate for the local language (concrete lint rules, concrete allowlist, concrete glossary).
 
 Every rule is tagged with its enforcement tier — a rule with no enforcement route is a wish:
 
@@ -19,7 +19,7 @@ Every rule is tagged with its enforcement tier — a rule with no enforcement ro
 - **[R]** review — a check question the reviewing agent answers about the diff
 - **[P]** prompt-time — the implementing agent applies it while writing
 
-JFDI wires these tiers in for you: the gate is tier M, the Code Review stage prompt asks the tier-R check questions, and every stage loads the project's CLAUDE.md for tier P. The design rationale behind the tiers lives with JFDI (docs/agent-enforcement.md).
+JFDI wires these tiers in for you: the gate is tier M, the Code Review stage prompt asks the tier-R check questions, and every stage loads the project's AGENTS.md for tier P. The design rationale behind the tiers lives with JFDI (docs/agent-enforcement.md).
 
 ## Structure and control flow
 

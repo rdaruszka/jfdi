@@ -65,7 +65,7 @@ flowchart TB
 - **CLI** ([src/cli.ts](../../src/cli.ts), [src/commands/](../../src/commands/)) —
   a hand-rolled dispatcher; each command lazy-imports its module. `run`, `merge`,
   `status`, and `logs` are one-shot; `start` is the long-running coordinator;
-  `init` and `convo` launch interactive harness sessions.
+  `init` scaffolds mechanically and launches a conversational setup session.
 - **Coordinator** ([src/coordinator.ts](../../src/coordinator.ts)) — the
   long-running loop behind `jfdi start`. Watches the board (fs-watch plus a 2 s
   mtime poll), dispatches ready cards into pipelines up to `max_concurrent`,

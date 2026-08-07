@@ -124,8 +124,6 @@ export interface SpawnOptions {
 
 export interface InteractiveSpawnOptions {
   cwd: string;
-  /** Providers may support a true system prompt or approximate it as initial instructions. */
-  isSystemPrompt?: boolean;
 }
 
 export interface Harness {

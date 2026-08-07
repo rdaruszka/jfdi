@@ -21,11 +21,7 @@ afterEach(async () => {
   );
 });
 
-/**
- * An interactive launch takes the implementation stage's agent, so that is the
- * only entry a project here needs to vary. Omitting it means no config.json at
- * all — the scaffold defaults.
- */
+/** A pre-existing implementation selection proves init does not borrow it. */
 async function makeProject(implementationStage?: {
   harness: "claude" | "codex";
   model?: string;
@@ -53,11 +49,18 @@ async function makeProject(implementationStage?: {
 
   const stub = `#!/usr/bin/env node
 const fs = require("node:fs");
+if (process.env.GATE_AFTER_SESSION) {
+  const configPath = require("node:path").join(process.cwd(), ".jfdi", "config.json");
+  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  config.gate = [{ name: "after-session", cmd: process.env.GATE_AFTER_SESSION }];
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + "\\n");
+}
 fs.writeFileSync(process.env.TRACE_PATH, JSON.stringify({
   executable: require("node:path").basename(process.argv[1]),
   args: process.argv.slice(2),
   cwd: process.cwd(),
 }));
+process.exit(Number(process.env.SESSION_EXIT ?? 0));
 `;
   await Promise.all(
     ["claude", "codex"].map((executable) =>
@@ -79,12 +82,8 @@ fs.writeFileSync(process.env.TRACE_PATH, JSON.stringify({
   };
 }
 
-async function runCli(
-  project: string,
-  environment: NodeJS.ProcessEnv,
-  command: "init" | "convo",
-): Promise<void> {
-  await execFileAsync(process.execPath, [cliPath, command], { cwd: project, env: environment });
+function runCli(project: string, environment: NodeJS.ProcessEnv, args: string[]) {
+  return execFileAsync(process.execPath, [cliPath, ...args], { cwd: project, env: environment });
 }
 
 async function readTrace(tracePath: string): Promise<{
@@ -100,37 +99,20 @@ async function readTrace(tracePath: string): Promise<{
 }
 
 describe("interactive provider selection", () => {
-  it.each(["init", "convo"] as const)(
-    "routes %s through the implementation stage's Codex",
-    async (command) => {
-      const sandbox = await makeProject({ harness: "codex" });
-      await runCli(sandbox.project, sandbox.environment, command);
-
-      const trace = await readTrace(sandbox.tracePath);
-      expect(trace.executable).toBe("codex");
-      expect(trace.args.slice(0, 4)).toEqual([
-        "-c",
-        'sandbox_mode="workspace-write"',
-        "-c",
-        "sandbox_workspace_write.network_access=true",
-      ]);
-      expect(trace.args).not.toContain("--full-auto");
-      expect(trace.args.at(-1)).toContain(
-        command === "init"
-          ? "You are bootstrapping **JFDI**"
-          : "You are working on the **JFDI layer**",
-      );
-      // A harness-only entry inherits no model from the scaffolded mix.
-      expect(trace.args).not.toContain("--model");
-      expect(trace.cwd).toBe(sandbox.project);
-    },
-  );
-
-  it("carries the implementation stage's model and effort into the session", async () => {
-    const sandbox = await makeProject({ harness: "codex", model: "gpt-5.6-sol", effort: "low" });
-    await runCli(sandbox.project, sandbox.environment, "convo");
+  it("takes the provider, model, and effort from init flags", async () => {
+    const sandbox = await makeProject();
+    await runCli(sandbox.project, sandbox.environment, [
+      "init",
+      "--harness",
+      "codex",
+      "--model",
+      "gpt-5.6-sol",
+      "--effort",
+      "low",
+    ]);
 
     const trace = await readTrace(sandbox.tracePath);
+    expect(trace.executable).toBe("codex");
     expect(trace.args).toEqual([
       "-c",
       'sandbox_mode="workspace-write"',
@@ -140,26 +122,91 @@ describe("interactive provider selection", () => {
       "gpt-5.6-sol",
       "-c",
       "model_reasoning_effort=low",
-      expect.stringContaining("You are working on the **JFDI layer**"),
+      expect.stringContaining("You are configuring **JFDI**"),
     ]);
+    expect(trace.cwd).toBe(sandbox.project);
   });
 
-  it("keeps new scaffolds on the default mix's Claude", async () => {
-    const sandbox = await makeProject();
-    await runCli(sandbox.project, sandbox.environment, "init");
+  it("uses init's defaults instead of the implementation stage selection", async () => {
+    const sandbox = await makeProject({ harness: "codex", model: "gpt-5.6-sol", effort: "low" });
+    await runCli(sandbox.project, sandbox.environment, ["init"]);
 
     const trace = await readTrace(sandbox.tracePath);
     expect(trace.executable).toBe("claude");
-    const { model, effort } = defaultConfig().stages.implementation;
-    expect(trace.args.slice(0, 6)).toEqual([
+    expect(trace.args.slice(0, 4)).toEqual([
       "--permission-mode",
       "auto",
       "--model",
-      model,
-      "--effort",
-      effort,
+      "claude-fable-5",
     ]);
-    expect(trace.args.at(-1)).toContain("You are bootstrapping **JFDI**");
+    expect(trace.args).not.toContain("--effort");
+    expect(trace.args.at(-1)).toContain("You are configuring **JFDI**");
     expect(trace.cwd).toBe(sandbox.project);
+  });
+
+  it("verifies the gate itself after a session that exited cleanly", async () => {
+    const sandbox = await makeProject();
+    const { stdout } = await runCli(sandbox.project, sandbox.environment, ["init"]);
+    expect(stdout).toContain("gate verified");
+  });
+
+  it("scaffolds without launching a session under --bare", async () => {
+    const sandbox = await makeProject();
+    const { stdout } = await runCli(sandbox.project, sandbox.environment, ["init", "--bare"]);
+
+    expect(stdout).toContain("scaffolded .jfdi/");
+    expect(stdout).not.toContain("gate verified");
+    await expect(fs.access(sandbox.tracePath)).rejects.toThrow();
+  });
+
+  it("no longer exposes a convo command", async () => {
+    const sandbox = await makeProject();
+    let failure: unknown;
+    try {
+      await runCli(sandbox.project, sandbox.environment, ["convo"]);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining('unknown command "convo"'),
+    });
+    await expect(fs.access(sandbox.tracePath)).rejects.toThrow();
+  });
+
+  it("propagates the session exit code while still running the gate backstop", async () => {
+    const sandbox = await makeProject();
+    let failure: unknown;
+    try {
+      await runCli(sandbox.project, { ...sandbox.environment, SESSION_EXIT: "3" }, ["init"]);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({
+      code: 3,
+      stderr: expect.stringContaining("setup session exited with code 3"),
+      stdout: expect.stringContaining("gate verified"),
+    });
+  });
+
+  it("reloads the post-session config and reports the failing gate step", async () => {
+    const sandbox = await makeProject();
+    let failure: unknown;
+    try {
+      await runCli(sandbox.project, { ...sandbox.environment, GATE_AFTER_SESSION: "exit 7" }, [
+        "init",
+      ]);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining(
+        'gate failed at "after-session"; rerun `jfdi init` to finish setup',
+      ),
+    });
   });
 });
