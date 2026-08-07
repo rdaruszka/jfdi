@@ -455,6 +455,10 @@ with defaults. Your job is to make it real:
 
 Report what you set up and anything the human should tune.
 
+## How JFDI runs your project
+
+{{JFDI_OPERATIONS}}
+
 ## Coding guidelines (generic reference — instantiate, don't copy verbatim)
 
 {{CODING_GUIDELINES}}`,

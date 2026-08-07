@@ -40,6 +40,7 @@ The **coordinator** watches `board.md` (Obsidian Kanban format), dispatches each
 docs/               — the documentation (docs/README.md is the index):
   getting-started.md, guide/     user docs
   architecture/, development.md  developer docs
+docs/jfdi-operations.md    — the operational contract compiled into the init prompt
 docs/coding-guidelines.md  — the generic coding guidelines (authoritative source)
 docs/agent-enforcement.md  — the enforcement design JFDI implements (reference)
 src/                 — TypeScript source
@@ -150,6 +151,7 @@ The generic rules with rationale and check questions live in [docs/coding-guidel
 **Docs**
 
 - Record what the code cannot say — intent, decisions, vocabulary, invariants. Never restate structure the repo can answer itself. If your diff falsifies this file, the glossary, or anything under `docs/`, update the doc in the same diff or flag it.
+- Pipeline behavior changes update `docs/jfdi-operations.md` in the same diff because it compiles into the init prompt.
 
 ## Explicitly out of scope
 
