@@ -47,6 +47,14 @@ describe("ensurePrompts / loadPrompt", () => {
     expect(await loadPrompt(dir, "qa")).toBe("my custom QA prompt {{VERDICT_PATH}}");
   });
 
+  it("seeds the operations brief before the coding guidelines in the init prompt", async () => {
+    const prompt = await loadPrompt(dir, "init");
+    const operationsIndex = prompt.indexOf("{{JFDI_OPERATIONS}}");
+    const guidelinesIndex = prompt.indexOf("{{CODING_GUIDELINES}}");
+    expect(operationsIndex).toBeGreaterThan(-1);
+    expect(guidelinesIndex).toBeGreaterThan(operationsIndex);
+  });
+
   it("seeds the default on load when the file is absent, and the file is authoritative", async () => {
     const prompt = await loadPrompt(dir, "implementation");
     expect(prompt).toContain("Implement the ticket below completely");
