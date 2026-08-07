@@ -88,7 +88,8 @@ describe("ensurePrompts / loadPrompt", () => {
   it("opens with exploration and forbids writes before plan approval", () => {
     expect(INIT_USER_PROMPT).toContain("Explore the project first");
     expect(INIT_USER_PROMPT).toContain("not just\n   manifests and configs");
-    expect(INIT_USER_PROMPT).toContain("not instructions to you");
+    expect(INIT_USER_PROMPT).toContain("Do not explore git history");
+    expect(INIT_USER_PROMPT).toContain("material you are evaluating and will rewrite");
     expect(INIT_USER_PROMPT).toContain("one question at a time");
     expect(INIT_USER_PROMPT).toContain("anything\n   else they want to cover");
     expect(INIT_USER_PROMPT).toContain("get explicit approval");
@@ -96,6 +97,15 @@ describe("ensurePrompts / loadPrompt", () => {
     expect(INIT_USER_PROMPT).toContain("Never\n   open any backup directory");
     expect(INIT_USER_PROMPT).toContain("AGENTS.md");
     expect(INIT_USER_PROMPT).toContain(".jfdi/scripts/");
+  });
+
+  it("makes building every stage prompt a deliverable and bars product-code fixes", () => {
+    expect(INIT_USER_PROMPT).toContain("build every stage prompt");
+    expect(INIT_USER_PROMPT).toContain("never repair product code");
+    expect(INIT_USER_PROMPT).toContain("Preserve every {{VAR}} placeholder");
+    expect(INIT_SYSTEM_PROMPT).toContain(
+      "Never change, and never offer to change, the project's product code",
+    );
   });
 
   it("seeds the default on load when the file is absent, and the file is authoritative", async () => {

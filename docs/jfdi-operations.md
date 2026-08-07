@@ -112,13 +112,16 @@ human asks otherwise.
   `permissions.mode` (`auto` = sandboxed autonomous, default; `bypass` =
   opt-in full access); `max_concurrent`; per-stage `stages` entries
   (harness, model, effort per stage plus the scribe).
-- **`.jfdi/prompts/*.md`** — the stage prompt templates. Materialized from
-  built-in defaults the first time the pipeline runs; the on-disk copy is
-  authoritative and user-tunable afterwards. The defaults are deliberately
-  project-agnostic and work everywhere; durable per-project steering for a
-  *stage* is a later tuning exercise, not part of initial setup. Preserve
-  the `{{VAR}}` placeholders: an unknown or dropped variable degrades
-  silently.
+- **`.jfdi/prompts/*.md`** — the stage prompt templates, seeded as generic
+  defaults at setup. Setup builds every one of them into this project's own
+  prompt: each carries what its stage needs to know about *this* project —
+  what Implementation should watch for, what Code Review should question,
+  what QA should distrust and how to exercise it. Global conventions live in
+  AGENTS.md; stage-specific knowledge lives in the stage's prompt. The
+  on-disk copy is authoritative and user-tunable afterwards. Preserve every
+  `{{VAR}}` placeholder and each verdict-schema block exactly as seeded: the
+  pipeline substitutes the variables and parses the verdicts, and an unknown
+  or dropped variable degrades silently.
 - **`.jfdi/sandbox.md`** — the QA sandbox contract. Write it for a stranger
   with no context: exact build and launch commands, expected outputs, scratch
   space rules (always outside the repo), teardown. If QA can't drive the real

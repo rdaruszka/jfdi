@@ -242,8 +242,7 @@ function readBoard(sandbox: Sandbox): Promise<string> {
 async function columnCards(sandbox: Sandbox, column: string): Promise<string[]> {
   const board = await readBoard(sandbox);
   const section = board.split(`## ${column}\n`)[1] ?? "";
-  return section
-    .split("\n## ")[0]
+  return (section.split("\n## ")[0] ?? "")
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.startsWith("- ["));

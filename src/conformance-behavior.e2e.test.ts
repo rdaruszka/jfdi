@@ -301,16 +301,28 @@ describe("CLI surface", () => {
 
       const jfdiDir = path.join(sandbox.project, ".jfdi");
       const entries = await fs.readdir(jfdiDir);
-      // No prompts/ — init seeds none; the pipeline materializes stage
-      // prompt defaults on first use so the setup agent starts fresh.
       expect(entries.sort()).toEqual([
         ".gitignore",
         "board.md",
         "claude-settings.json",
         "config.json",
         "hooks",
+        "prompts",
         "sandbox.md",
         "tickets",
+      ]);
+      // The eight generic stage prompt defaults — raw material the init
+      // session instantiates for the project. No init.md: that prompt is
+      // source-owned and never on disk.
+      expect((await fs.readdir(path.join(jfdiDir, "prompts"))).sort()).toEqual([
+        "code-review-continue.md",
+        "code-review.md",
+        "commit-message.md",
+        "implementation-continue.md",
+        "implementation.md",
+        "integration.md",
+        "qa-continue.md",
+        "qa.md",
       ]);
 
       // The board skeleton is the Obsidian-Kanban format the coordinator parses.
@@ -752,11 +764,13 @@ describe("trust boundaries", () => {
         eventLine("stage_start", "t1", { stage: "bogus-stage" }),
       ]);
       const tickets = snapshot.tickets as Record<string, Record<string, unknown>>;
-      expect(typeof tickets.t1.title).toBe("string");
-      expect(typeof tickets.t1.round).toBe("number");
-      expect(typeof tickets.t1.branch).toBe("string");
+      const coercedTicket = tickets.t1;
+      if (coercedTicket === undefined) throw new Error("replay dropped ticket t1");
+      expect(typeof coercedTicket.title).toBe("string");
+      expect(typeof coercedTicket.round).toBe("number");
+      expect(typeof coercedTicket.branch).toBe("string");
       // "bogus-stage" is not a stage name, so the stage is left unset.
-      expect(tickets.t1.stage).toBeNull();
+      expect(coercedTicket.stage).toBeNull();
 
       // Prototype keys are not stage names either — a plain `in`/cast check would
       // have accepted them and overwritten a legitimate stage.
@@ -766,9 +780,10 @@ describe("trust boundaries", () => {
         eventLine("stage_start", "t5", { stage: "constructor" }),
         eventLine("stage_start", "t5", { stage: "toString" }),
       ]);
-      expect((prototypeSnapshot.tickets as Record<string, Record<string, unknown>>).t5.stage).toBe(
-        "qa",
-      );
+      const prototypeTicket = (prototypeSnapshot.tickets as Record<string, Record<string, unknown>>)
+        .t5;
+      if (prototypeTicket === undefined) throw new Error("replay dropped ticket t5");
+      expect(prototypeTicket.stage).toBe("qa");
 
       // Absent data, unknown event types, array payloads and a missing ticketId
       // are all survivable: status renders whatever the stream holds.

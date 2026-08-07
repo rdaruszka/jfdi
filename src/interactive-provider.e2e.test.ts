@@ -147,7 +147,14 @@ describe("interactive provider selection", () => {
     ]);
     expect(trace.args).not.toContain("--effort");
     // Fresh-eyes isolation plus the appended (never replaced) system prompt.
-    expect(trace.args).toContain("--bare");
+    // --setting-sources "", not --bare: bare mode refuses OAuth/keychain auth.
+    // Auto-memory is a separate subsystem, disabled via its settings key.
+    const settingSourcesFlagIndex = trace.args.indexOf("--setting-sources");
+    expect(settingSourcesFlagIndex).toBeGreaterThan(-1);
+    expect(trace.args[settingSourcesFlagIndex + 1]).toBe("");
+    const settingsFlagIndex = trace.args.indexOf("--settings");
+    expect(settingsFlagIndex).toBeGreaterThan(-1);
+    expect(trace.args[settingsFlagIndex + 1]).toBe('{"autoMemoryEnabled": false}');
     const systemPromptFlagIndex = trace.args.indexOf("--append-system-prompt");
     expect(systemPromptFlagIndex).toBeGreaterThan(-1);
     expect(trace.args[systemPromptFlagIndex + 1]).toContain(

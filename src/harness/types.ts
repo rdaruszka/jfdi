@@ -133,10 +133,11 @@ export interface InteractiveSpawnOptions {
   systemPrompt?: string;
   /**
    * When true, the session must not ingest the project's own agent
-   * instructions (AGENTS.md/CLAUDE.md) or other ambient customization — it
-   * sees the project with fresh eyes. Claude maps this to --bare (skips
-   * CLAUDE.md auto-discovery, hooks, auto-memory); Codex disables project-doc
-   * loading via -c project_doc_max_bytes=0.
+   * instructions (AGENTS.md/CLAUDE.md), the user's per-project auto-memory,
+   * or other ambient customization — it sees the project with fresh eyes.
+   * Claude maps this to --setting-sources "" plus autoMemoryEnabled=false
+   * (deliberately not --bare, which also severs OAuth auth); Codex disables
+   * project-doc loading via -c project_doc_max_bytes=0.
    */
   shouldIgnoreProjectContext?: boolean;
 }

@@ -646,6 +646,8 @@ describe("Coordinator", () => {
     const report = await loadReport(fixture.stateDir, alphaId);
     if (!report || isCorruptReport(report))
       throw new Error("pipeline should save a valid report before integration");
+    // Narrowing does not flow into class method bodies; capture the commit.
+    const signedOffCommit = report.commit;
 
     const barriers: { recordedPhase: string | undefined; mergeVisibleInTarget: boolean }[] = [];
     class BarrierObservingEventLog extends EventLog {
@@ -654,7 +656,7 @@ describe("Coordinator", () => {
         const records = await integrationRecords(fixture.stateDir);
         barriers.push({
           recordedPhase: records.get(alphaId)?.phase,
-          mergeVisibleInTarget: await isAncestor(fixture.repo, report.commit, "main"),
+          mergeVisibleInTarget: await isAncestor(fixture.repo, signedOffCommit, "main"),
         });
       }
     }

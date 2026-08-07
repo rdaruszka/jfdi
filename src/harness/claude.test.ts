@@ -92,10 +92,9 @@ describe("mapClaudeLine", () => {
     });
     const [event] = mapClaudeLine(line);
     expect(event).toMatchObject({ type: "result", ok: true });
-    expect(event.type === "result" ? event.usage : undefined).toBeDefined();
-    expect(event.type === "result" ? event.usage?.model : "unset").toBe(
-      "claude-opus-4-8-provider-ran",
-    );
+    if (event?.type !== "result") throw new Error("expected a result event");
+    expect(event.usage).toBeDefined();
+    expect(event.usage?.model).toBe("claude-opus-4-8-provider-ran");
   });
 
   it("maps error results as not ok", () => {

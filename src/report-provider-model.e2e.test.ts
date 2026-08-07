@@ -195,13 +195,19 @@ async function ticketIdOf(sandbox: Sandbox): Promise<string> {
  * under JFDI_HOME. The project-key subdirectory is derived, so find it rather
  * than reconstruct it.
  */
-async function readStageEnds(
-  sandbox: Sandbox,
-): Promise<Array<{ stage?: string; model?: string; modelSource?: string }>> {
+async function readStageEnds(sandbox: Sandbox): Promise<
+  Array<{
+    stage?: string | undefined;
+    model?: string | undefined;
+    modelSource?: string | undefined;
+  }>
+> {
   const projectsDir = path.join(sandbox.jfdiHome, "projects");
   const keys = await fs.readdir(projectsDir);
-  if (keys.length !== 1) throw new Error(`expected one project key, got: ${keys.join(", ")}`);
-  const raw = await fs.readFile(path.join(projectsDir, keys[0], "events.jsonl"), "utf8");
+  const [projectKey] = keys;
+  if (keys.length !== 1 || projectKey === undefined)
+    throw new Error(`expected one project key, got: ${keys.join(", ")}`);
+  const raw = await fs.readFile(path.join(projectsDir, projectKey, "events.jsonl"), "utf8");
   return raw
     .split("\n")
     .filter(Boolean)

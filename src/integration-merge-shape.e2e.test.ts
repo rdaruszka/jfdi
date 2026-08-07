@@ -270,7 +270,10 @@ async function runToMergeReady(
   file: string,
   rounds?: number,
 ): Promise<{ ticketId: string; signedOff: string }> {
-  const run = await runCli(sandbox, ["run", cardText], { file, rounds });
+  const run = await runCli(sandbox, ["run", cardText], {
+    file,
+    ...(rounds === undefined ? {} : { rounds }),
+  });
   expect(run.code, run.output).toBe(0);
   expect(run.output).toContain("ready to merge");
   const ticketId = ticketIdOf(run.output);

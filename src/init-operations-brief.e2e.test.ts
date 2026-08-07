@@ -116,16 +116,25 @@ describe("jfdi init builds an isolated fresh-eyes setup session", () => {
   it("isolates the session from the project's own agent instructions", async () => {
     const { args, systemPrompt } = await runInitAndCapturePrompt();
 
-    // --bare keeps CLAUDE.md/AGENTS.md auto-discovery, hooks, and memory out
-    // of the session; the appended system prompt is deliberately brand-free.
-    expect(args).toContain("--bare");
+    // --setting-sources "" keeps CLAUDE.md/AGENTS.md auto-discovery, settings,
+    // and hooks out of the session (not --bare — that severs OAuth auth), and
+    // autoMemoryEnabled=false keeps the user's per-project auto-memory out —
+    // a separate subsystem --setting-sources does not cover. The appended
+    // system prompt is deliberately brand-free.
+    const settingSourcesFlagIndex = args.indexOf("--setting-sources");
+    expect(settingSourcesFlagIndex).toBeGreaterThan(-1);
+    expect(args[settingSourcesFlagIndex + 1]).toBe("");
+    const settingsFlagIndex = args.indexOf("--settings");
+    expect(settingsFlagIndex).toBeGreaterThan(-1);
+    expect(args[settingsFlagIndex + 1]).toBe('{"autoMemoryEnabled": false}');
     expect(systemPrompt).toContain("agentic coding workflow");
     expect(systemPrompt).not.toContain("JFDI");
   });
 
   // A stale prompts directory (from any earlier era) is retired before the
-  // session, so no on-disk prompt can shadow or contaminate the setup agent.
-  it("retires a pre-existing prompts directory before the session", async () => {
+  // session and replaced with clean generic defaults, so no earlier prompt
+  // text can shadow or contaminate the setup agent.
+  it("retires a pre-existing prompts directory and reseeds defaults", async () => {
     const legacyBootstrapPrompt =
       "You are bootstrapping **JFDI** (an automated implement → review → QA → merge\n" +
       "pipeline) for this repository. A skeleton .jfdi/ directory has just been scaffolded.";
@@ -134,7 +143,11 @@ describe("jfdi init builds an isolated fresh-eyes setup session", () => {
 
     expect(systemPrompt).not.toContain("bootstrapping **JFDI**");
     expect(userPrompt).not.toContain("bootstrapping **JFDI**");
-    await expect(fs.access(path.join(project, ".jfdi/prompts"))).rejects.toThrow();
+    // The stale init.md is gone from prompts/ (init's prompt is source-owned,
+    // so the reseeded set never contains one).
+    const reseeded = await fs.readdir(path.join(project, ".jfdi/prompts"));
+    expect(reseeded).not.toContain("init.md");
+    expect(reseeded).toHaveLength(8);
   });
 
   // Retired means preserved for the human, byte-for-byte — never deleted.

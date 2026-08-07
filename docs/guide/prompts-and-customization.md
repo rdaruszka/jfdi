@@ -131,7 +131,9 @@ session**, deliberately isolated from everything that could pre-frame it:
   brand-free: the agent configures "an agentic coding workflow," not a named
   product.
 - The project's own agent instructions (AGENTS.md/CLAUDE.md) are **not**
-  ingested (`--bare` on Claude, `project_doc_max_bytes=0` on Codex). The
+  ingested, and neither is the user's per-project auto-memory
+  (`--setting-sources ""` plus `autoMemoryEnabled=false` on Claude,
+  `project_doc_max_bytes=0` on Codex). The
   agent reads them during exploration as material to evaluate and rewrite,
   never as instructions to itself.
 - The opening user message is the action sequence: explore the project's
@@ -146,10 +148,13 @@ creates. Use init both for first setup and later full-setup revisits. Its
 first instinct is a mechanical rule rather than more prompt prose: when
 tooling can enforce a standard, review tokens stop being spent on it forever.
 
-The scaffold always runs first, never overwrites existing files, and **seeds
-no prompts** — the pipeline materializes stage prompt defaults on first use.
-If a `prompts/` directory already exists (a re-init, or a project scaffolded
-by an older version), the scaffold retires it wholesale to a timestamped
-`.jfdi/prompts.backup-*/` directory: preserved byte-for-byte for the human,
-gitignored, and explicitly off-limits to the setup agent, so no earlier
-prompt text can shadow or contaminate the fresh look.
+The scaffold always runs first and never overwrites existing files, with one
+deliberate exception: an existing `prompts/` directory is retired wholesale
+to a timestamped `.jfdi/prompts.backup-*/` directory — preserved
+byte-for-byte for the human, gitignored, and explicitly off-limits to the
+setup agent — and fresh generic defaults are seeded in its place. Building
+those defaults into project-specific stage prompts is the init session's
+core deliverable: every prompt file, adapted to what its stage needs to know
+about this project, with the `{{VAR}}` placeholders and verdict-schema
+blocks preserved exactly. No earlier adaptation can shadow or contaminate
+the fresh look.

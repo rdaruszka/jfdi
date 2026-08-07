@@ -373,14 +373,22 @@ export class ClaudeHarness implements Harness {
 
   spawnInteractive(prompt: string, options: InteractiveSpawnOptions): Promise<number> {
     // Selection and permission flags are session-scoped on the interactive
-    // CLI too. --bare keeps the project's own CLAUDE.md/AGENTS.md, hooks, and
-    // memory out of the session; --append-system-prompt layers the caller's
-    // framing on the stock system prompt rather than replacing it, so the
-    // CLI's own operating behavior stays intact.
+    // CLI too. Project-context isolation takes two flags, NOT --bare (which
+    // also refuses OAuth/keychain auth and would strand a subscription login
+    // at "Not logged in"): --setting-sources "" keeps the project's own
+    // CLAUDE.md/AGENTS.md, settings, and hooks out of the session, and
+    // autoMemoryEnabled=false keeps the user's per-project auto-memory out —
+    // a separate subsystem that --setting-sources does not cover (both
+    // verified against Claude Code v2.1.220, Aug 2026).
+    // --append-system-prompt layers the caller's framing on the stock system
+    // prompt rather than replacing it, so the CLI's own operating behavior
+    // stays intact.
     const args = [
       ...claudePermissionArgs(this.permissionMode, "interactive"),
       ...claudeSelectionArgs(this.selection),
-      ...(options.shouldIgnoreProjectContext ? ["--bare"] : []),
+      ...(options.shouldIgnoreProjectContext
+        ? ["--setting-sources", "", "--settings", '{"autoMemoryEnabled": false}']
+        : []),
       ...(options.systemPrompt === undefined
         ? []
         : ["--append-system-prompt", options.systemPrompt]),

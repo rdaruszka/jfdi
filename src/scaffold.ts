@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { createBoardIfMissing } from "./board.js";
 import { defaultConfig, type JfdiConfig } from "./config.js";
+import { ensurePrompts, isPristineDefaultPromptSet } from "./prompts.js";
 import { atomicWrite, ensureDir, fileExists } from "./util/fsx.js";
 
 /**
@@ -98,12 +99,14 @@ exit 0
 
 /**
  * Full .jfdi/ scaffold for \`jfdi init\`: config, board, tickets dir, sandbox
- * contract. Idempotent — existing files are never overwritten. Deliberately
- * absent: stage prompts. The init agent must see the project with fresh eyes,
- * so nothing pre-seeds \`prompts/\` (the pipeline materializes defaults on
- * first use via loadPrompt), and an existing prompts directory is retired to
- * a timestamped backup the agent is instructed never to read. Returns the
- * backup's path when that happened, so the caller can tell the human.
+ * contract, and the generic stage prompt defaults. Idempotent — existing
+ * files are never overwritten — with one deliberate exception: an existing
+ * \`prompts/\` directory is retired wholesale to a timestamped backup the
+ * init agent is instructed never to read, and fresh generic defaults are
+ * seeded in its place. Instantiating those defaults for the project is the
+ * init session's core deliverable, and it must start from clean raw
+ * material, never from an earlier adaptation. Returns the backup's path when
+ * a retirement happened, so the caller can tell the human.
  */
 export async function scaffoldJfdi(
   repoRoot: string,
@@ -113,11 +116,15 @@ export async function scaffoldJfdi(
   await ensureJfdiGitignore(jfdiDir);
   const promptsPath = path.join(jfdiDir, "prompts");
   let retiredPromptsPath: string | null = null;
-  if (await fileExists(promptsPath)) {
+  // A pristine default set has nothing worth backing up — retiring it would
+  // just stack meaningless backups on every rerun. Anything else (an
+  // adaptation, a stale file from an earlier era) is retired wholesale.
+  if ((await fileExists(promptsPath)) && !(await isPristineDefaultPromptSet(jfdiDir))) {
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     retiredPromptsPath = path.join(jfdiDir, `prompts.backup-${timestamp}`);
     await fs.rename(promptsPath, retiredPromptsPath);
   }
+  await ensurePrompts(jfdiDir);
   const configPath = path.join(jfdiDir, "config.json");
   if (!(await fileExists(configPath))) {
     await atomicWrite(configPath, `${JSON.stringify(config, null, 2)}\n`);

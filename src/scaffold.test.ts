@@ -19,7 +19,7 @@ afterEach(async () => {
 });
 
 describe("scaffoldJfdi", () => {
-  it("creates config, board, tickets dir, sandbox, and state gitignore — no prompts", async () => {
+  it("creates config, board, tickets dir, prompts, sandbox, and state gitignore", async () => {
     await scaffoldJfdi(root, jfdiDir);
     const scaffoldedConfig = JSON.parse(
       await fs.readFile(path.join(jfdiDir, "config.json"), "utf8"),
@@ -37,9 +37,9 @@ describe("scaffoldJfdi", () => {
     ]);
     const stats = await fs.stat(path.join(jfdiDir, "tickets"));
     expect(stats.isDirectory()).toBe(true);
-    // No prompts are seeded: the setup agent starts fresh, and the pipeline
-    // materializes stage prompt defaults on first use (loadPrompt).
-    await expect(fs.access(path.join(jfdiDir, "prompts"))).rejects.toThrow();
+    // The eight generic stage prompt defaults — the raw material the init
+    // session instantiates for the project.
+    expect(await fs.readdir(path.join(jfdiDir, "prompts"))).toHaveLength(8);
     expect(await fs.readFile(path.join(jfdiDir, "sandbox.md"), "utf8")).toContain(
       "Sandbox Contract",
     );
@@ -58,7 +58,7 @@ describe("scaffoldJfdi", () => {
     for (const gone of ["runs/", "events.jsonl", "state.json"]) expect(ignore).not.toContain(gone);
   });
 
-  it("retires an existing prompts directory to a backup and reports it", async () => {
+  it("retires an existing prompts directory to a backup and reseeds defaults", async () => {
     const promptsDir = path.join(jfdiDir, "prompts");
     await fs.mkdir(promptsDir, { recursive: true });
     await fs.writeFile(path.join(promptsDir, "implementation.md"), "tuned prompt — keep me");
@@ -67,16 +67,16 @@ describe("scaffoldJfdi", () => {
 
     expect(retiredPromptsPath).not.toBeNull();
     expect(path.basename(retiredPromptsPath ?? "")).toMatch(/^prompts\.backup-/);
-    // The prompts directory is gone; the tuned file survives in the backup.
-    await expect(fs.access(promptsDir)).rejects.toThrow();
+    // The tuned file survives byte-for-byte in the backup...
     const preserved = await fs.readFile(
       path.join(retiredPromptsPath ?? "", "implementation.md"),
       "utf8",
     );
     expect(preserved).toBe("tuned prompt — keep me");
-    // With nothing left to retire, a rerun reports no backup.
-    const rerun = await scaffoldJfdi(root, jfdiDir);
-    expect(rerun.retiredPromptsPath).toBeNull();
+    // ...and the prompts directory holds clean generic defaults again — the
+    // raw material the init session instantiates, never the old adaptation.
+    const reseeded = await fs.readFile(path.join(promptsDir, "implementation.md"), "utf8");
+    expect(reseeded).toContain("Implement the ticket below completely");
   });
 
   it("is idempotent and never overwrites user files", async () => {

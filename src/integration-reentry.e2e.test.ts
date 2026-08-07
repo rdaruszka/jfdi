@@ -199,7 +199,7 @@ interface CoordinatorPostCondition {
 }
 
 interface SignalableChild {
-  pid: number | undefined;
+  pid?: number | undefined;
   kill: (signal?: number | NodeJS.Signals) => boolean;
 }
 
