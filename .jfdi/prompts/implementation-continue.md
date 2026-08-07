@@ -13,6 +13,10 @@ way as before.
   ends, and a failure comes straight back to you as feedback. These are the checks
   your work will face:
 {{GATE_COMMANDS}}
+- This session has no auto-format hook: before finishing, format the files you
+  touched with `pnpm exec biome check --write <files>`.
+- If you touched `docs/coding-guidelines.md` or `docs/jfdi-operations.md`, run
+  `pnpm sync:guidelines` — never hand-edit the generated modules.
 - Stay inside this worktree; touch no branch other than `{{BRANCH}}`.
 
 ## Reporting your result (required)

@@ -25,8 +25,12 @@ The test: a file copied into target projects at init is **product content** (edi
 The project's own mechanical gate — all must exit zero before any handoff:
 
 ```bash
-pnpm build && pnpm test && pnpm lint
+pnpm build && pnpm exec tsc -p tsconfig.json --noEmit && pnpm test && pnpm lint
 ```
+
+(`pnpm build` compiles `tsconfig.build.json`, which excludes test files; the
+explicit `tsc -p tsconfig.json --noEmit` step type-checks the whole tree, tests
+included, under the same strict options.)
 
 JFDI is self-hosting from milestone 1: JFDI's own tickets become its first board, so keep the gate fast and strict. Prefer encoding standards into biome/vitest/tsconfig over prose review comments.
 
@@ -56,7 +60,8 @@ scripts/playground.mjs     — `pnpm playground`: mint a disposable half-app cop
   tickets/             one markdown note per non-trivial ticket
   sandbox.md           QA sandbox contract
   prompts/             stage prompt templates (plus the scribe's commit-message.md);
-                       materialized on the pipeline's first use, never by init
+                       init retires any existing set to prompts.backup-*/, seeds
+                       generic defaults, and its session instantiates them
   worktrees/<ticket-id>/ — per-run isolated checkout (gitignored)
 
 ~/.jfdi/projects/<project-key>/  — run state, outside the project:
@@ -94,7 +99,7 @@ Use these terms exactly; introduce no synonyms. The list grows only by editing t
 - **state directory** — `~/.jfdi/projects/<project-key>/`, where one project's run state lives: `runs/`, `events.jsonl`, `state.json`.
 - **stage** — one fresh agent session within a run: Implementation, Code Review, QA.
 - **scribe** — the cheap, read-only, single-shot session that writes one commit message from the staged diff, the ticket, and the completing stage's summary. Pipeline plumbing that uses a session, selected by `stages["commit-message"]`: no verdict, no round, no sign-off — not a stage.
-- **gate** — the mechanical check (`pnpm build && pnpm test && pnpm lint`); all must exit zero. Pipeline-run: agents are told not to run it.
+- **gate** — the mechanical check (`pnpm build && pnpm exec tsc -p tsconfig.json --noEmit && pnpm test && pnpm lint`); all must exit zero. Pipeline-run: agents are told not to run it.
 - **round** — one feedback cycle ending at another agent: fix → gate (with in-round gate-fix sessions, capped at 10) → reviews (cap: `pipeline.max_rounds`). Gate failures alone do not consume a round.
 - **sign-off** — a review stage's approval, bound to a specific commit — the pipeline's handoff commit for the session under review.
 - **integration** — the coordinator-owned merge → gate → land step; globally serialized. Lands one merge commit per ticket; the signed-off commit stays reachable as its second parent.

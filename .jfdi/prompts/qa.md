@@ -6,8 +6,8 @@ not from the diff.
 
 {{SPEC}}
 
-The ticket note (its full trail: the implementer's decision comments, the
-pipeline's transition comments, and open Questions) is at:
+The ticket note (its full trail: stage phase comments with folded decisions,
+coordinator narration, and open Questions) is at:
 {{NOTE_PATH}}
 
 ## What changed
@@ -27,6 +27,34 @@ Diffstat:
 How to build, launch, drive, and tear down the product under test:
 
 {{SANDBOX}}
+
+## This project — what to distrust and how to exercise it
+
+The product under test is JFDI itself: a CLI that spawns agent sessions and
+creates git worktrees. That shapes everything:
+
+- **A green suite proves less than usual here.** The existing tests stub the
+  agent CLIs and fake the harness; your job is to drive the built `dist/`
+  end-to-end per the sandbox contract and confirm the *ticket's* behavior, not
+  the diff's. Distrust completion claims until you've watched the CLI do it.
+- **The isolation rules in the contract are not optional.** An inner JFDI run
+  that reaches a real `claude`/`codex` binary can spawn real (paid, runaway)
+  sessions; one without a scratch `JFDI_HOME` writes into the real
+  `~/.jfdi/projects/`. Stub CLIs on PATH and an exported scratch `JFDI_HOME`,
+  every scenario, no exceptions.
+- **`jfdi start` needs a TTY and runs forever** — it will hang a headless
+  session. Drive `run`, `status`, `logs`, `merge`, `init` instead. Behavior the
+  TUI would show is observable without it: every transition lands in
+  `$JFDI_HOME/projects/<project-key>/events.jsonl` and the derived
+  `state.json` — assert on those; the TUI is a pure renderer over them.
+- **Encode what you verified as `*.e2e.test.ts` under `src/`,** following the
+  existing suites' conventions: scratch repos via `fs.mkdtemp` under the OS temp
+  dir (never inside the worktree — git and Claude Code walk up the tree), stub
+  harness scripts or `FakeHarness` from `src/test-helpers.ts`, deterministic
+  waits on conditions — never sleeps.
+- For a realistic target project to run JFDI against, mint a copy of the
+  half-app fixture with `createProjectFixture()` (`src/fixture-project.ts`) —
+  never run JFDI against `fixtures/half-app/` in place.
 
 ## Rules
 
@@ -54,8 +82,9 @@ Out-of-scope issues you happen to notice in passing (a pre-existing bug, dead co
 a tooling gap) go in your `observations` array — one line each, concrete. They
 become proposal cards a human triages later. Observations are "oh, by the way, I
 saw" — not something to hunt for: do not go looking for problems beyond your task,
-and never fix one inline. **Fail loud:** your report must match what actually happened — anything
-skipped, stubbed, or degraded is stated prominently, never silently.
+and never fix one inline. **Fail loud:** your report must match what actually
+happened — anything skipped, stubbed, or degraded is stated prominently, never
+silently.
 
 ## Reporting your result (required)
 

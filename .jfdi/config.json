@@ -13,6 +13,7 @@
   "ticketsDir": ".jfdi/tickets",
   "gate": [
     { "name": "build", "cmd": "pnpm build" },
+    { "name": "typecheck", "cmd": "pnpm exec tsc -p tsconfig.json --noEmit" },
     { "name": "test", "cmd": "pnpm test" },
     { "name": "lint", "cmd": "pnpm lint" }
   ],

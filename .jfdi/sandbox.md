@@ -24,6 +24,17 @@ worktree). Useful commands and expectations:
 - `... logs <ticket-id>` — raw session logs for the latest run
 - `... merge <ticket-id>` — approve a ready-to-merge ticket
 
+**`jfdi start` is off-limits headless:** it refuses without a TTY and never
+exits on its own. Everything it would show is observable anyway — every
+transition appends to `$JFDI_HOME/projects/<project-key>/events.jsonl` and
+`state.json` is the derived snapshot; assert on those files (the TUI is a pure
+renderer over them).
+
+For a realistic target project, mint a copy of the half-app fixture via
+`createProjectFixture()` (`src/fixture-project.ts`) — it lands outside any
+parent git repo with real history and a green baseline gate. Never run JFDI
+against `fixtures/half-app/` in place; the template has no `.git`.
+
 ## Isolation rules (critical — self-hosting)
 
 JFDI-under-test spawns its own agent sessions and creates its own worktrees:
@@ -41,7 +52,7 @@ JFDI-under-test spawns its own agent sessions and creates its own worktrees:
    stub that answers it lets a test assert on real commit subjects.
 3. The inner JFDI gets its own `.jfdi/` setup inside the scratch repo (its
    `init --bare` creates it). Never point it at this repo's `.jfdi/`.
-4. **Always export `JFDI_HOME` to a scratch directory.** Run state now lives in
+4. **Always export `JFDI_HOME` to a scratch directory.** Run state lives in
    `~/.jfdi/projects/<project-key>/`; without the override, JFDI-under-test
    writes into the real home directory.
 5. Configure the scratch repo's git user (`git config user.email/name`) or
