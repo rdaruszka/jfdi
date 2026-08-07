@@ -60,6 +60,7 @@ fs.writeFileSync(process.env.TRACE_PATH, JSON.stringify({
   args: process.argv.slice(2),
   cwd: process.cwd(),
 }));
+process.exit(Number(process.env.SESSION_EXIT ?? 0));
 `;
   await Promise.all(
     ["claude", "codex"].map((executable) =>
@@ -141,6 +142,53 @@ describe("interactive provider selection", () => {
     expect(trace.args).not.toContain("--effort");
     expect(trace.args.at(-1)).toContain("You are configuring **JFDI**");
     expect(trace.cwd).toBe(sandbox.project);
+  });
+
+  it("verifies the gate itself after a session that exited cleanly", async () => {
+    const sandbox = await makeProject();
+    const { stdout } = await runCli(sandbox.project, sandbox.environment, ["init"]);
+    expect(stdout).toContain("gate verified");
+  });
+
+  it("scaffolds without launching a session under --bare", async () => {
+    const sandbox = await makeProject();
+    const { stdout } = await runCli(sandbox.project, sandbox.environment, ["init", "--bare"]);
+
+    expect(stdout).toContain("scaffolded .jfdi/");
+    expect(stdout).not.toContain("gate verified");
+    await expect(fs.access(sandbox.tracePath)).rejects.toThrow();
+  });
+
+  it("no longer exposes a convo command", async () => {
+    const sandbox = await makeProject();
+    let failure: unknown;
+    try {
+      await runCli(sandbox.project, sandbox.environment, ["convo"]);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining('unknown command "convo"'),
+    });
+    await expect(fs.access(sandbox.tracePath)).rejects.toThrow();
+  });
+
+  it("propagates the session exit code while still running the gate backstop", async () => {
+    const sandbox = await makeProject();
+    let failure: unknown;
+    try {
+      await runCli(sandbox.project, { ...sandbox.environment, SESSION_EXIT: "3" }, ["init"]);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({
+      code: 3,
+      stderr: expect.stringContaining("setup session exited with code 3"),
+      stdout: expect.stringContaining("gate verified"),
+    });
   });
 
   it("reloads the post-session config and reports the failing gate step", async () => {
