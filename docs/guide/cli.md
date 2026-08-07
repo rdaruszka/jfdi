@@ -126,8 +126,8 @@ Sets up or revisits JFDI in the current repo, in three parts:
 
 1. **Scaffold** (idempotent — existing files are never overwritten):
    `.jfdi/config.json` with defaults, the board with all six columns, the
-   tickets directory, the nine prompt files, a sandbox contract skeleton, the
-   Claude settings + format-hook pair, and `.jfdi/.gitignore`.
+   tickets directory, the eight unattended prompt files, a sandbox contract
+   skeleton, the Claude settings + format-hook pair, and `.jfdi/.gitignore`.
 2. **Conversational setup**: an interactive session surveys the repo and current
    `.jfdi/` state, infers what it can, then interviews you one question at a time.
    It presents a complete setup plan and writes nothing until you explicitly

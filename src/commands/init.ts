@@ -9,7 +9,7 @@ import { CODING_GUIDELINES } from "../guidelines.js";
 import { createHarness, EFFORT_LEVELS_BY_HARNESS } from "../harness/index.js";
 import type { HarnessName } from "../harness/types.js";
 import { JFDI_OPERATIONS } from "../jfdi-operations.js";
-import { loadPrompt, renderPrompt } from "../prompts.js";
+import { INIT_PROMPT, renderPrompt } from "../prompts.js";
 import { scaffoldJfdi } from "../scaffold.js";
 
 const DEFAULT_INIT_HARNESS: HarnessName = "claude";
@@ -73,8 +73,7 @@ export async function initCommand(options: InitOptions = {}): Promise<number> {
   }
 
   console.log("launching a conversational setup session…\n");
-  const template = await loadPrompt(jfdiDir, "init");
-  const prompt = renderPrompt(template, { CODING_GUIDELINES, JFDI_OPERATIONS });
+  const prompt = renderPrompt(INIT_PROMPT, { CODING_GUIDELINES, JFDI_OPERATIONS });
   const exitCode = await createHarness(
     "implementation",
     initSessionConfig(options),

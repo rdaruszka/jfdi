@@ -14,13 +14,14 @@ project.
 
 ## Stage prompts
 
-Every prompt JFDI uses is a markdown file under `.jfdi/prompts/`, seeded on first
-use and versioned with your repo. **The file on disk is authoritative**: JFDI
-compiles in defaults, but if a file exists it is used verbatim, and a missing
-file is written out before use — what ran is always on disk, never a silent
-in-code fallback. Edit freely; delete a file to get the current default back.
+Every prompt JFDI uses for unattended work is a markdown file under
+`.jfdi/prompts/`, seeded on first use and versioned with your repo. **The file on
+disk is authoritative**: JFDI compiles in defaults, but if a file exists it is
+used verbatim, and a missing file is written out before use — what ran is always
+on disk, never a silent in-code fallback. Edit freely; delete a file to get the
+current default back.
 
-Nine files:
+Eight files:
 
 | File | Used by |
 |---|---|
@@ -32,7 +33,6 @@ Nine files:
 | `qa-continue.md` | Continuing QA in a later round |
 | `integration.md` | The conflict-resolution session during integration |
 | `commit-message.md` | The [scribe](pipeline.md#commits-and-the-scribe) — every commit message the pipeline writes |
-| `init.md` | The conversational `jfdi init` setup prompt |
 
 ### Template variables
 
@@ -61,7 +61,6 @@ Stage-specific additions:
 | `qa-continue` | `LAST_SEEN_COMMIT`, `HEAD_COMMIT`, `PROVENANCE`, `NEW_COMMITS`, `TOUCHED_FILES` |
 | `integration` | (common set only) |
 | `commit-message` | `TICKET_ID`, `SPEC`, `STAGE`, `ROUND`, `MAX_ROUNDS`, `STAGE_SUMMARY` (what the session reported it did), `STAGED_DIFF` (what is about to be committed), `RECENT_LOG` (the house style), `STATUS_LINE` (the line the pipeline appends) — and no `VERDICT_PATH`: the scribe answers with the message itself |
-| `init` | `JFDI_OPERATIONS` (the operational brief compiled from [docs/jfdi-operations.md](../jfdi-operations.md)), `CODING_GUIDELINES` (the generic guidelines compiled from [docs/coding-guidelines.md](../coding-guidelines.md)) |
 
 If you edit a prompt, keep two blocks intact unless you know what you're doing:
 the **verdict instructions** (the pipeline reads outcomes only from the verdict
@@ -122,17 +121,21 @@ only to JFDI-spawned sessions, never to your own `.claude/` setup.
 
 ## Conversational init
 
-`jfdi init` launches the provider's native interactive CLI with `init.md` as its
-first user message. The prompt requires a survey before questions, one question
-at a time, a complete setup plan, and explicit approval before any write. Use it
+`jfdi init` launches the provider's native interactive CLI with JFDI's internal
+init prompt as its first user message. Unlike unattended stage prompts, the init
+prompt is not seeded on disk or user-tunable: the human watches this bootstrap
+session live, and its prompt must not depend on files the bootstrap creates. The
+internal prompt includes the current operational brief and generic coding
+guidelines, requires a survey before questions, asks one question at a time, and
+requires a complete setup plan with explicit approval before any write. Use init
 both for first setup and later conversations such as "QA keeps missing X" or
-"reviews keep nitpicking Y." Its first instinct is a mechanical rule rather
-than more prompt prose: when tooling can enforce a standard, review tokens stop
-being spent on it forever.
+"reviews keep nitpicking Y." Its first instinct is a mechanical rule rather than
+more prompt prose: when tooling can enforce a standard, review tokens stop being
+spent on it forever.
 
-The scaffold always runs first and never overwrites existing files. A prompt,
-sandbox contract, or config still at its recognizable seed is available to
-fill; human-tuned content is proposed for change and remains untouched until
-the plan is approved. The on-disk prompt remains authoritative, so projects
-scaffolded by an older JFDI keep their existing `init.md` until they replace or
-edit it.
+The scaffold always runs first and never overwrites existing files. A stage
+prompt, sandbox contract, or config still at its recognizable seed is available
+to fill; human-tuned content is proposed for change and remains untouched until
+the plan is approved. Projects scaffolded by older versions may retain
+`.jfdi/prompts/init.md` or `.jfdi/prompts/convo.md`; both files are inert and
+`jfdi init` ignores them.

@@ -2,7 +2,13 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ensurePrompts, formatGateCommands, loadPrompt, renderPrompt } from "./prompts.js";
+import {
+  ensurePrompts,
+  formatGateCommands,
+  INIT_PROMPT,
+  loadPrompt,
+  renderPrompt,
+} from "./prompts.js";
 
 let dir: string;
 
@@ -21,7 +27,7 @@ describe("renderPrompt", () => {
 });
 
 describe("ensurePrompts / loadPrompt", () => {
-  it("seeds all nine prompt files", async () => {
+  it("seeds all eight on-disk prompt files", async () => {
     await ensurePrompts(dir);
     const files = await fs.readdir(path.join(dir, "prompts"));
     expect(files.sort()).toEqual([
@@ -30,7 +36,6 @@ describe("ensurePrompts / loadPrompt", () => {
       "commit-message.md",
       "implementation-continue.md",
       "implementation.md",
-      "init.md",
       "integration.md",
       "qa-continue.md",
       "qa.md",
@@ -46,23 +51,33 @@ describe("ensurePrompts / loadPrompt", () => {
     expect(await loadPrompt(dir, "qa")).toBe("my custom QA prompt {{VERDICT_PATH}}");
   });
 
-  it("seeds the operations brief before the coding guidelines in the init prompt", async () => {
-    const prompt = await loadPrompt(dir, "init");
-    const operationsIndex = prompt.indexOf("{{JFDI_OPERATIONS}}");
-    const guidelinesIndex = prompt.indexOf("{{CODING_GUIDELINES}}");
+  it("leaves legacy init prompt files untouched", async () => {
+    const promptsDirectory = path.join(dir, "prompts");
+    await fs.mkdir(promptsDirectory);
+    await fs.writeFile(path.join(promptsDirectory, "init.md"), "legacy init");
+    await fs.writeFile(path.join(promptsDirectory, "convo.md"), "legacy convo");
+
+    await ensurePrompts(dir);
+
+    expect(await fs.readFile(path.join(promptsDirectory, "init.md"), "utf8")).toBe("legacy init");
+    expect(await fs.readFile(path.join(promptsDirectory, "convo.md"), "utf8")).toBe("legacy convo");
+  });
+
+  it("places the operations brief before the coding guidelines in the internal init prompt", () => {
+    const operationsIndex = INIT_PROMPT.indexOf("{{JFDI_OPERATIONS}}");
+    const guidelinesIndex = INIT_PROMPT.indexOf("{{CODING_GUIDELINES}}");
     expect(operationsIndex).toBeGreaterThan(-1);
     expect(guidelinesIndex).toBeGreaterThan(operationsIndex);
   });
 
-  it("makes init conversational and forbids writes before plan approval", async () => {
-    const prompt = await loadPrompt(dir, "init");
-    expect(prompt).toContain("Survey without writing");
-    expect(prompt).toContain("Interview one question at a time");
-    expect(prompt).toContain("anything else they want to cover");
-    expect(prompt).toContain("Get explicit approval");
-    expect(prompt).toContain("write anything until they do");
-    expect(prompt).toContain("project's AGENTS.md");
-    expect(prompt).toContain(".jfdi/scripts/");
+  it("makes init conversational and forbids writes before plan approval", () => {
+    expect(INIT_PROMPT).toContain("Survey without writing");
+    expect(INIT_PROMPT).toContain("Interview one question at a time");
+    expect(INIT_PROMPT).toContain("anything else they want to cover");
+    expect(INIT_PROMPT).toContain("Get explicit approval");
+    expect(INIT_PROMPT).toContain("write anything until they do");
+    expect(INIT_PROMPT).toContain("project's AGENTS.md");
+    expect(INIT_PROMPT).toContain(".jfdi/scripts/");
   });
 
   it("seeds the default on load when the file is absent, and the file is authoritative", async () => {
