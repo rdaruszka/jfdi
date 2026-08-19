@@ -309,6 +309,7 @@ describe("CLI surface", () => {
         "hooks",
         "prompts",
         "sandbox.md",
+        "ticket-format.md",
         "tickets",
       ]);
       // The eight generic stage prompt defaults — raw material the init
