@@ -43,9 +43,10 @@ The test: a file copied into target projects at init is **product content**
 This repo's own coding standards are AGENTS.md plus `biome.json`/
 `tsconfig.json` — never the shipped guideline docs.
 
-One generated file: `src/guidelines.ts` is compiled from
-`docs/coding-guidelines.md` by `pnpm sync:guidelines`, and a test fails the gate
-if the two drift. Edit the doc, then regenerate.
+The product-content modules `src/guidelines.ts`, `src/jfdi-operations.ts`, and
+`src/ticket-format.ts` are compiled from their matching authoritative files
+under `docs/` by `pnpm sync:guidelines`; drift tests fail the gate when a module
+and its source differ. Edit the doc, then regenerate.
 
 ## Testing
 

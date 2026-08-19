@@ -94,8 +94,12 @@ describe("ensurePrompts / loadPrompt", () => {
     expect(INIT_USER_PROMPT).toContain("anything\n   else they want to cover");
     expect(INIT_USER_PROMPT).toContain("get explicit approval");
     expect(INIT_USER_PROMPT).toContain("Write nothing until the human approves");
-    expect(INIT_USER_PROMPT).toContain("Never\n   open any backup directory");
+    expect(INIT_USER_PROMPT).toContain("Never open any backup directory");
     expect(INIT_USER_PROMPT).toContain("AGENTS.md");
+    expect(INIT_USER_PROMPT).toContain(
+      "It must point to .jfdi/ticket-format.md as required reading",
+    );
+    expect(INIT_USER_PROMPT).toContain("The ticket-format file is shipped reference material");
     expect(INIT_USER_PROMPT).toContain(".jfdi/scripts/");
   });
 

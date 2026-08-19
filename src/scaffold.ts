@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { createBoardIfMissing } from "./board.js";
 import { defaultConfig, type JfdiConfig } from "./config.js";
 import { ensurePrompts, isPristineDefaultPromptSet } from "./prompts.js";
+import { TICKET_FORMAT } from "./ticket-format.js";
 import { atomicWrite, ensureDir, fileExists } from "./util/fsx.js";
 
 /**
@@ -11,8 +12,9 @@ import { atomicWrite, ensureDir, fileExists } from "./util/fsx.js";
  * work-tracking artifacts external to the product (think JIRA), mutated mid-run
  * by human and coordinator alike (docs/guide/board-and-tickets.md). JFDI owns a .gitignore inside
  * .jfdi/ so this holds regardless of the repo's root .gitignore. (config.json,
- * sandbox.md, prompts/ remain versioned; runs/, events.jsonl and state.json
- * live outside the project entirely, under ~/.jfdi/projects/<project-key>/.)
+ * sandbox.md, ticket-format.md, prompts/ remain versioned; runs/, events.jsonl
+ * and state.json live outside the project entirely, under
+ * ~/.jfdi/projects/<project-key>/.)
  */
 const JFDI_GITIGNORE = `# JFDI worktrees — never committed
 worktrees/
@@ -98,15 +100,15 @@ exit 0
 `;
 
 /**
- * Full .jfdi/ scaffold for \`jfdi init\`: config, board, tickets dir, sandbox
- * contract, and the generic stage prompt defaults. Idempotent — existing
- * files are never overwritten — with one deliberate exception: an existing
- * \`prompts/\` directory is retired wholesale to a timestamped backup the
- * init agent is instructed never to read, and fresh generic defaults are
- * seeded in its place. Instantiating those defaults for the project is the
- * init session's core deliverable, and it must start from clean raw
- * material, never from an earlier adaptation. Returns the backup's path when
- * a retirement happened, so the caller can tell the human.
+ * Full .jfdi/ scaffold for \`jfdi init\`: config, board, tickets dir, ticket
+ * format, sandbox contract, and the generic stage prompt defaults. Idempotent
+ * — existing files are never overwritten — with one deliberate exception: an
+ * existing \`prompts/\` directory is retired wholesale to a timestamped backup
+ * the init agent is instructed never to read, and fresh generic defaults are
+ * seeded in its place. Instantiating those defaults for the project is the init
+ * session's core deliverable, and it must start from clean raw material, never
+ * from an earlier adaptation. Returns the backup's path when a retirement
+ * happened, so the caller can tell the human.
  */
 export async function scaffoldJfdi(
   repoRoot: string,
@@ -141,6 +143,8 @@ export async function scaffoldJfdi(
   ]);
   const sandboxPath = path.join(jfdiDir, "sandbox.md");
   if (!(await fileExists(sandboxPath))) await atomicWrite(sandboxPath, SANDBOX_TEMPLATE);
+  const ticketFormatPath = path.join(jfdiDir, "ticket-format.md");
+  if (!(await fileExists(ticketFormatPath))) await atomicWrite(ticketFormatPath, TICKET_FORMAT);
   const settingsPath = path.join(jfdiDir, "claude-settings.json");
   if (!(await fileExists(settingsPath))) await atomicWrite(settingsPath, CLAUDE_SETTINGS);
   const formatHookPath = path.join(jfdiDir, "hooks", "format.sh");
