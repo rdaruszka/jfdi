@@ -214,9 +214,10 @@ is absent.
   [Commits and the scribe](pipeline.md#commits-and-the-scribe). This section is
   also JFDI-owned; ticket-writing agents never create or edit it.
 
-Never put specification material below `## Questions` or `## Comments`: it is
-outside the description and never reaches a stage prompt. Before promotion to
-the begin column, scope the ticket to one pipeline run, ensure its acceptance
+Never put specification material below `## Questions` or `## Comments`. Open
+Questions reach stage prompts as unresolved escalations, not as description;
+from Comments, only folded decision blocks reach stage prompts. Before promotion
+to the begin column, scope the ticket to one pipeline run, ensure its acceptance
 criteria are testable by someone who did not write it, and for a bug name the
 reproduction.
 

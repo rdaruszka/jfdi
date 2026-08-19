@@ -89,11 +89,14 @@ The parts are:
   section is the description passed to stages. Your own \`##\` subsections,
   including Acceptance criteria and optional Technical context, are part of
   it.
-- **\`## Questions\` and \`## Comments\`.** These sections are JFDI-owned,
-  append-only run records. Ticket-writing agents must never create, edit, or
-  add prose to them. Never put specification material below either heading:
-  it is outside the description and will not reach a stage prompt. JFDI creates
-  these sections when a run needs them.
+- **\`## Questions\`.** This is JFDI's append-only escalation queue. Its open
+  questions reach stage prompts as questions awaiting answers, so specification
+  material placed here is misrepresented as an unresolved escalation rather
+  than read as part of the description.
+- **\`## Comments\`.** This is JFDI's append-only phase trail. Only decision
+  blocks folded into comments reach stage prompts; other material here does not.
+  Ticket-writing agents must never create, edit, or add prose to either
+  JFDI-owned section. JFDI creates them when a run needs them.
 
 ## Writing guidance
 
