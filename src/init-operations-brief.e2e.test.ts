@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { git } from "./git.js";
 import { CODING_GUIDELINES } from "./guidelines.js";
 import { JFDI_OPERATIONS } from "./jfdi-operations.js";
+import { TICKET_FORMAT } from "./ticket-format.js";
 
 /**
  * Behavioral proof that `jfdi init` builds the setup session the fresh-eyes
@@ -111,6 +112,15 @@ describe("jfdi init builds an isolated fresh-eyes setup session", () => {
 
     // The opening user message is the action sequence, exploration first.
     expect(userPrompt).toContain("Explore the project first");
+    expect(userPrompt).toContain("It must point to .jfdi/ticket-format.md as required reading");
+  });
+
+  it("ships the authoritative ticket format for the setup agent to link", async () => {
+    const { project } = await runInitAndCapturePrompt();
+
+    expect(await fs.readFile(path.join(project, ".jfdi/ticket-format.md"), "utf8")).toBe(
+      TICKET_FORMAT,
+    );
   });
 
   it("isolates the session from the project's own agent instructions", async () => {

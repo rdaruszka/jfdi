@@ -71,8 +71,8 @@ To upgrade, rebuild and reinstall the same way.
 From the root of the project you want it to work on:
 
 ```bash
-jfdi init      # scaffold .jfdi/, then conversationally tune the gate,
-               # sandbox contract, prompts, and coding guidelines
+jfdi init      # scaffold .jfdi/ (including the ticket format), then tune the
+               # gate, sandbox contract, prompts, and coding guidelines
 
 jfdi run add a --version flag    # one ticket, no board needed
 

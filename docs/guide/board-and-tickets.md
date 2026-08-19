@@ -42,6 +42,13 @@ What the parser actually reads:
 Keep cards to a single line. Obsidian Kanban allows multi-line card bodies, but
 JFDI moves exactly one line — put anything longer in a ticket note.
 
+The shipped [ticket-format contract](../ticket-format.md) is the authoritative
+writing guide for cards and tickets. Agents creating work must follow the copy
+at `.jfdi/ticket-format.md` in the target project. In particular, only a human
+promotes a card into the begin column. Drafts and directly requested ticket
+proposals belong in a non-role column such as Drafts; the inbox remains reserved
+for observations reported through the coordinator.
+
 ## Columns and roles
 
 Column *names* are yours; `config.json` maps them to the six roles JFDI cares
@@ -166,7 +173,10 @@ Users can't see spending in one area without paging through everything.
 > JFDI-Cost: $0.72
 ```
 
-The anatomy, part by part. Every part is optional; an absent one is simply empty.
+The anatomy, part by part. New, non-trivial tickets require an H1 title, a short
+description, and acceptance criteria. Frontmatter is optional. The parser keeps
+older or pipeline-created notes readable when one of those authoring elements
+is absent.
 
 - **Frontmatter** — Obsidian properties. Three keys are JFDI's: `mode: ask`
   lowers the escalation bar for this ticket (the agent prefers escalating with a
@@ -181,10 +191,14 @@ The anatomy, part by part. Every part is optional; an absent one is simply empty
 - **The H1** — the canonical title.
 - **The description** — everything from the H1 down to the first section JFDI
   owns. Write the spec here: acceptance criteria, constraints, context. Your own
-  `##` sub-sections are part of it.
+  `##` sub-sections are part of it. Keep the opening prose to one or at most two
+  short plain-language paragraphs; write acceptance criteria as testable,
+  user-facing outcomes rather than implementation instructions. Optional
+  `## Technical context` is for genuine constraints, not proposed solutions.
 - **`## Questions`** — the escalation queue, written on escalation (question +
   recommended answer), on exhausted rounds (the round history), or on a blocked
-  integration. Each entry ends with instructions for how to resume.
+  integration. Each entry ends with instructions for how to resume. It is
+  JFDI-owned and append-only: a ticket-writing agent never creates or edits it.
 - **`## Comments`** — an append-only trail, oldest first, with one entry per
   phase. A clean single-round run has `JFDI started`, one `complete` entry for
   each of Implementation, Code Review, and QA, then `Integration complete`.
@@ -197,7 +211,14 @@ The anatomy, part by part. Every part is optional; an absent one is simply empty
   not add a sixth comment. The Integration entry carries the whole-run
   [cost-and-time table](pipeline.md#cost-and-time). So the note tells the whole
   story without `git log`, and `git log` tells it without the note. See
-  [Commits and the scribe](pipeline.md#commits-and-the-scribe).
+  [Commits and the scribe](pipeline.md#commits-and-the-scribe). This section is
+  also JFDI-owned; ticket-writing agents never create or edit it.
+
+Never put specification material below `## Questions` or `## Comments`: it is
+outside the description and never reaches a stage prompt. Before promotion to
+the begin column, scope the ticket to one pipeline run, ensure its acceptance
+criteria are testable by someone who did not write it, and for a bug name the
+reproduction.
 
 Sections JFDI does not recognize — your own, a legacy `## Decisions` block, or a
 `## Report` section from before the trail carried the run summary — are never
@@ -227,9 +248,10 @@ piping either into the prompt would waste context and invite an agent to answer
 a stale round. A bare card with no note is unaffected: the card line is the
 whole spec.
 
-Answering a question still works the way it always did — edit the note, move the
-card back to the begin column, and the next dispatch reads your answer in the
-description or the questions section.
+Answer a question by adding the answer to the description, then move the card
+back to the begin column. The next dispatch reads the answer from the
+description while the original escalation remains in the append-only Questions
+section.
 
 ## The Inbox (observations)
 

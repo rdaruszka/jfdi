@@ -46,10 +46,13 @@ docs/               — the documentation (docs/README.md is the index):
   architecture/, development.md  developer docs
 docs/jfdi-operations.md    — the operational contract compiled into the init prompt
 docs/coding-guidelines.md  — the generic coding guidelines (authoritative source)
+docs/ticket-format.md      — the ticket-writing contract shipped at init
 docs/agent-enforcement.md  — the enforcement design JFDI implements (reference)
 src/                 — TypeScript source
 src/guidelines.ts    — GENERATED from docs/coding-guidelines.md (`pnpm sync:guidelines`);
                        injected into the init prompt for target projects
+src/ticket-format.ts — GENERATED from docs/ticket-format.md (`pnpm sync:guidelines`);
+                       scaffolded into target projects as `.jfdi/ticket-format.md`
 fixtures/half-app/   — "penny": a half-finished CLI + 7-ticket board for test runs
                        (see fixtures/README.md; minted via src/fixture-project.ts)
 fixtures/half-app.grading/ — per-ticket acceptance checks, kept out of the template
@@ -58,6 +61,7 @@ scripts/playground.mjs     — `pnpm playground`: mint a disposable half-app cop
   config.json          project config (docs/guide/configuration.md)
   board.md             Kanban board (Obsidian Kanban plugin format)
   tickets/             one markdown note per non-trivial ticket
+  ticket-format.md     shipped card and ticket writing contract
   sandbox.md           QA sandbox contract
   prompts/             stage prompt templates (plus the scribe's commit-message.md);
                        init retires any existing set to prompts.backup-*/, seeds
@@ -70,7 +74,7 @@ scripts/playground.mjs     — `pnpm playground`: mint a disposable half-app cop
   state.json           derived snapshot
 ```
 
-`config.json`, `sandbox.md`, and the stage prompt files are versioned. `board.md` and `tickets/` are **not** — they are work-tracking artifacts external to the product (typically symlinked into an Obsidian vault; a JIRA-style service later via the ticket-source extension seam), mutated mid-run by human and coordinator alike. `worktrees/` is runtime state; `.jfdi/.gitignore` (owned by the scaffold) covers it and the two above. Run state lives in the home directory instead, under a `<project-key>` that dash-flattens the project root's absolute path the way Claude Code keys `~/.claude/projects/`; [src/state-dir.ts](src/state-dir.ts) is the only place that computes it, and `JFDI_HOME` overrides the base so tests never touch the real one.
+`config.json`, `sandbox.md`, `ticket-format.md`, and the stage prompt files are versioned. `board.md` and `tickets/` are **not** — they are work-tracking artifacts external to the product (typically symlinked into an Obsidian vault; a JIRA-style service later via the ticket-source extension seam), mutated mid-run by human and coordinator alike. `worktrees/` is runtime state; `.jfdi/.gitignore` (owned by the scaffold) covers it and the two above. Run state lives in the home directory instead, under a `<project-key>` that dash-flattens the project root's absolute path the way Claude Code keys `~/.claude/projects/`; [src/state-dir.ts](src/state-dir.ts) is the only place that computes it, and `JFDI_HOME` overrides the base so tests never touch the real one.
 
 ## Hard invariants — do not violate
 

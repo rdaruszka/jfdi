@@ -37,13 +37,15 @@ Kanban board and it does that continuously, several tickets at a time. The
 
 ## Product content (shipped to target projects)
 
-These two are not documentation *about* JFDI — they are content JFDI ships:
-the generic guidelines `jfdi init` instantiates into a target project, and the
-design rationale behind them.
+These are not only documentation *about* JFDI: the generic guidelines and
+ticket format are product content compiled into the CLI, while the enforcement
+document records their design rationale.
 
 - **[Coding Guidelines](coding-guidelines.md)** — the language-agnostic rules,
   with enforcement tiers and check questions (compiled into the tool via
   `pnpm sync:guidelines`).
+- **[Ticket Format](ticket-format.md)** — the authoritative card and ticket
+  writing contract, shipped into target projects as `.jfdi/ticket-format.md`.
 - **[Agent Enforcement](agent-enforcement.md)** — the enforcement design those
   guidelines implement.
 

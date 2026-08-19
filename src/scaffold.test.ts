@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseBoard } from "./board.js";
 import { defaultConfig } from "./config.js";
 import { scaffoldJfdi } from "./scaffold.js";
+import { TICKET_FORMAT } from "./ticket-format.js";
 
 let root: string;
 let jfdiDir: string;
@@ -19,7 +20,7 @@ afterEach(async () => {
 });
 
 describe("scaffoldJfdi", () => {
-  it("creates config, board, tickets dir, prompts, sandbox, and state gitignore", async () => {
+  it("creates config, board, tickets dir, prompts, ticket format, sandbox, and gitignore", async () => {
     await scaffoldJfdi(root, jfdiDir);
     const scaffoldedConfig = JSON.parse(
       await fs.readFile(path.join(jfdiDir, "config.json"), "utf8"),
@@ -43,6 +44,7 @@ describe("scaffoldJfdi", () => {
     expect(await fs.readFile(path.join(jfdiDir, "sandbox.md"), "utf8")).toContain(
       "Sandbox Contract",
     );
+    expect(await fs.readFile(path.join(jfdiDir, "ticket-format.md"), "utf8")).toBe(TICKET_FORMAT);
     // Hook config for JFDI-spawned Claude sessions: format-on-edit.
     const settings = await fs.readFile(path.join(jfdiDir, "claude-settings.json"), "utf8");
     expect(JSON.parse(settings).hooks.PostToolUse[0].matcher).toBe("Edit|Write");
@@ -82,11 +84,15 @@ describe("scaffoldJfdi", () => {
   it("is idempotent and never overwrites user files", async () => {
     await scaffoldJfdi(root, jfdiDir);
     await fs.writeFile(path.join(jfdiDir, "sandbox.md"), "my custom contract");
+    await fs.writeFile(path.join(jfdiDir, "ticket-format.md"), "my local ticket format");
     await fs.writeFile(path.join(jfdiDir, "config.json"), '{"max_concurrent": 9}');
     await scaffoldJfdi(root, jfdiDir);
     expect(await fs.readFile(path.join(jfdiDir, "sandbox.md"), "utf8")).toBe("my custom contract");
     expect(await fs.readFile(path.join(jfdiDir, "config.json"), "utf8")).toBe(
       '{"max_concurrent": 9}',
+    );
+    expect(await fs.readFile(path.join(jfdiDir, "ticket-format.md"), "utf8")).toBe(
+      "my local ticket format",
     );
   });
 

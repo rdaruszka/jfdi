@@ -126,11 +126,11 @@ Sets up or revisits JFDI in the current repo, in three parts:
 
 1. **Scaffold** (idempotent — existing files are never overwritten):
    `.jfdi/config.json` with defaults, the board with all six columns, the
-   tickets directory, a sandbox contract skeleton, the Claude settings +
-   format-hook pair, `.jfdi/.gitignore`, and the eight generic stage prompt
-   defaults. An existing `prompts/` directory is first retired to a
-   timestamped, gitignored `.jfdi/prompts.backup-*/` the setup agent never
-   reads, so the seeded set is always clean raw material.
+   tickets directory, the ticket-format contract, a sandbox contract skeleton,
+   the Claude settings + format-hook pair, `.jfdi/.gitignore`, and the eight
+   generic stage prompt defaults. An existing `prompts/` directory is first
+   retired to a timestamped, gitignored `.jfdi/prompts.backup-*/` the setup
+   agent never reads, so the seeded set is always clean raw material.
 2. **Conversational setup**: an interactive fresh-eyes session — isolated from
    the project's own agent instructions, carrying the operational brief and
    coding guidelines as its appended system prompt. It explores the project's
@@ -138,7 +138,8 @@ Sets up or revisits JFDI in the current repo, in three parts:
    interviews you one question at a time, and writes nothing until you
    explicitly approve the complete plan. The approved setup gives the gate
    real build/test/lint commands, instantiates the coding guidelines in
-   `AGENTS.md`, fills the sandbox contract, and builds every stage prompt
+   `AGENTS.md` (or established equivalent), links the ticket-format contract as
+   required reading, fills the sandbox contract, and builds every stage prompt
    into its project-specific form. It never changes product code, and it
    ignores specific issues it notices there — at most they shape which
    checks and prompt rules it proposes. Rerun the same command to revisit a
@@ -147,8 +148,9 @@ Sets up or revisits JFDI in the current repo, in three parts:
    runs the gate itself, and prints either `gate verified` or the failing step
    with a suggestion to rerun init.
 
-`--bare` stops after the idempotent scaffold. The interactive session defaults
-to Claude with `claude-fable-5`; `--harness`, `--model`, and `--effort` select it
+`--bare` stops after the idempotent scaffold; link `.jfdi/ticket-format.md` from
+the project's agent instructions yourself. The interactive session defaults to
+Claude with `claude-fable-5`; `--harness`, `--model`, and `--effort` select it
 directly and do not borrow a pipeline stage's selection. The provider's native
 interactive CLI is the frontend, so exit with its usual `/exit` or Ctrl-C.
 

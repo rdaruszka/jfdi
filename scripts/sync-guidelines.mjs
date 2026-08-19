@@ -1,5 +1,5 @@
 // Regenerate the product-content modules from their authoritative docs. Run via
-// `pnpm sync:guidelines` after editing either doc; their unit tests fail the gate
+// `pnpm sync:guidelines` after editing any source doc; their unit tests fail the gate
 // whenever a generated module drifts.
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -44,4 +44,14 @@ compileDocument({
   description: ` * The operational contract JFDI ships with, compiled in so the installed CLI
  * carries it. Injected into the init prompt so the init agent can configure a
  * target project with an accurate understanding of the pipeline.`,
+});
+
+compileDocument({
+  documentName: "ticket-format.md",
+  moduleName: "ticket-format.ts",
+  testName: "ticket-format.test.ts",
+  exportName: "TICKET_FORMAT",
+  description: ` * The ticket-writing contract JFDI ships with, compiled in so the installed CLI
+ * carries it. Scaffolded as .jfdi/ticket-format.md for agents and humans who
+ * create cards and tickets in a target project.`,
 });

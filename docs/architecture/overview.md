@@ -25,7 +25,7 @@ is an extension seam, not a ceiling — see [Extension seams](#extension-seams).
 flowchart TB
     subgraph project [Project repo]
         BOARD[".jfdi/board.md<br/>+ tickets/"]
-        CONFIG[".jfdi/config.json<br/>prompts/ · sandbox.md"]
+        CONFIG[".jfdi/config.json<br/>prompts/ · sandbox.md · ticket-format.md"]
         WT[".jfdi/worktrees/&lt;id&gt;<br/>branch jfdi/&lt;id&gt;"]
         TARGET[(target branch)]
     end
@@ -261,6 +261,7 @@ src/
   harness/                the provider abstraction (see harness.md)
   tui/App.tsx             the Ink TUI
   guidelines.ts           GENERATED from docs/coding-guidelines.md
+  ticket-format.ts        GENERATED from docs/ticket-format.md
   fixture-project.ts      test-fixture factory (see ../development.md)
   util/                   ids, fsx (atomic writes), exit codes, dates
 ```

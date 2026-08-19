@@ -44,10 +44,12 @@ What it knows is exactly what the pipeline hands it:
   and the completing stage's summary. Read-only, single shot.
 
 The consequence that shapes your whole job: **anything an agent must know
-about this project has to live in a file you configure.** The project's
-AGENTS.md (read by every session), the stage prompts, the sandbox contract —
+about this project has to live in a file you configure.** The project's agent
+instructions (read by every session), the stage prompts, the sandbox contract —
 there is no other channel. Nothing you learn during setup reaches future
-sessions unless it lands in one of those files.
+sessions unless it lands in one of those files. The agent instructions must
+point ticket-writing agents to \`.jfdi/ticket-format.md\` before they create or
+change a card or ticket.
 
 ## The gate
 
@@ -135,18 +137,24 @@ human asks otherwise.
   with no context: exact build and launch commands, expected outputs, scratch
   space rules (always outside the repo), teardown. If QA can't drive the real
   artifact from this file alone, QA validates nothing.
+- **\`.jfdi/ticket-format.md\`** — the shipped, project-local contract for
+  creating cards and tickets. It defines ticket anatomy, user-facing acceptance
+  criteria, safe board columns, and the ready-for-work checklist. Do not rewrite
+  it during setup; make the project's agent instructions link to it as required
+  reading before creating or changing a card or ticket.
 - **\`.jfdi/hooks/format.sh\`** — post-edit format hook for Claude sessions:
   formats the one file the agent just edited, so sessions never burn turns on
   lint-fix loops. Must always exit 0; a formatter problem must never fail an
   agent's edit. Codex sessions skip it; its absence degrades gracefully.
 - **\`.jfdi/scripts/\`** — gate helper scripts, as above.
-- **The project's AGENTS.md** — the agent instructions file at the repo root,
-  read by every session of every stage (both Claude Code and Codex honor it).
+- **The project's AGENTS.md (or established equivalent)** — the agent
+  instructions file at the repo root, read by every session of every stage.
   This is where the coding guidelines get instantiated for this project's
-  language: concrete lint rules (wired into the linter config, not just
-  named), an abbreviation allowlist, a glossary with one name per concept.
-  Rules a machine can check belong in the gate; AGENTS.md prose is for what
-  machines can't check.
+  language: concrete lint rules (wired into the linter config, not just named),
+  an abbreviation allowlist, a glossary with one name per concept. It must also
+  require reading \`.jfdi/ticket-format.md\` before creating or changing a card
+  or ticket. Rules a machine can check belong in the gate; agent-instructions
+  prose is for what machines can't check.
 
 ## What a good setup optimizes
 

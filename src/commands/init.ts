@@ -56,8 +56,8 @@ async function verifyGate(root: string): Promise<boolean> {
 }
 
 /**
- * `jfdi init` — scaffold .jfdi/ (config, board, tickets dir, sandbox
- * contract; never prompts — see scaffoldJfdi), then hand off to a
+ * `jfdi init` — scaffold .jfdi/ (config, board, tickets dir, ticket format,
+ * sandbox contract, and generic prompts — see scaffoldJfdi), then hand off to a
  * conversational agent session that explores the project and builds the
  * setup with the human. The session runs isolated from the project's own
  * agent instructions and carries its worldview as an appended system prompt,
@@ -67,7 +67,7 @@ export async function initCommand(options: InitOptions = {}): Promise<number> {
   const root = await repoRoot(process.cwd());
   const jfdiDir = path.join(root, JFDI_DIR);
   const { retiredPromptsPath } = await scaffoldJfdi(root, jfdiDir);
-  console.log(`scaffolded ${JFDI_DIR}/ (config, board, tickets, sandbox contract)`);
+  console.log(`scaffolded ${JFDI_DIR}/ (config, board, tickets, ticket format, sandbox contract)`);
   if (retiredPromptsPath !== null) {
     console.log(
       `retired existing prompts to ${path.relative(root, retiredPromptsPath)} — ` +
@@ -77,7 +77,10 @@ export async function initCommand(options: InitOptions = {}): Promise<number> {
 
   const config = await loadConfig(root);
   if (options.isBare) {
-    console.log("next: fill in the gate commands in .jfdi/config.json and .jfdi/sandbox.md");
+    console.log(
+      "next: fill in the gate commands and sandbox contract, then link " +
+        ".jfdi/ticket-format.md from the project's agent instructions",
+    );
     return 0;
   }
 

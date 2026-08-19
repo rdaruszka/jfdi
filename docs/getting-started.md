@@ -32,16 +32,18 @@ From your project's repo root:
 jfdi init
 ```
 
-This scaffolds `.jfdi/` — config, board, tickets directory, sandbox contract,
-and the generic stage prompt defaults — and then launches a conversational
-agent session with fresh eyes: isolated from your repo's existing agent
-instructions, so it evaluates them instead of obeying them. It explores your
-project's code first, interviews you one question at a time, presents a
-complete plan, and writes only after you approve it:
+This scaffolds `.jfdi/` — config, board, tickets directory, ticket-format
+contract, sandbox contract, and the generic stage prompt defaults — and then
+launches a conversational agent session with fresh eyes: isolated from your
+repo's existing agent instructions, so it evaluates them instead of obeying
+them. It explores your project's code first, interviews you one question at a
+time, presents a complete plan, and writes only after you approve it:
 
 - fills `.jfdi/config.json`'s **gate** with real build/test/lint commands that
   all exit zero *right now*, setting up or tightening tooling as needed;
-- instantiates the shipped coding guidelines into your repo's `AGENTS.md`;
+- instantiates the shipped coding guidelines into your repo's `AGENTS.md` (or
+  established equivalent) and requires agents to read `.jfdi/ticket-format.md`
+  before creating or changing cards or tickets;
 - writes a **sandbox contract** (`.jfdi/sandbox.md`) so QA knows how to build,
   launch, and drive your product;
 - builds every stage prompt in `.jfdi/prompts/` from the seeded generic
