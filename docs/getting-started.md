@@ -50,12 +50,15 @@ time, presents a complete plan, and writes only after you approve it:
   defaults into its project-specific form;
 - wires the per-file format hook.
 
+If the existing config cannot load, init warns, uses sandboxed `auto` permissions,
+and includes the error in the session's opening message so setup can repair it.
 After you exit the provider's interactive CLI, init reloads the config and runs
-the gate itself, reporting the first failing step or `gate verified`. Rerun init
-at any time for a fresh full-setup pass; an existing `prompts/` directory is
-retired to a timestamped `.jfdi/prompts.backup-*/` (preserved for you, never
-read by the agent) and reseeded with clean generic defaults for the session to
-build on, and everything else is proposed before it is changed.
+the gate itself, reporting the first failing step, an unloadable config, or
+`gate verified`. Rerun init at any time for a fresh full-setup pass; an existing
+`prompts/` directory is retired to a timestamped `.jfdi/prompts.backup-*/`
+(preserved for you, never read by the agent) and reseeded with clean generic
+defaults for the session to build on, and everything else is proposed before
+it is changed.
 
 The gate matters more than anything else in the setup: it is the cheapest
 reviewer, it runs before every review round, and "done" isn't done until it

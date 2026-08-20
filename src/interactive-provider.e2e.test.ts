@@ -60,6 +60,10 @@ fs.writeFileSync(process.env.TRACE_PATH, JSON.stringify({
   args: process.argv.slice(2),
   cwd: process.cwd(),
 }));
+if (process.env.INVALID_CONFIG_AFTER_SESSION) {
+  const configPath = require("node:path").join(process.cwd(), ".jfdi", "config.json");
+  fs.writeFileSync(configPath, "{nope");
+}
 process.exit(Number(process.env.SESSION_EXIT ?? 0));
 `;
   await Promise.all(
@@ -84,6 +88,10 @@ process.exit(Number(process.env.SESSION_EXIT ?? 0));
 
 function runCli(project: string, environment: NodeJS.ProcessEnv, args: string[]) {
   return execFileAsync(process.execPath, [cliPath, ...args], { cwd: project, env: environment });
+}
+
+async function writeConfig(project: string, contents: string): Promise<void> {
+  await fs.writeFile(path.join(project, ".jfdi", "config.json"), contents);
 }
 
 async function readTrace(tracePath: string): Promise<{
@@ -229,4 +237,140 @@ describe("interactive provider selection", () => {
       ),
     });
   });
+
+  it("warns, uses auto permissions, and tells the session about an invalid config", async () => {
+    const sandbox = await makeProject();
+    await writeConfig(
+      sandbox.project,
+      `${JSON.stringify({
+        ...defaultConfig(),
+        gate: [{ name: "build", command: "pnpm build" }],
+      })}\n`,
+    );
+
+    let failure: unknown;
+    try {
+      await runCli(sandbox.project, sandbox.environment, ["init"]);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining(
+        'Warning: failed to load .jfdi/config.json: "gate[0].cmd must be a non-empty string"',
+      ),
+    });
+    const trace = await readTrace(sandbox.tracePath);
+    expect(trace.args.slice(0, 2)).toEqual(["--permission-mode", "auto"]);
+    expect(trace.args.at(-1)).toContain(
+      'Warning: failed to load .jfdi/config.json: "gate[0].cmd must be a non-empty string"',
+    );
+  });
+
+  it("warns and launches the session when config JSON is malformed", async () => {
+    const sandbox = await makeProject();
+    await writeConfig(sandbox.project, "{nope");
+
+    let failure: unknown;
+    try {
+      await runCli(sandbox.project, sandbox.environment, ["init"]);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining(
+        'Warning: failed to load .jfdi/config.json: "invalid JSON in',
+      ),
+    });
+    const trace = await readTrace(sandbox.tracePath);
+    expect(trace.args.at(-1)).toContain(
+      `Warning: failed to load .jfdi/config.json: "invalid JSON in ${path.join(
+        sandbox.project,
+        ".jfdi/config.json",
+      )}`,
+    );
+  });
+
+  it.each([
+    {
+      name: "invalid schema",
+      contents: `${JSON.stringify({
+        ...defaultConfig(),
+        gate: [{ name: "build", command: "pnpm build" }],
+      })}\n`,
+      errorText: "gate[0].cmd must be a non-empty string",
+    },
+    {
+      name: "malformed JSON",
+      contents: "{nope",
+      errorText: "invalid JSON in",
+    },
+  ])("completes --bare with a warning for $name", async ({ contents, errorText }) => {
+    const sandbox = await makeProject();
+    await writeConfig(sandbox.project, contents);
+
+    const { stderr, stdout } = await runCli(sandbox.project, sandbox.environment, [
+      "init",
+      "--bare",
+    ]);
+
+    expect(stdout).toContain("scaffolded .jfdi/");
+    expect(stderr).toContain(`Warning: failed to load .jfdi/config.json: "${errorText}`);
+    await expect(fs.access(sandbox.tracePath)).rejects.toThrow();
+  });
+
+  it("reports a config that becomes unloadable after the setup session", async () => {
+    const sandbox = await makeProject();
+
+    let failure: unknown;
+    try {
+      await runCli(sandbox.project, { ...sandbox.environment, INVALID_CONFIG_AFTER_SESSION: "1" }, [
+        "init",
+      ]);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("gate could not load .jfdi/config.json: invalid JSON in"),
+    });
+    expect(failure).toMatchObject({
+      stderr: expect.stringContaining("rerun `jfdi init` to finish setup"),
+    });
+    expect((failure as { stderr: string }).stderr).not.toContain("jfdi: invalid JSON");
+  });
+
+  it.each(["status", "run"])(
+    "%s keeps failing loud on a bad config — the init fallback stays init-only",
+    async (command) => {
+      const sandbox = await makeProject();
+      await writeConfig(sandbox.project, "{nope");
+
+      let failure: unknown;
+      try {
+        await runCli(
+          sandbox.project,
+          { ...sandbox.environment, JFDI_HOME: path.join(sandbox.project, ".jfdi-home") },
+          command === "run" ? [command, "do a thing"] : [command],
+        );
+      } catch (error) {
+        failure = error;
+      }
+
+      // Fails loud: the raw ConfigError reaches the top-level `jfdi:` handler,
+      // never the init-only warning-and-continue path.
+      expect(failure).toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining("jfdi: invalid JSON in"),
+      });
+      const { stderr } = failure as { stderr: string };
+      expect(stderr).not.toContain("treat the config as broken");
+      expect(stderr).not.toContain("Using default permissions.mode");
+      await expect(fs.access(sandbox.tracePath)).rejects.toThrow();
+    },
+  );
 });

@@ -215,8 +215,10 @@ configured model as a fallback.
 Interactive init is selected independently of these stage entries. `jfdi init`
 uses `--harness` (`claude` or `codex`), `--model`, and optional `--effort`, with
 defaults of Claude, `claude-fable-5`, and the provider's default effort. The
-instance-wide `permissions.mode` still applies. There is deliberately no
-`stages.init` entry: init must work before a new user has config to edit.
+instance-wide `permissions.mode` applies when the config loads; otherwise init
+warns and uses the default `auto` mode so the setup session can repair it. There
+is deliberately no `stages.init` entry: init must work before a new user has
+config to edit.
 
 Both selected CLIs must be on your `PATH`. Beyond model, effort, and the
 provider-neutral permission mode, provider-specific flags are supplied by JFDI
