@@ -46,12 +46,12 @@ export function projectRoot(cwd: string): Promise<string> {
   return git(cwd, "rev-parse", "--show-toplevel");
 }
 
-export function currentBranch(projectRoot: string): Promise<string> {
-  return git(projectRoot, "rev-parse", "--abbrev-ref", "HEAD");
+export function currentBranch(cwd: string): Promise<string> {
+  return git(cwd, "rev-parse", "--abbrev-ref", "HEAD");
 }
 
-export function parseRevision(projectRoot: string, reference: string): Promise<string> {
-  return git(projectRoot, "rev-parse", reference);
+export function parseRevision(cwd: string, reference: string): Promise<string> {
+  return git(cwd, "rev-parse", reference);
 }
 
 export async function branchExists(projectRoot: string, branch: string): Promise<boolean> {
@@ -65,8 +65,8 @@ export async function branchExists(projectRoot: string, branch: string): Promise
   return result.ok;
 }
 
-export async function isWorkingTreeClean(projectRoot: string): Promise<boolean> {
-  return (await git(projectRoot, "status", "--porcelain")) === "";
+export async function isWorkingTreeClean(cwd: string): Promise<boolean> {
+  return (await git(cwd, "status", "--porcelain")) === "";
 }
 
 /**
@@ -298,8 +298,8 @@ export async function commitCount(worktree: string, target: string): Promise<num
 }
 
 /** True if the index holds anything to commit — what the pipeline's own commit turns on. */
-export async function hasStagedChanges(projectRoot: string): Promise<boolean> {
-  return (await git(projectRoot, "diff", "--cached", "--name-only")) !== "";
+export async function hasStagedChanges(cwd: string): Promise<boolean> {
+  return (await git(cwd, "diff", "--cached", "--name-only")) !== "";
 }
 
 /** Commit anything left uncommitted in the worktree (agent safety net). */
