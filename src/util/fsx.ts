@@ -3,14 +3,14 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 /** Randomness in a temp-file name — enough to make a collision a non-event. */
-const TEMP_SUFFIX_BYTES = 4;
+const TEMPORARY_SUFFIX_BYTES = 4;
 /** Re-read/retry budget when an external writer changes the file mid-update. */
 const DEFAULT_RETRIES = 5;
 /** Base backoff between retries; the wait grows linearly with the attempt. */
 const DEFAULT_RETRY_DELAY_MS = 50;
 
-export async function ensureDir(dir: string): Promise<void> {
-  await fs.mkdir(dir, { recursive: true });
+export async function ensureDirectory(directory: string): Promise<void> {
+  await fs.mkdir(directory, { recursive: true });
 }
 
 /**
@@ -23,14 +23,14 @@ export async function ensureDir(dir: string): Promise<void> {
  */
 export async function atomicWrite(filePath: string, content: string): Promise<void> {
   const target = await realWriteTarget(filePath);
-  const dir = path.dirname(target);
-  await ensureDir(dir);
-  const tempPath = path.join(
-    dir,
-    `.${path.basename(target)}.${randomBytes(TEMP_SUFFIX_BYTES).toString("hex")}.tmp`,
+  const directory = path.dirname(target);
+  await ensureDirectory(directory);
+  const temporaryPath = path.join(
+    directory,
+    `.${path.basename(target)}.${randomBytes(TEMPORARY_SUFFIX_BYTES).toString("hex")}.tmp`,
   );
-  await fs.writeFile(tempPath, content, "utf8");
-  await fs.rename(tempPath, target);
+  await fs.writeFile(temporaryPath, content, "utf8");
+  await fs.rename(temporaryPath, target);
 }
 
 /**
@@ -58,9 +58,9 @@ async function realWriteTarget(filePath: string): Promise<string> {
     // shortens the remaining chain; a cycle would have thrown ELOOP above.
     return realWriteTarget(path.resolve(path.dirname(filePath), linkTarget));
   }
-  const parentDir = path.dirname(filePath);
-  await ensureDir(parentDir);
-  return path.join(await fs.realpath(parentDir), path.basename(filePath));
+  const parentDirectory = path.dirname(filePath);
+  await ensureDirectory(parentDirectory);
+  return path.join(await fs.realpath(parentDirectory), path.basename(filePath));
 }
 
 export async function fileExists(filePath: string): Promise<boolean> {

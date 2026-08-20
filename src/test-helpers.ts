@@ -169,10 +169,10 @@ export async function waitFor(
 
 export interface Fixture {
   root: string;
-  repo: string;
-  jfdiDir: string;
+  projectRoot: string;
+  jfdiDirectory: string;
   /** Stand-in for ~/.jfdi/projects/<key>/ — outside the repo, like the real one. */
-  stateDir: string;
+  stateDirectory: string;
   ticketsDirectory: string;
   config: JfdiConfig;
   context: (
@@ -204,36 +204,36 @@ export const DEFAULT_SCRIBE_HANDLER: FakeHandler = (prompt) => {
 /** Scratch repo under the OS temp dir — never inside a parent git repo. */
 export async function makeFixture(configOverrides: Partial<JfdiConfig> = {}): Promise<Fixture> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-pipe-"));
-  const repo = path.join(root, "repo");
-  await fs.mkdir(repo);
-  await git(repo, "init", "-b", "main");
-  await git(repo, "config", "user.email", "test@jfdi.local");
-  await git(repo, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(repo, "README.md"), "product\n");
-  await git(repo, "add", "-A");
-  await git(repo, "commit", "-m", "initial");
+  const projectRoot = path.join(root, "repo");
+  await fs.mkdir(projectRoot);
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
-  const jfdiDir = path.join(repo, ".jfdi");
-  const ticketsDirectory = path.join(jfdiDir, "tickets");
+  const jfdiDirectory = path.join(projectRoot, ".jfdi");
+  const ticketsDirectory = path.join(jfdiDirectory, "tickets");
   await fs.mkdir(ticketsDirectory, { recursive: true });
-  const stateDir = path.join(root, "state");
+  const stateDirectory = path.join(root, "state");
   const config: JfdiConfig = { ...defaultConfig(), gate: [], ...configOverrides };
 
   return {
     root,
-    repo,
-    jfdiDir,
-    stateDir,
+    projectRoot,
+    jfdiDirectory,
+    stateDirectory,
     ticketsDirectory,
     config,
     context: (handler, options = {}) => {
       const harness = new FakeHarness(handler);
       const scribe = new FakeHarness(options.scribeHandler ?? DEFAULT_SCRIBE_HANDLER);
-      const log = new EventLog(stateDir, options.shouldPersistEvents ?? false);
+      const log = new EventLog(stateDirectory, options.shouldPersistEvents ?? false);
       return {
-        repoRoot: repo,
-        jfdiDir,
-        stateDir,
+        projectRoot: projectRoot,
+        jfdiDirectory,
+        stateDirectory,
         config,
         // One fake behind every stage, so `harness.calls` sees the whole run.
         // Tests about per-stage routing install distinct fakes themselves. The

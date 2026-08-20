@@ -123,25 +123,25 @@ describe("classifyCodexFailure", () => {
 });
 
 describe("CodexHarness subprocess", () => {
-  let dir: string;
+  let directory: string;
 
   beforeEach(async () => {
-    dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-codex-harness-")));
+    directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-codex-harness-")));
   });
 
   afterEach(async () => {
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(directory, { recursive: true, force: true });
   });
 
   async function stubCodex(lines: object[], exitCode = 0): Promise<string> {
-    const script = path.join(dir, "fake-codex");
+    const script = path.join(directory, "fake-codex");
     const body = [
       "#!/bin/sh",
       '[ "$1" = "exec" ] || exit 91',
       '[ "$2" = "--json" ] || exit 92',
       '[ "$3" = "--dangerously-bypass-approvals-and-sandbox" ] || exit 93',
       '[ "$4" = "first line\nsecond line with spaces" ] || exit 94',
-      `[ "$(pwd)" = "${dir}" ] || exit 95`,
+      `[ "$(pwd)" = "${directory}" ] || exit 95`,
       ...lines.map((line) => `echo '${JSON.stringify(line)}'`),
       `exit ${exitCode}`,
     ].join("\n");
@@ -157,7 +157,7 @@ describe("CodexHarness subprocess", () => {
     ]);
     const session = new CodexHarness(TEST_SELECTION, "bypass", executable).spawn(
       "first line\nsecond line with spaces",
-      { cwd: dir },
+      { cwd: directory },
     );
     const events: HarnessEvent[] = [];
     for await (const event of session.events) events.push(event);
@@ -189,10 +189,10 @@ describe("CodexHarness subprocess", () => {
     const executable = await stubCodex([
       { type: "item.completed", item: { type: "agent_message", text: "done" } },
     ]);
-    const logPath = path.join(dir, "logs/session.jsonl");
+    const logPath = path.join(directory, "logs/session.jsonl");
     const session = new CodexHarness(TEST_SELECTION, "bypass", executable).spawn(
       "first line\nsecond line with spaces",
-      { cwd: dir, logPath },
+      { cwd: directory, logPath },
     );
     await session.done;
     expect(await fs.readFile(logPath, "utf8")).toContain("item.completed");
@@ -202,7 +202,7 @@ describe("CodexHarness subprocess", () => {
     const executable = await stubCodex([], 2);
     const result = await new CodexHarness(TEST_SELECTION, "bypass", executable).spawn(
       "first line\nsecond line with spaces",
-      { cwd: dir },
+      { cwd: directory },
     ).done;
     expect(result.ok).toBe(false);
     expect(result).not.toHaveProperty("exitCode");
@@ -212,8 +212,8 @@ describe("CodexHarness subprocess", () => {
     const result = await new CodexHarness(
       TEST_SELECTION,
       "bypass",
-      path.join(dir, "missing"),
-    ).spawn("do it", { cwd: dir }).done;
+      path.join(directory, "missing"),
+    ).spawn("do it", { cwd: directory }).done;
     expect(result.ok).toBe(false);
     expect(result).not.toHaveProperty("exitCode");
   });
@@ -225,7 +225,7 @@ describe("CodexHarness subprocess", () => {
     ]);
     const result = await new CodexHarness(TEST_SELECTION, "bypass", executable).spawn(
       "first line\nsecond line with spaces",
-      { cwd: dir },
+      { cwd: directory },
     ).done;
     expect(result.sessionId).toBe("thread-1");
   });
@@ -238,7 +238,7 @@ describe("CodexHarness subprocess", () => {
     ]);
     const result = await new CodexHarness(TEST_SELECTION, "bypass", executable).spawn(
       "first line\nsecond line with spaces",
-      { cwd: dir },
+      { cwd: directory },
     ).done;
     expect(result.ok).toBe(true);
     expect(result.text).toBe("all done");
@@ -256,7 +256,7 @@ describe("CodexHarness subprocess", () => {
     );
     const result = await new CodexHarness(TEST_SELECTION, "bypass", executable).spawn(
       "first line\nsecond line with spaces",
-      { cwd: dir },
+      { cwd: directory },
     ).done;
     expect(result.failure).toEqual({
       kind: "usage-limit",
@@ -270,14 +270,14 @@ describe("CodexHarness subprocess", () => {
     const executable = await stubCodex([]);
     const result = await new CodexHarness(TEST_SELECTION, "bypass", executable).spawn(
       "first line\nsecond line with spaces",
-      { cwd: dir },
+      { cwd: directory },
     ).done;
     expect(result.ok).toBe(false);
     expect(result.failure?.kind).toBe("outage");
   });
 
   it("runs `exec resume` when continuing an earlier session", async () => {
-    const script = path.join(dir, "fake-codex-resume");
+    const script = path.join(directory, "fake-codex-resume");
     const body = [
       "#!/bin/sh",
       '[ "$1" = "exec" ] || exit 91',
@@ -290,7 +290,7 @@ describe("CodexHarness subprocess", () => {
     ].join("\n");
     await fs.writeFile(script, `${body}\n`, { mode: 0o755 });
     const result = await new CodexHarness(TEST_SELECTION, "bypass", script).spawn("go on", {
-      cwd: dir,
+      cwd: directory,
       continueSessionId: "thread-7",
     }).done;
     expect(result.ok).toBe(true);
@@ -299,20 +299,20 @@ describe("CodexHarness subprocess", () => {
 });
 
 describe("CodexHarness selection flags", () => {
-  let dir: string;
+  let directory: string;
   beforeEach(async () => {
-    dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-codex-argv-")));
+    directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-codex-argv-")));
   });
   afterEach(async () => {
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(directory, { recursive: true, force: true });
   });
 
   /** Stub `codex` that records the argv it was handed, one argument per line. */
   async function argvRecorder(
     name = "recording-codex",
   ): Promise<{ executable: string; argv: () => Promise<string[]> }> {
-    const argvPath = path.join(dir, `${name}.txt`);
-    const executable = path.join(dir, name);
+    const argvPath = path.join(directory, `${name}.txt`);
+    const executable = path.join(directory, name);
     await fs.writeFile(
       executable,
       ["#!/bin/sh", `for arg in "$@"; do echo "$arg" >> "${argvPath}"; done`, ""].join("\n"),
@@ -330,7 +330,7 @@ describe("CodexHarness selection flags", () => {
       { sessionKind: "code-review", model: "gpt-5.6-sol", effort: "high" },
       "bypass",
       recorder.executable,
-    ).spawn("review it", { cwd: dir }).done;
+    ).spawn("review it", { cwd: directory }).done;
     expect(await recorder.argv()).toEqual([
       "exec",
       "--json",
@@ -349,7 +349,7 @@ describe("CodexHarness selection flags", () => {
       { sessionKind: "code-review", model: "gpt-5.6-sol", effort: "low" },
       "bypass",
       recorder.executable,
-    ).spawn("go on", { cwd: dir, continueSessionId: "thread-7" }).done;
+    ).spawn("go on", { cwd: directory, continueSessionId: "thread-7" }).done;
     const argv = await recorder.argv();
     expect(argv.slice(-2)).toEqual(["thread-7", "go on"]);
     expect(argv.indexOf("--model")).toBeLessThan(argv.indexOf("thread-7"));
@@ -362,7 +362,7 @@ describe("CodexHarness selection flags", () => {
       { sessionKind: "qa", effort: "medium" },
       "bypass",
       recorder.executable,
-    ).spawn("p", { cwd: dir }).done;
+    ).spawn("p", { cwd: directory }).done;
     const argv = await recorder.argv();
     expect(argv).not.toContain("--model");
     expect(argv).toContain("model_reasoning_effort=medium");
@@ -374,7 +374,7 @@ describe("CodexHarness selection flags", () => {
       { sessionKind: "implementation", model: "gpt-5.6-sol", effort: "high" },
       "bypass",
       recorder.executable,
-    ).spawnInteractive("brief", { cwd: dir });
+    ).spawnInteractive("brief", { cwd: directory });
     expect(await recorder.argv()).toEqual([
       "--dangerously-bypass-approvals-and-sandbox",
       "--model",
@@ -404,11 +404,11 @@ describe("CodexHarness selection flags", () => {
     async ({ permissionMode, codexArgs }) => {
       const headless = await argvRecorder(`${permissionMode}-headless`);
       await new CodexHarness(TEST_SELECTION, permissionMode, headless.executable).spawn("start", {
-        cwd: dir,
+        cwd: directory,
       }).done;
       const resume = await argvRecorder(`${permissionMode}-resume`);
       await new CodexHarness(TEST_SELECTION, permissionMode, resume.executable).spawn("continue", {
-        cwd: dir,
+        cwd: directory,
         continueSessionId: "thread-4",
       }).done;
       const interactive = await argvRecorder(`${permissionMode}-interactive`);
@@ -416,7 +416,7 @@ describe("CodexHarness selection flags", () => {
         TEST_SELECTION,
         permissionMode,
         interactive.executable,
-      ).spawnInteractive("talk", { cwd: dir });
+      ).spawnInteractive("talk", { cwd: directory });
 
       for (const argv of [await headless.argv(), await resume.argv(), await interactive.argv()]) {
         expect(argv).toEqual(expect.arrayContaining(codexArgs));
@@ -434,8 +434,8 @@ describe("CodexHarness selection flags", () => {
     const result = await new CodexHarness(
       { sessionKind: "code-review" },
       "auto",
-      path.join(dir, "not-installed"),
-    ).spawn("p", { cwd: dir }).done;
+      path.join(directory, "not-installed"),
+    ).spawn("p", { cwd: directory }).done;
     expect(result.ok).toBe(false);
     expect(result.text).toContain("not-installed");
     expect(result.text).toContain("stages.code-review.harness");
@@ -460,12 +460,12 @@ describe("CodexHarness selection flags", () => {
 // the exact spelling (the stub refuses any other) and the price came from that same
 // spelling. Re-introducing `.toLowerCase()` or the `Math.max(0, …)` clamp fails one.
 describe("CodexHarness prices from the configured model spelling verbatim", () => {
-  let dir: string;
+  let directory: string;
   beforeEach(async () => {
-    dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-codex-pricing-")));
+    directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-codex-pricing-")));
   });
   afterEach(async () => {
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(directory, { recursive: true, force: true });
   });
 
   /**
@@ -480,7 +480,7 @@ describe("CodexHarness prices from the configured model spelling verbatim", () =
     expectedModel: string,
     usage: object,
   ): Promise<string> {
-    const script = path.join(dir, name);
+    const script = path.join(directory, name);
     const body = [
       "#!/bin/sh",
       '[ "$1" = "exec" ] || exit 91',
@@ -500,7 +500,7 @@ describe("CodexHarness prices from the configured model spelling verbatim", () =
   function priceRun(model: string, executable: string): Promise<HarnessResult> {
     return new CodexHarness({ sessionKind: "implementation", model }, "bypass", executable).spawn(
       "do the work",
-      { cwd: dir },
+      { cwd: directory },
     ).done;
   }
 

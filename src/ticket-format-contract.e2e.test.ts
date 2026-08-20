@@ -24,8 +24,8 @@ import { TICKET_FORMAT } from "./ticket-format.js";
  *     tickets. A stranger's clone must carry the contract.
  */
 const execFileAsync = promisify(execFile);
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 describe("the shipped ticket-format contract covers the mandated topics", () => {
   // Each entry is one acceptance item from the ticket's "doc covers, at
@@ -102,31 +102,31 @@ describe("jfdi init --bare ships the ticket-format contract, versioned", () => {
     const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-ticket-format-"));
     sandboxRoots.push(created);
     const root = await fs.realpath(created);
-    const project = path.join(root, "project");
-    await fs.mkdir(project, { recursive: true });
-    await git(project, "init", "-b", "main");
-    await git(project, "config", "user.email", "qa@jfdi.local");
-    await git(project, "config", "user.name", "JFDI QA");
+    const projectRoot = path.join(root, "project");
+    await fs.mkdir(projectRoot, { recursive: true });
+    await git(projectRoot, "init", "-b", "main");
+    await git(projectRoot, "config", "user.email", "qa@jfdi.local");
+    await git(projectRoot, "config", "user.name", "JFDI QA");
     await execFileAsync(process.execPath, [cliPath, "init", "--bare"], {
-      cwd: project,
+      cwd: projectRoot,
       // --bare never reaches an agent CLI, so no PATH stubs are needed; a
       // scratch JFDI_HOME still guards the real ~/.jfdi from any run state.
       env: { ...process.env, JFDI_HOME: path.join(root, "home") },
     });
-    return project;
+    return projectRoot;
   }
 
   it("writes .jfdi/ticket-format.md byte-for-byte equal to the compiled contract", async () => {
-    const project = await initBareProject();
-    const onDisk = await fs.readFile(path.join(project, ".jfdi", "ticket-format.md"), "utf8");
+    const projectRoot = await initBareProject();
+    const onDisk = await fs.readFile(path.join(projectRoot, ".jfdi", "ticket-format.md"), "utf8");
     expect(onDisk).toBe(TICKET_FORMAT);
   });
 
   it("leaves the contract tracked by git, not swept into .jfdi/.gitignore", async () => {
-    const project = await initBareProject();
+    const projectRoot = await initBareProject();
     // check-ignore exits 0 only when the path IS ignored; a non-zero exit here
     // proves the contract stays versioned alongside config.json and prompts,
     // unlike board.md, tickets/ and worktrees/.
-    await expect(git(project, "check-ignore", ".jfdi/ticket-format.md")).rejects.toThrow();
+    await expect(git(projectRoot, "check-ignore", ".jfdi/ticket-format.md")).rejects.toThrow();
   });
 });

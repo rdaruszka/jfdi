@@ -28,7 +28,10 @@ export interface RunOptions {
  * required; when one exists and holds a matching card, the run keeps that card
  * in step exactly as the coordinator would.
  */
-export async function runCommand(ticketRef: string, options: RunOptions = {}): Promise<number> {
+export async function runCommand(
+  ticketReference: string,
+  options: RunOptions = {},
+): Promise<number> {
   const context = await buildContext();
   const detach = attachInlinePrinter(context.log);
   /** Release what the run acquired: the pause's timers, then the pending writes. */
@@ -48,7 +51,7 @@ export async function runCommand(ticketRef: string, options: RunOptions = {}): P
       .then(() => process.exit(EXIT_SIGINT));
   });
   try {
-    return await runTicketInline(context, ticketRef, options);
+    return await runTicketInline(context, ticketReference, options);
   } finally {
     detachRetryKey();
     detach();
@@ -63,7 +66,7 @@ async function refuseCorruptReport(
   ticketsDirectory: string,
 ): Promise<boolean> {
   const columns = context.config.board.columns;
-  const savedReport = await loadReport(context.stateDir, ticket.id);
+  const savedReport = await loadReport(context.stateDirectory, ticket.id);
   if (!savedReport || !isCorruptReport(savedReport)) return false;
   const notePath = await ensureTicketNote(ticket, ticketsDirectory);
   const message = await recordCorruptReport(context, ticket.id, notePath, savedReport);
@@ -79,11 +82,11 @@ async function refuseCorruptReport(
 /** The run itself, over an already-built context. */
 export async function runTicketInline(
   context: PipelineContext,
-  ticketRef: string,
+  ticketReference: string,
   options: RunOptions = {},
 ): Promise<number> {
-  const ticketsDirectory = path.join(context.repoRoot, context.config.ticketsDirectory);
-  const ticket = await resolveTicket(ticketRef, ticketsDirectory);
+  const ticketsDirectory = path.join(context.projectRoot, context.config.ticketsDirectory);
+  const ticket = await resolveTicket(ticketReference, ticketsDirectory);
   console.log(`ticket: ${ticket.id}`);
 
   const columns = context.config.board.columns;

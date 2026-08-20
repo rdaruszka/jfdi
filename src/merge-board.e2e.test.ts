@@ -28,13 +28,13 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import type { JfdiEvent } from "./events.js";
 import { createWorktree, git } from "./git.js";
-import { worktreesDir } from "./pipeline.js";
+import { worktreesDirectory } from "./pipeline.js";
 import { ticketIdFromCard } from "./util/ids.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 /** Any stage session is a regression here; make it an obvious, loud failure. */
 const STUB_AGENT = `#!/bin/sh
@@ -44,14 +44,14 @@ exit 97
 
 interface Sandbox {
   root: string;
-  project: string;
+  projectRoot: string;
   home: string;
   jfdiHome: string;
-  stateDir: string;
-  binDir: string;
+  stateDirectory: string;
+  executableDirectory: string;
   /** The real board file; `.jfdi/board.md` is only a symlink pointing here. */
   vaultBoardPath: string;
-  jfdiDir: string;
+  jfdiDirectory: string;
 }
 
 const sandboxes: string[] = [];
@@ -66,37 +66,37 @@ async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-merge-board-"));
   const root = await fs.realpath(created);
   sandboxes.push(created);
-  const project = path.join(root, "project");
+  const projectRoot = path.join(root, "project");
   const home = path.join(root, "home");
-  const binDir = path.join(root, "bin");
+  const executableDirectory = path.join(root, "bin");
   const vault = path.join(root, "vault");
-  await fs.mkdir(project, { recursive: true });
+  await fs.mkdir(projectRoot, { recursive: true });
   await fs.mkdir(home);
-  await fs.mkdir(binDir);
+  await fs.mkdir(executableDirectory);
   await fs.mkdir(vault);
   // Both CLIs the scaffolded config selects, played by the same script:
   // the default mix reviews on Codex and implements on Claude.
   for (const executable of ["claude", "codex"]) {
-    await fs.writeFile(path.join(binDir, executable), STUB_AGENT, { mode: 0o755 });
+    await fs.writeFile(path.join(executableDirectory, executable), STUB_AGENT, { mode: 0o755 });
   }
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
   const jfdiHome = path.join(home, ".jfdi");
   return {
     root,
-    project,
+    projectRoot,
     home,
     jfdiHome,
-    stateDir: path.join(jfdiHome, "projects", expectedProjectKey(project)),
-    binDir,
+    stateDirectory: path.join(jfdiHome, "projects", expectedProjectKey(projectRoot)),
+    executableDirectory,
     vaultBoardPath: path.join(vault, "board.md"),
-    jfdiDir: path.join(project, ".jfdi"),
+    jfdiDirectory: path.join(projectRoot, ".jfdi"),
   };
 }
 
@@ -109,13 +109,13 @@ interface CliResult {
 async function runCli(sandbox: Sandbox, args: string[]): Promise<CliResult> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
   };
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: sandbox.project,
+      cwd: sandbox.projectRoot,
       env,
     });
     return { code: 0, stdout, stderr };
@@ -142,24 +142,24 @@ async function setUpProject(
 ): Promise<void> {
   expect((await runCli(sandbox, ["init", "--bare"])).code).toBe(0);
   await fs.writeFile(sandbox.vaultBoardPath, board);
-  const boardLink = path.join(sandbox.jfdiDir, "board.md");
+  const boardLink = path.join(sandbox.jfdiDirectory, "board.md");
   await fs.rm(boardLink);
   await fs.symlink(sandbox.vaultBoardPath, boardLink);
   if (Object.keys(configOverrides).length > 0) {
-    const configPath = path.join(sandbox.jfdiDir, "config.json");
+    const configPath = path.join(sandbox.jfdiDirectory, "config.json");
     const config = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
     await fs.writeFile(configPath, JSON.stringify({ ...config, ...configOverrides }, null, 2));
   }
   // The target branch must be clean, or the fast-forward refuses to run.
-  await git(sandbox.project, "add", "-A");
-  await git(sandbox.project, "commit", "-m", "scaffold");
+  await git(sandbox.projectRoot, "add", "-A");
+  await git(sandbox.projectRoot, "commit", "-m", "scaffold");
 }
 
 /** A ticket branch with one commit, in the worktree `jfdi merge` looks for. */
 async function makeTicketBranch(sandbox: Sandbox, ticketId: string): Promise<string> {
   const worktree = await createWorktree(
-    sandbox.project,
-    worktreesDir(sandbox.jfdiDir),
+    sandbox.projectRoot,
+    worktreesDirectory(sandbox.jfdiDirectory),
     ticketId,
     "main",
   );
@@ -188,7 +188,7 @@ function cardsUnder(board: string, columnName: string): string[] {
 }
 
 async function readEvents(sandbox: Sandbox): Promise<JfdiEvent[]> {
-  const raw = await fs.readFile(path.join(sandbox.stateDir, "events.jsonl"), "utf8");
+  const raw = await fs.readFile(path.join(sandbox.stateDirectory, "events.jsonl"), "utf8");
   return raw
     .split("\n")
     .filter((line) => line.length > 0)
@@ -196,7 +196,9 @@ async function readEvents(sandbox: Sandbox): Promise<JfdiEvent[]> {
 }
 
 afterEach(async () => {
-  await Promise.all(sandboxes.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    sandboxes.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe("jfdi merge closes out its own card", () => {
@@ -219,7 +221,7 @@ describe("jfdi merge closes out its own card", () => {
     expect(merge.code).toBe(0);
 
     // The code landed…
-    expect(await git(sandbox.project, "log", "--oneline", "main")).toContain(
+    expect(await git(sandbox.projectRoot, "log", "--oneline", "main")).toContain(
       "work for ship-the-widget",
     );
     // …and so did the bookkeeping.
@@ -228,7 +230,7 @@ describe("jfdi merge closes out its own card", () => {
     expect(cardsUnder(board, "Done")).toEqual(["- [x] Ship the widget [[ship-the-widget]]"]);
 
     // The write followed the link instead of replacing it with a private copy.
-    const boardLink = path.join(sandbox.jfdiDir, "board.md");
+    const boardLink = path.join(sandbox.jfdiDirectory, "board.md");
     expect((await fs.lstat(boardLink)).isSymbolicLink()).toBe(true);
     expect(await fs.readlink(boardLink)).toBe(sandbox.vaultBoardPath);
 
@@ -256,9 +258,9 @@ describe("jfdi merge closes out its own card", () => {
       ]),
     );
     const worktreePath = await makeTicketBranch(sandbox, "hand-merged");
-    await git(sandbox.project, "merge", "--ff-only", "jfdi/hand-merged");
+    await git(sandbox.projectRoot, "merge", "--ff-only", "jfdi/hand-merged");
     // The human cleaned up after themselves, too.
-    await git(sandbox.project, "worktree", "remove", "--force", worktreePath);
+    await git(sandbox.projectRoot, "worktree", "remove", "--force", worktreePath);
 
     const merge = await runCli(sandbox, ["merge", "hand-merged"]);
     expect(merge.code).toBe(0);
@@ -317,7 +319,7 @@ describe("jfdi merge closes out its own card", () => {
     const merge = await runCli(sandbox, ["merge", "fails-the-gate"]);
     expect(merge.code).toBe(2);
 
-    expect(await git(sandbox.project, "log", "--oneline", "main")).not.toContain(
+    expect(await git(sandbox.projectRoot, "log", "--oneline", "main")).not.toContain(
       "work for fails-the-gate",
     );
     const board = await readBoard(sandbox);
@@ -396,7 +398,7 @@ describe("jfdi merge closes out its own card", () => {
 
     expect((await runCli(sandbox, ["merge", "cardless-ticket"])).code).toBe(0);
 
-    expect(await git(sandbox.project, "log", "--oneline", "main")).toContain(
+    expect(await git(sandbox.projectRoot, "log", "--oneline", "main")).toContain(
       "work for cardless-ticket",
     );
     expect(await readBoard(sandbox)).toBe(board);
@@ -433,7 +435,7 @@ describe("jfdi merge closes out its own card", () => {
     const merge = await runCli(sandbox, ["merge", "no-such-column"]);
     expect(merge.code).toBe(0);
 
-    expect(await git(sandbox.project, "log", "--oneline", "main")).toContain(
+    expect(await git(sandbox.projectRoot, "log", "--oneline", "main")).toContain(
       "work for no-such-column",
     );
     expect(await readBoard(sandbox)).toBe(board);

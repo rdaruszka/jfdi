@@ -25,8 +25,8 @@ import { spawnTtyCli } from "./test-helpers.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 const PIPELINE_TIMEOUT_MS = 120_000;
 /** How long a spawned coordinator gets to reach the state a test waits for. */
@@ -70,7 +70,7 @@ const resultText = prompt.includes("Write the commit message") && scribedSummary
   : "done";
 process.on("exit", () => process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: resultText } }) + "\\n"));
 const match = prompt.match(/(\\/\\S+\\.verdict\\.json)/);
-const promptDir = process.env.STUB_PROMPT_DIR;
+const promptDir = process.env.STUB_PROMPT_DIRECTORY;
 const RESET_SECONDS_AHEAD = 3600;
 // Provider-down modes: the session dies the way a real one does — a result
 // line the harness classifies, no verdict file, nonzero exit.
@@ -129,13 +129,13 @@ process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_err
 
 interface Sandbox {
   root: string;
-  project: string;
+  projectRoot: string;
   home: string;
   jfdiHome: string;
-  stateDir: string;
-  binDir: string;
+  stateDirectory: string;
+  executableDirectory: string;
   /** Where the stub drops one file per prompt it was handed. */
-  promptDir: string;
+  promptDirectory: string;
 }
 
 const sandboxRoots: string[] = [];
@@ -145,34 +145,34 @@ async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-resume-"));
   const root = await fs.realpath(created);
   sandboxRoots.push(created);
-  const project = path.join(root, "project");
+  const projectRoot = path.join(root, "project");
   const home = path.join(root, "home");
-  const binDir = path.join(root, "bin");
-  await fs.mkdir(project, { recursive: true });
+  const executableDirectory = path.join(root, "bin");
+  await fs.mkdir(projectRoot, { recursive: true });
   await fs.mkdir(home);
-  await fs.mkdir(binDir);
+  await fs.mkdir(executableDirectory);
   // Both CLIs the scaffolded config selects, played by the same script:
   // the default mix reviews on Codex and implements on Claude.
   for (const executable of ["claude", "codex"]) {
-    await fs.writeFile(path.join(binDir, executable), STUB_AGENT, { mode: 0o755 });
+    await fs.writeFile(path.join(executableDirectory, executable), STUB_AGENT, { mode: 0o755 });
   }
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
   const jfdiHome = path.join(home, ".jfdi");
   return {
     root,
-    project,
+    projectRoot,
     home,
     jfdiHome,
-    binDir,
-    promptDir: path.join(root, "prompts"),
-    stateDir: path.join(jfdiHome, "projects", project.split(path.sep).join("-")),
+    executableDirectory,
+    promptDirectory: path.join(root, "prompts"),
+    stateDirectory: path.join(jfdiHome, "projects", projectRoot.split(path.sep).join("-")),
   };
 }
 
@@ -188,12 +188,12 @@ interface StubOptions {
 function stubEnv(sandbox: Sandbox, options: StubOptions): NodeJS.ProcessEnv {
   return {
     ...process.env,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
     STUB_MODE: options.stubMode ?? "pass",
     STUB_TAG: options.tag ?? "work",
-    STUB_PROMPT_DIR: path.join(sandbox.promptDir, options.promptSubdir ?? "default"),
+    STUB_PROMPT_DIRECTORY: path.join(sandbox.promptDirectory, options.promptSubdir ?? "default"),
     NO_COLOR: "1",
   };
 }
@@ -211,7 +211,7 @@ async function runCli(
 ): Promise<CliResult> {
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: sandbox.project,
+      cwd: sandbox.projectRoot,
       env: stubEnv(sandbox, options),
       maxBuffer: 64 * 1024 * 1024,
     });
@@ -229,7 +229,7 @@ function ticketIdOf(result: CliResult): string {
 }
 
 function readPrompt(sandbox: Sandbox, subdir: string, name: string): Promise<string> {
-  return fs.readFile(path.join(sandbox.promptDir, subdir, name), "utf8");
+  return fs.readFile(path.join(sandbox.promptDirectory, subdir, name), "utf8");
 }
 
 interface RecordedEvent {
@@ -242,7 +242,7 @@ async function readEvents(sandbox: Sandbox): Promise<RecordedEvent[]> {
   // Polled while a coordinator is still starting up, so "not written yet" is
   // an ordinary answer: no events.
   const raw = await fs
-    .readFile(path.join(sandbox.stateDir, "events.jsonl"), "utf8")
+    .readFile(path.join(sandbox.stateDirectory, "events.jsonl"), "utf8")
     .catch(() => "");
   return raw
     .split("\n")
@@ -251,11 +251,11 @@ async function readEvents(sandbox: Sandbox): Promise<RecordedEvent[]> {
 }
 
 function boardPath(sandbox: Sandbox): string {
-  return path.join(sandbox.project, ".jfdi", "board.md");
+  return path.join(sandbox.projectRoot, ".jfdi", "board.md");
 }
 
 function worktreePath(sandbox: Sandbox, ticketId: string): string {
-  return path.join(sandbox.project, ".jfdi", "worktrees", ticketId);
+  return path.join(sandbox.projectRoot, ".jfdi", "worktrees", ticketId);
 }
 
 /** The card lines under one board column heading, in order. */
@@ -305,7 +305,7 @@ function spawnCli(
   options: StubOptions = {},
   shouldUseTTY = false,
 ): LiveCli {
-  const spawnOptions = { cwd: sandbox.project, env: stubEnv(sandbox, options) };
+  const spawnOptions = { cwd: sandbox.projectRoot, env: stubEnv(sandbox, options) };
   const child = shouldUseTTY
     ? spawnTtyCli(cliPath, args, spawnOptions)
     : spawn(process.execPath, [cliPath, ...args], spawnOptions);
@@ -361,7 +361,7 @@ async function runCoordinatorUntil(
 
 afterEach(async () => {
   await Promise.all(
-    sandboxRoots.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    sandboxRoots.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -447,8 +447,8 @@ describe("resuming an interrupted run", () => {
       // edits that never got committed.
       await fs.writeFile(path.join(worktree, "README.md"), "branch version\n");
       await git(worktree, "commit", "-am", "branch edit");
-      await fs.writeFile(path.join(sandbox.project, "README.md"), "main version\n");
-      await git(sandbox.project, "commit", "-am", "main edit");
+      await fs.writeFile(path.join(sandbox.projectRoot, "README.md"), "main version\n");
+      await git(sandbox.projectRoot, "commit", "-am", "main edit");
       expect((await mergeTargetIntoBranch(worktree, "main")).hasConflict).toBe(true);
       expect(await isMergeInProgress(worktree)).toBe(true);
       await fs.writeFile(path.join(worktree, "salvaged.txt"), "half-written\n");
@@ -537,7 +537,7 @@ describe("coordinator startup", () => {
       // Picked back up where it stood — not flagged for the human to drag back.
       expect(await cardsInColumn(sandbox, "Ready to Merge")).toEqual(["- [ ] Half-finished thing"]);
       expect(await cardsInColumn(sandbox, "Blocked")).toEqual([]);
-      expect(await fs.readdir(path.join(sandbox.promptDir, "default"))).toContain(
+      expect(await fs.readdir(path.join(sandbox.promptDirectory, "default"))).toContain(
         "implementation-0.txt",
       );
     },
@@ -647,7 +647,7 @@ describe("a provider that is down", () => {
   /** How many sessions the stub was asked for, across every run in a sandbox. */
   async function spawnCount(sandbox: Sandbox, subdir: string): Promise<number> {
     const log = await fs
-      .readFile(path.join(sandbox.promptDir, subdir, "spawns.log"), "utf8")
+      .readFile(path.join(sandbox.promptDirectory, subdir, "spawns.log"), "utf8")
       .catch(() => "");
     return log.split("\n").filter(Boolean).length;
   }
@@ -735,7 +735,7 @@ describe("a provider that is down", () => {
     "lets the process exit again once the pause it was holding has resumed",
     async () => {
       const script = `
-        const { PauseController } = await import(${JSON.stringify(path.join(repoRoot, "dist", "pause.js"))});
+        const { PauseController } = await import(${JSON.stringify(path.join(projectRoot, "dist", "pause.js"))});
         const pause = new PauseController({ emit: () => undefined }, {
           outageStageRetryMs: [],
           probeMs: [${RESUME_SOON_MS}],

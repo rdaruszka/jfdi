@@ -23,8 +23,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 const PIPELINE_TIMEOUT_MS = 120_000;
 
 /**
@@ -37,7 +37,7 @@ const CODEX_AUTO_ARGS = [
   "-c",
   "sandbox_workspace_write.network_access=true",
 ];
-const CODEX_BYPASS_ARG = "--dangerously-bypass-approvals-and-sandbox";
+const CODEX_BYPASS_ARGUMENT = "--dangerously-bypass-approvals-and-sandbox";
 
 /** Record the argv, then answer the stage the prompt names. Never hits the net. */
 const STUB_BODY = `
@@ -95,20 +95,22 @@ process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "age
 `;
 
 /** `PATH` with every directory holding a real agent CLI removed. */
-function agentFreePath(binDir: string): string {
+function agentFreePath(executableDirectory: string): string {
   const inherited = (process.env.PATH ?? "")
     .split(path.delimiter)
     .filter(
-      (dir) =>
-        dir !== "" && !existsSync(path.join(dir, "claude")) && !existsSync(path.join(dir, "codex")),
+      (directory) =>
+        directory !== "" &&
+        !existsSync(path.join(directory, "claude")) &&
+        !existsSync(path.join(directory, "codex")),
     );
-  return [binDir, ...inherited].join(path.delimiter);
+  return [executableDirectory, ...inherited].join(path.delimiter);
 }
 
 interface Sandbox {
   root: string;
-  project: string;
-  binDir: string;
+  projectRoot: string;
+  executableDirectory: string;
   argvLog: string;
   environment: NodeJS.ProcessEnv;
 }
@@ -119,32 +121,32 @@ async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-permission-mode-"));
   sandboxRoots.push(created);
   const root = await fs.realpath(created);
-  const project = path.join(root, "project");
-  const binDir = path.join(root, "bin");
+  const projectRoot = path.join(root, "project");
+  const executableDirectory = path.join(root, "bin");
   const home = path.join(root, "home");
   const jfdiHome = path.join(home, ".jfdi");
-  await fs.mkdir(project, { recursive: true });
-  await fs.mkdir(binDir);
+  await fs.mkdir(projectRoot, { recursive: true });
+  await fs.mkdir(executableDirectory);
   await fs.mkdir(home);
-  await fs.writeFile(path.join(binDir, "claude"), STUB_CLAUDE, { mode: 0o755 });
-  await fs.writeFile(path.join(binDir, "codex"), STUB_CODEX, { mode: 0o755 });
-  await fs.symlink(process.execPath, path.join(binDir, "node"));
+  await fs.writeFile(path.join(executableDirectory, "claude"), STUB_CLAUDE, { mode: 0o755 });
+  await fs.writeFile(path.join(executableDirectory, "codex"), STUB_CODEX, { mode: 0o755 });
+  await fs.symlink(process.execPath, path.join(executableDirectory, "node"));
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
   return {
     root,
-    project,
-    binDir,
+    projectRoot,
+    executableDirectory,
     argvLog: path.join(root, "argv.jsonl"),
     environment: {
       ...process.env,
-      PATH: agentFreePath(binDir),
+      PATH: agentFreePath(executableDirectory),
       HOME: home,
       JFDI_HOME: jfdiHome,
       STUB_ARGV_LOG: path.join(root, "argv.jsonl"),
@@ -167,7 +169,7 @@ async function runCli(
 ): Promise<CliResult> {
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: sandbox.project,
+      cwd: sandbox.projectRoot,
       env: { ...sandbox.environment, ...extraEnvironment },
       maxBuffer: 64 * 1024 * 1024,
     });
@@ -182,7 +184,7 @@ async function runCli(
 async function scaffold(sandbox: Sandbox, permissionMode?: "auto" | "bypass"): Promise<void> {
   expect((await runCli(sandbox, ["init", "--bare"])).code).toBe(0);
   if (permissionMode === undefined) return;
-  const configPath = path.join(sandbox.project, ".jfdi", "config.json");
+  const configPath = path.join(sandbox.projectRoot, ".jfdi", "config.json");
   const config = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
   await fs.writeFile(
     configPath,
@@ -224,7 +226,7 @@ function containsInOrder(argv: string[], subsequence: string[]): boolean {
 
 afterEach(async () => {
   await Promise.all(
-    sandboxRoots.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    sandboxRoots.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -254,7 +256,7 @@ describe("permission mode, end to end", () => {
           expect(call.argv).not.toContain("auto");
         } else {
           expect(containsInOrder(call.argv, CODEX_AUTO_ARGS)).toBe(true);
-          expect(call.argv).not.toContain(CODEX_BYPASS_ARG);
+          expect(call.argv).not.toContain(CODEX_BYPASS_ARGUMENT);
           // The deprecated compatibility path is never used.
           expect(call.argv).not.toContain("--full-auto");
         }
@@ -281,7 +283,7 @@ describe("permission mode, end to end", () => {
           expect(hasFlagValue(call.argv, "--permission-mode", "bypassPermissions")).toBe(true);
           expect(call.argv).not.toContain("auto");
         } else {
-          expect(call.argv).toContain(CODEX_BYPASS_ARG);
+          expect(call.argv).toContain(CODEX_BYPASS_ARGUMENT);
           expect(call.argv).not.toContain("--sandbox");
           expect(call.argv).not.toContain('sandbox_mode="workspace-write"');
           expect(call.argv).not.toContain("sandbox_workspace_write.network_access=true");

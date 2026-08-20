@@ -25,8 +25,8 @@ import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 const PIPELINE_TIMEOUT_MS = 120_000;
 
@@ -97,11 +97,11 @@ process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "age
 
 interface Sandbox {
   root: string;
-  project: string;
+  projectRoot: string;
   home: string;
   jfdiHome: string;
-  stateDir: string;
-  binDir: string;
+  stateDirectory: string;
+  executableDirectory: string;
 }
 
 const sandboxRoots: string[] = [];
@@ -110,30 +110,30 @@ async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-fulltext-"));
   const root = await fs.realpath(created);
   sandboxRoots.push(created);
-  const project = path.join(root, "project");
+  const projectRoot = path.join(root, "project");
   const home = path.join(root, "home");
-  const binDir = path.join(root, "bin");
-  await fs.mkdir(project, { recursive: true });
+  const executableDirectory = path.join(root, "bin");
+  await fs.mkdir(projectRoot, { recursive: true });
   await fs.mkdir(home);
-  await fs.mkdir(binDir);
-  await fs.writeFile(path.join(binDir, "claude"), STUB_CLAUDE, { mode: 0o755 });
-  await fs.writeFile(path.join(binDir, "codex"), STUB_CODEX, { mode: 0o755 });
+  await fs.mkdir(executableDirectory);
+  await fs.writeFile(path.join(executableDirectory, "claude"), STUB_CLAUDE, { mode: 0o755 });
+  await fs.writeFile(path.join(executableDirectory, "codex"), STUB_CODEX, { mode: 0o755 });
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
   const jfdiHome = path.join(home, ".jfdi");
   return {
     root,
-    project,
+    projectRoot,
     home,
     jfdiHome,
-    binDir,
-    stateDir: path.join(jfdiHome, "projects", project.split(path.sep).join("-")),
+    executableDirectory,
+    stateDirectory: path.join(jfdiHome, "projects", projectRoot.split(path.sep).join("-")),
   };
 }
 
@@ -150,7 +150,7 @@ async function runCli(
 ): Promise<CliResult> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
     STUB_MODE: options.stubMode ?? "pass",
@@ -158,7 +158,7 @@ async function runCli(
   };
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: sandbox.project,
+      cwd: sandbox.projectRoot,
       env,
       maxBuffer: 64 * 1024 * 1024,
     });
@@ -176,7 +176,7 @@ interface RecordedEvent {
 }
 
 async function readEvents(sandbox: Sandbox): Promise<RecordedEvent[]> {
-  const raw = await fs.readFile(path.join(sandbox.stateDir, "events.jsonl"), "utf8");
+  const raw = await fs.readFile(path.join(sandbox.stateDirectory, "events.jsonl"), "utf8");
   return raw
     .split("\n")
     .filter(Boolean)
@@ -185,7 +185,7 @@ async function readEvents(sandbox: Sandbox): Promise<RecordedEvent[]> {
 
 afterEach(async () => {
   await Promise.all(
-    sandboxRoots.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    sandboxRoots.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 

@@ -22,8 +22,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 const PIPELINE_TIMEOUT_MS = 120_000;
 /** `jfdi run` exits 2 when the ticket ends blocked. */
 const EXIT_BLOCKED = 2;
@@ -89,21 +89,23 @@ process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "age
  * stub dir is not enough on its own: the missing-binary case deletes a stub,
  * and whatever the human has installed would answer in its place.
  */
-function agentFreePath(binDir: string): string {
+function agentFreePath(executableDirectory: string): string {
   const inherited = (process.env.PATH ?? "")
     .split(path.delimiter)
     .filter(
-      (dir) =>
-        dir !== "" && !existsSync(path.join(dir, "claude")) && !existsSync(path.join(dir, "codex")),
+      (directory) =>
+        directory !== "" &&
+        !existsSync(path.join(directory, "claude")) &&
+        !existsSync(path.join(directory, "codex")),
     );
-  return [binDir, ...inherited].join(path.delimiter);
+  return [executableDirectory, ...inherited].join(path.delimiter);
 }
 
 interface Sandbox {
   root: string;
-  project: string;
-  binDir: string;
-  stateDir: string;
+  projectRoot: string;
+  executableDirectory: string;
+  stateDirectory: string;
   argvLog: string;
   environment: NodeJS.ProcessEnv;
 }
@@ -115,36 +117,36 @@ async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-per-stage-"));
   sandboxRoots.push(created);
   const root = await fs.realpath(created);
-  const project = path.join(root, "project");
-  const binDir = path.join(root, "bin");
+  const projectRoot = path.join(root, "project");
+  const executableDirectory = path.join(root, "bin");
   const home = path.join(root, "home");
   const jfdiHome = path.join(home, ".jfdi");
-  await fs.mkdir(project, { recursive: true });
-  await fs.mkdir(binDir);
+  await fs.mkdir(projectRoot, { recursive: true });
+  await fs.mkdir(executableDirectory);
   await fs.mkdir(home);
-  await fs.writeFile(path.join(binDir, "claude"), STUB_CLAUDE, { mode: 0o755 });
-  await fs.writeFile(path.join(binDir, "codex"), STUB_CODEX, { mode: 0o755 });
+  await fs.writeFile(path.join(executableDirectory, "claude"), STUB_CLAUDE, { mode: 0o755 });
+  await fs.writeFile(path.join(executableDirectory, "codex"), STUB_CODEX, { mode: 0o755 });
   // `env node` must still resolve after the sanitizing above dropped whichever
   // directory node shares with an agent CLI.
-  await fs.symlink(process.execPath, path.join(binDir, "node"));
+  await fs.symlink(process.execPath, path.join(executableDirectory, "node"));
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
   const argvLog = path.join(root, "argv.jsonl");
   return {
     root,
-    project,
-    binDir,
+    projectRoot,
+    executableDirectory,
     argvLog,
-    stateDir: path.join(jfdiHome, "projects", project.split(path.sep).join("-")),
+    stateDirectory: path.join(jfdiHome, "projects", projectRoot.split(path.sep).join("-")),
     environment: {
       ...process.env,
-      PATH: agentFreePath(binDir),
+      PATH: agentFreePath(executableDirectory),
       HOME: home,
       JFDI_HOME: jfdiHome,
       STUB_ARGV_LOG: argvLog,
@@ -167,7 +169,7 @@ async function runCli(
 ): Promise<CliResult> {
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: sandbox.project,
+      cwd: sandbox.projectRoot,
       env: { ...sandbox.environment, ...extraEnvironment },
       maxBuffer: 64 * 1024 * 1024,
     });
@@ -185,7 +187,7 @@ async function scaffold(sandbox: Sandbox, stages: unknown): Promise<void> {
 }
 
 async function writeStages(sandbox: Sandbox, stages: unknown): Promise<void> {
-  const configPath = path.join(sandbox.project, ".jfdi", "config.json");
+  const configPath = path.join(sandbox.projectRoot, ".jfdi", "config.json");
   const config = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
   await fs.writeFile(configPath, JSON.stringify({ ...config, stages }, null, 2));
 }
@@ -251,7 +253,7 @@ async function invocations(sandbox: Sandbox): Promise<Invocation[]> {
 }
 
 async function stageStarts(sandbox: Sandbox): Promise<Array<Record<string, unknown>>> {
-  const raw = await fs.readFile(path.join(sandbox.stateDir, "events.jsonl"), "utf8");
+  const raw = await fs.readFile(path.join(sandbox.stateDirectory, "events.jsonl"), "utf8");
   return raw
     .split("\n")
     .filter(Boolean)
@@ -275,7 +277,7 @@ const MIXED_STAGES = {
 
 afterEach(async () => {
   await Promise.all(
-    sandboxRoots.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    sandboxRoots.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -379,9 +381,9 @@ describe("per-stage selection, end to end", () => {
       expect(run.code).toBe(0);
 
       // Collide on the target branch, so integration cannot fast-forward.
-      await fs.writeFile(path.join(sandbox.project, "feature.txt"), "main version\n");
-      await git(sandbox.project, "add", "-A");
-      await git(sandbox.project, "commit", "-m", "collide");
+      await fs.writeFile(path.join(sandbox.projectRoot, "feature.txt"), "main version\n");
+      await git(sandbox.projectRoot, "add", "-A");
+      await git(sandbox.projectRoot, "commit", "-m", "collide");
 
       await fs.rm(sandbox.argvLog);
       const merge = await runCli(sandbox, ["merge", ticketIdOf(run)]);
@@ -403,7 +405,7 @@ describe("per-stage selection, end to end", () => {
         harness: "codex",
         effort: "xhigh",
       });
-      expect(await fs.readFile(path.join(sandbox.project, "feature.txt"), "utf8")).toBe(
+      expect(await fs.readFile(path.join(sandbox.projectRoot, "feature.txt"), "utf8")).toBe(
         "reconciled\n",
       );
     },
@@ -417,7 +419,7 @@ describe("per-stage selection, end to end", () => {
       await scaffold(sandbox, MIXED_STAGES);
       // The cross-provider default's consequence, made concrete: only one
       // provider's CLI is installed.
-      await fs.rm(path.join(sandbox.binDir, "codex"));
+      await fs.rm(path.join(sandbox.executableDirectory, "codex"));
 
       const run = await runCli(sandbox, ["run", "Review with no reviewer"]);
       expect(run.code).toBe(EXIT_BLOCKED);
@@ -425,7 +427,7 @@ describe("per-stage selection, end to end", () => {
       expect(run.stderr).toContain("See the ticket note");
 
       const note = await fs.readFile(
-        path.join(sandbox.project, ".jfdi", "tickets", `${ticketIdOf(run)}.md`),
+        path.join(sandbox.projectRoot, ".jfdi", "tickets", `${ticketIdOf(run)}.md`),
         "utf8",
       );
       expect(note).toContain('failed to spawn "codex" for the code-review session');

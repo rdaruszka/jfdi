@@ -11,7 +11,7 @@ import type { FeedbackItem } from "./resume.js";
  * commits + diffstat with an instruction to read the diff per file — inlining
  * an arbitrarily large diff would blow the session's context for no gain.
  */
-const MAX_INLINE_DIFF_CHARS = 40_000;
+const MAX_INLINE_DIFF_CHARACTERS = 40_000;
 
 export interface ChangeContext {
   /** `git log --oneline` of the branch's commits over the target. */
@@ -33,7 +33,7 @@ export async function collectChangeContext(
   const diff = await git(worktreePath, "diff", `${targetBranch}...HEAD`);
   const headCommit = await git(worktreePath, "rev-parse", "HEAD");
   const diffSection =
-    diff.length <= MAX_INLINE_DIFF_CHARS
+    diff.length <= MAX_INLINE_DIFF_CHARACTERS
       ? `Full diff against \`${targetBranch}\`:\n\n\`\`\`diff\n${diff}\n\`\`\``
       : `The full diff is too large to inline (${diff.length} chars). Read it per file with \`git diff ${targetBranch}...HEAD -- <path>\`.`;
   return { commitLog, diffStat, diffSection, headCommit };

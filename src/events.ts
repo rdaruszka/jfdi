@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { atomicWrite, ensureDir, readIfExists } from "./util/fsx.js";
+import { atomicWrite, ensureDirectory, readIfExists } from "./util/fsx.js";
 
 export type StageName = "implementation" | "code-review" | "qa" | "integration";
 
@@ -92,7 +92,7 @@ export function emptyState(): CoordinatorState {
 }
 
 /** Longest excerpt of a rejected line quoted back in an error. */
-const MAX_BAD_LINE_CHARS = 200;
+const MAX_BAD_LINE_CHARACTERS = 200;
 
 /**
  * Most events.jsonl bytes one tail pull reads. The rest waits for the next
@@ -368,15 +368,15 @@ export class EventLog {
   private tailOffsetBytes = 0;
 
   constructor(
-    private readonly stateDir: string,
+    private readonly stateDirectory: string,
     private readonly shouldPersist: boolean = true,
   ) {}
 
   get eventsPath(): string {
-    return path.join(this.stateDir, "events.jsonl");
+    return path.join(this.stateDirectory, "events.jsonl");
   }
   get statePath(): string {
-    return path.join(this.stateDir, "state.json");
+    return path.join(this.stateDirectory, "state.json");
   }
 
   snapshot(): CoordinatorState {
@@ -400,7 +400,7 @@ export class EventLog {
     if (this.shouldPersist) {
       const snapshot = this.state;
       this.writeChain = this.writeChain.then(async () => {
-        await ensureDir(this.stateDir);
+        await ensureDirectory(this.stateDirectory);
         await fs.appendFile(this.eventsPath, `${JSON.stringify(event)}\n`, "utf8");
         await atomicWrite(this.statePath, `${JSON.stringify(snapshot, null, 2)}\n`);
       });
@@ -451,7 +451,7 @@ export class EventLog {
       const event = parseEventLine(line);
       if (event === null) {
         this.emit("error", undefined, {
-          message: `ignored a line in ${this.eventsPath} that is not a JFDI event: ${line.slice(0, MAX_BAD_LINE_CHARS)}`,
+          message: `ignored a line in ${this.eventsPath} that is not a JFDI event: ${line.slice(0, MAX_BAD_LINE_CHARACTERS)}`,
         });
         continue;
       }
@@ -464,8 +464,8 @@ export class EventLog {
   }
 
   /** Rebuild state purely from events.jsonl. */
-  static async rebuild(stateDir: string): Promise<CoordinatorState> {
-    const eventsPath = path.join(stateDir, "events.jsonl");
+  static async rebuild(stateDirectory: string): Promise<CoordinatorState> {
+    const eventsPath = path.join(stateDirectory, "events.jsonl");
     const content = await readIfExists(eventsPath);
     let state = emptyState();
     if (content === null) return state;
@@ -474,7 +474,7 @@ export class EventLog {
       const parsed: unknown = JSON.parse(line);
       if (!isJfdiEvent(parsed))
         throw new Error(
-          `${eventsPath} contains a line that is not a JFDI event: ${line.slice(0, MAX_BAD_LINE_CHARS)}`,
+          `${eventsPath} contains a line that is not a JFDI event: ${line.slice(0, MAX_BAD_LINE_CHARACTERS)}`,
         );
       state = reduceEvent(state, parsed);
     }
@@ -503,9 +503,9 @@ export type IntegrationRecord = { phase: "in-flight" } | { phase: "merged"; even
  * dispatch too. Rebuilding the snapshot stays strict; see `rebuild`.
  */
 export async function integrationRecords(
-  stateDir: string,
+  stateDirectory: string,
 ): Promise<Map<string, IntegrationRecord>> {
-  const content = await readIfExists(path.join(stateDir, "events.jsonl"));
+  const content = await readIfExists(path.join(stateDirectory, "events.jsonl"));
   const records = new Map<string, IntegrationRecord>();
   if (content === null) return records;
   for (const line of content.split("\n")) {
@@ -611,10 +611,10 @@ function isCoordinatorState(value: unknown): value is CoordinatorState {
 }
 
 /** Load the current snapshot from disk (jfdi status). */
-export async function loadState(stateDir: string): Promise<CoordinatorState> {
-  const statePath = path.join(stateDir, "state.json");
+export async function loadState(stateDirectory: string): Promise<CoordinatorState> {
+  const statePath = path.join(stateDirectory, "state.json");
   const content = await readIfExists(statePath);
-  if (content === null) return EventLog.rebuild(stateDir);
+  if (content === null) return EventLog.rebuild(stateDirectory);
   const parsed: unknown = JSON.parse(content);
   if (!isCoordinatorState(parsed))
     throw new Error(

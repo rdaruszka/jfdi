@@ -24,8 +24,8 @@ import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 const PIPELINE_TIMEOUT_MS = 120_000;
 
@@ -113,10 +113,10 @@ process.stdout.write(JSON.stringify(resultLine) + "\\n");
 
 interface Sandbox {
   root: string;
-  project: string;
+  projectRoot: string;
   home: string;
   jfdiHome: string;
-  binDir: string;
+  executableDirectory: string;
 }
 
 const sandboxRoots: string[] = [];
@@ -125,24 +125,24 @@ async function makeSandbox(stub: string = STUB_CLAUDE): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-provider-model-"));
   const root = await fs.realpath(created);
   sandboxRoots.push(created);
-  const project = path.join(root, "project");
+  const projectRoot = path.join(root, "project");
   const home = path.join(root, "home");
-  const binDir = path.join(root, "bin");
-  await fs.mkdir(project, { recursive: true });
+  const executableDirectory = path.join(root, "bin");
+  await fs.mkdir(projectRoot, { recursive: true });
   await fs.mkdir(home);
-  await fs.mkdir(binDir);
-  await fs.writeFile(path.join(binDir, "claude"), stub, { mode: 0o755 });
+  await fs.mkdir(executableDirectory);
+  await fs.writeFile(path.join(executableDirectory, "claude"), stub, { mode: 0o755 });
   // Codex is never invoked (all stages point at Claude) but must exist on PATH.
-  await fs.writeFile(path.join(binDir, "codex"), stub, { mode: 0o755 });
+  await fs.writeFile(path.join(executableDirectory, "codex"), stub, { mode: 0o755 });
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
-  return { root, project, home, jfdiHome: path.join(home, ".jfdi"), binDir };
+  return { root, projectRoot, home, jfdiHome: path.join(home, ".jfdi"), executableDirectory };
 }
 
 interface CliResult {
@@ -154,14 +154,14 @@ interface CliResult {
 async function runCli(sandbox: Sandbox, args: string[]): Promise<CliResult> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
     NO_COLOR: "1",
   };
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: sandbox.project,
+      cwd: sandbox.projectRoot,
       env,
       maxBuffer: 64 * 1024 * 1024,
     });
@@ -174,19 +174,21 @@ async function runCli(sandbox: Sandbox, args: string[]): Promise<CliResult> {
 
 /** The one ticket note `jfdi run "<text>"` writes, read from the scratch repo. */
 async function readTicketNote(sandbox: Sandbox): Promise<string> {
-  const dir = path.join(sandbox.project, ".jfdi", "tickets");
-  const entries = await fs.readdir(dir);
+  const directory = path.join(sandbox.projectRoot, ".jfdi", "tickets");
+  const entries = await fs.readdir(directory);
   const note = entries.find((name) => name.endsWith(".md"));
-  if (note === undefined) throw new Error(`no ticket note under ${dir}: ${entries.join(", ")}`);
-  return fs.readFile(path.join(dir, note), "utf8");
+  if (note === undefined)
+    throw new Error(`no ticket note under ${directory}: ${entries.join(", ")}`);
+  return fs.readFile(path.join(directory, note), "utf8");
 }
 
 /** The id of the one ticket `jfdi run` minted, from its note's file name. */
 async function ticketIdOf(sandbox: Sandbox): Promise<string> {
-  const dir = path.join(sandbox.project, ".jfdi", "tickets");
-  const entries = await fs.readdir(dir);
+  const directory = path.join(sandbox.projectRoot, ".jfdi", "tickets");
+  const entries = await fs.readdir(directory);
   const note = entries.find((name) => name.endsWith(".md"));
-  if (note === undefined) throw new Error(`no ticket note under ${dir}: ${entries.join(", ")}`);
+  if (note === undefined)
+    throw new Error(`no ticket note under ${directory}: ${entries.join(", ")}`);
   return note.replace(/\.md$/, "");
 }
 
@@ -202,12 +204,12 @@ async function readStageEnds(sandbox: Sandbox): Promise<
     modelSource?: string | undefined;
   }>
 > {
-  const projectsDir = path.join(sandbox.jfdiHome, "projects");
-  const keys = await fs.readdir(projectsDir);
+  const projectsDirectory = path.join(sandbox.jfdiHome, "projects");
+  const keys = await fs.readdir(projectsDirectory);
   const [projectKey] = keys;
   if (keys.length !== 1 || projectKey === undefined)
     throw new Error(`expected one project key, got: ${keys.join(", ")}`);
-  const raw = await fs.readFile(path.join(projectsDir, projectKey, "events.jsonl"), "utf8");
+  const raw = await fs.readFile(path.join(projectsDirectory, projectKey, "events.jsonl"), "utf8");
   return raw
     .split("\n")
     .filter(Boolean)
@@ -222,7 +224,7 @@ async function readStageEnds(sandbox: Sandbox): Promise<
 
 afterEach(async () => {
   await Promise.all(
-    sandboxRoots.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    sandboxRoots.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -234,7 +236,7 @@ describe("provider-confirmed model reporting, end to end", () => {
       expect((await runCli(sandbox, ["init", "--bare"])).code).toBe(0);
 
       // Point every stage at the Claude stub with a known configured model.
-      const configPath = path.join(sandbox.project, ".jfdi", "config.json");
+      const configPath = path.join(sandbox.projectRoot, ".jfdi", "config.json");
       const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
         stages: Record<string, { harness: string; model?: string; effort?: string }>;
       };
@@ -281,7 +283,7 @@ describe("provider-confirmed model reporting, end to end", () => {
       const sandbox = await makeSandbox(STUB_CLAUDE_MIXED);
       expect((await runCli(sandbox, ["init", "--bare"])).code).toBe(0);
 
-      const configPath = path.join(sandbox.project, ".jfdi", "config.json");
+      const configPath = path.join(sandbox.projectRoot, ".jfdi", "config.json");
       const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
         stages: Record<string, { harness: string; model?: string; effort?: string }>;
       };
@@ -317,7 +319,7 @@ describe("provider-confirmed model reporting, end to end", () => {
       const sandbox = await makeSandbox();
       expect((await runCli(sandbox, ["init", "--bare"])).code).toBe(0);
 
-      const configPath = path.join(sandbox.project, ".jfdi", "config.json");
+      const configPath = path.join(sandbox.projectRoot, ".jfdi", "config.json");
       const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
         stages: Record<string, { harness: string; model?: string; effort?: string }>;
       };

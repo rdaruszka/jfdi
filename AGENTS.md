@@ -101,6 +101,7 @@ Use these terms exactly; introduce no synonyms. The list grows only by editing t
 - **comment** — one entry in a ticket's append-only `## Comments` trail: a phase comment (`### <ISO timestamp> — <phase label>`) carrying that phase's message, decisions, status, and usage, or exceptional coordinator-owned refusal narration. A clean single-round run has `JFDI started`, the three `<Stage> round 1 complete` comments, and `Integration complete`.
 - **run** — one ticket's trip through the pipeline; logs under the state directory's `runs/<ticket-id>/`.
 - **state directory** — `~/.jfdi/projects/<project-key>/`, where one project's run state lives: `runs/`, `events.jsonl`, `state.json`.
+- **project root** — the absolute path to the project's top-level directory, which holds `.jfdi/`; internal identifiers use `projectRoot` everywhere.
 - **stage** — one fresh agent session within a run: Implementation, Code Review, QA.
 - **scribe** — the cheap, read-only, single-shot session that writes one commit message from the staged diff, the ticket, and the completing stage's summary. Pipeline plumbing that uses a session, selected by `stages["commit-message"]`: no verdict, no round, no sign-off — not a stage.
 - **gate** — the mechanical check (`pnpm build && pnpm exec tsc -p tsconfig.json --noEmit && pnpm test && pnpm lint`); all must exit zero. Pipeline-run: agents are told not to run it.

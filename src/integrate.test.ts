@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EventLog, JfdiEvent } from "./events.js";
-import { git, isAncestor, isMergeInProgress, revParse } from "./git.js";
+import { git, isAncestor, isMergeInProgress, parseRevision } from "./git.js";
 import { IntegrationQueue, integrateTicket } from "./integrate.js";
 import { type PipelineContext, runPipeline } from "./pipeline.js";
 import { saveReport } from "./report.js";
@@ -62,8 +62,8 @@ async function addOrigin(): Promise<string> {
   const remote = path.join(fixture.root, "origin.git");
   await fs.mkdir(remote);
   await git(remote, "init", "--bare", "--initial-branch=main");
-  await git(fixture.repo, "remote", "add", "origin", remote);
-  await git(fixture.repo, "push", "-u", "origin", "main");
+  await git(fixture.projectRoot, "remote", "add", "origin", remote);
+  await git(fixture.projectRoot, "push", "-u", "origin", "main");
   return remote;
 }
 
@@ -109,8 +109,8 @@ describe("integrateTicket", () => {
     const ticket = await resolveTicket("Corrupt report", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
-    const targetHead = await revParse(fixture.repo, "main");
-    const reportPath = path.join(fixture.stateDir, "runs", ticket.id, "report.json");
+    const targetHead = await parseRevision(fixture.projectRoot, "main");
+    const reportPath = path.join(fixture.stateDirectory, "runs", ticket.id, "report.json");
     const corruptContent = '{"summary":';
     await fs.writeFile(reportPath, corruptContent);
 
@@ -121,10 +121,10 @@ describe("integrateTicket", () => {
     expect(result.reason).toContain(reportPath);
     expect(result.reason).toContain("fix or restore");
     expect(result.reason).toContain("delete the file");
-    expect(await revParse(fixture.repo, "main")).toBe(targetHead);
+    expect(await parseRevision(fixture.projectRoot, "main")).toBe(targetHead);
     expect(await fs.readFile(reportPath, "utf8")).toBe(corruptContent);
     await expect(
-      fs.access(path.join(fixture.stateDir, "runs", ticket.id, "integration")),
+      fs.access(path.join(fixture.stateDirectory, "runs", ticket.id, "integration")),
     ).rejects.toThrow();
   });
 
@@ -137,42 +137,54 @@ describe("integrateTicket", () => {
     expect(outcome.report.usageRows.find((row) => row.label === "Implementation")?.models).toEqual([
       { name: "provider-implementation-model", source: "provider" },
     ]);
-    await saveReport(fixture.stateDir, ticket.id, outcome.report);
-    const signedOff = await revParse(fixture.repo, outcome.worktree.branch);
+    await saveReport(fixture.stateDirectory, ticket.id, outcome.report);
+    const signedOff = await parseRevision(fixture.projectRoot, outcome.worktree.branch);
 
     // Move main forward (non-conflicting) so the merge has something to do.
-    await commitFile(fixture.repo, "other.txt", "other\n", "unrelated");
-    const targetHead = await revParse(fixture.repo, "main");
+    await commitFile(fixture.projectRoot, "other.txt", "other\n", "unrelated");
+    const targetHead = await parseRevision(fixture.projectRoot, "main");
 
     const result = await integrateTicket(context, ticket, outcome.worktree);
     expect(result).toEqual({ status: "merged" });
     expect(
       await fs.readFile(
-        path.join(fixture.stateDir, "runs", ticket.id, "integration", "gate-clean-merge-1.log"),
+        path.join(
+          fixture.stateDirectory,
+          "runs",
+          ticket.id,
+          "integration",
+          "gate-clean-merge-1.log",
+        ),
         "utf8",
       ),
     ).toBe("");
     // The landing commit: target's prior head first, signed-off commit second.
-    expect(await git(fixture.repo, "rev-parse", "main^1")).toBe(targetHead);
-    expect(await git(fixture.repo, "rev-parse", "main^2")).toBe(signedOff);
-    expect(await isAncestor(fixture.repo, signedOff, "main")).toBe(true);
+    expect(await git(fixture.projectRoot, "rev-parse", "main^1")).toBe(targetHead);
+    expect(await git(fixture.projectRoot, "rev-parse", "main^2")).toBe(signedOff);
+    expect(await isAncestor(fixture.projectRoot, signedOff, "main")).toBe(true);
     // One entry per ticket on the target's first-parent line.
     expect(
-      await git(fixture.repo, "rev-list", "--count", "--first-parent", `${targetHead}..main`),
+      await git(
+        fixture.projectRoot,
+        "rev-list",
+        "--count",
+        "--first-parent",
+        `${targetHead}..main`,
+      ),
     ).toBe("1");
-    expect(await git(fixture.repo, "log", "-1", "--format=%s", "main")).toBe(
+    expect(await git(fixture.projectRoot, "log", "-1", "--format=%s", "main")).toBe(
       `Merge ${outcome.worktree.branch} into main`,
     );
     // Both sides' work is in the landed tree.
-    expect(await fs.readFile(path.join(fixture.repo, "feat.txt"), "utf8")).toBe("feature\n");
-    expect(await fs.readFile(path.join(fixture.repo, "other.txt"), "utf8")).toBe("other\n");
+    expect(await fs.readFile(path.join(fixture.projectRoot, "feat.txt"), "utf8")).toBe("feature\n");
+    expect(await fs.readFile(path.join(fixture.projectRoot, "other.txt"), "utf8")).toBe("other\n");
     // Worktree removed.
     await expect(fs.access(outcome.worktree.path)).rejects.toThrow();
     // No Report section — the merge closes the comment trail instead.
     const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8");
     expect(note).not.toContain("## Report");
     // The trail's closing entry says where the work went, naming the commit it landed as.
-    const landed = await revParse(fixture.repo, "main");
+    const landed = await parseRevision(fixture.projectRoot, "main");
     const comments = parseTicketNote(note).comments;
     expect(comments.map((comment) => comment.label)).toEqual([
       "JFDI started",
@@ -204,17 +216,23 @@ describe("integrateTicket", () => {
     const ticket = await resolveTicket("Only ticket", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
-    const signedOff = await revParse(fixture.repo, outcome.worktree.branch);
-    const targetHead = await revParse(fixture.repo, "main");
+    const signedOff = await parseRevision(fixture.projectRoot, outcome.worktree.branch);
+    const targetHead = await parseRevision(fixture.projectRoot, "main");
 
     const result = await integrateTicket(context, ticket, outcome.worktree);
 
     expect(result).toEqual({ status: "merged" });
-    expect(await revParse(fixture.repo, "main")).not.toBe(signedOff);
-    expect(await git(fixture.repo, "rev-parse", "main^1")).toBe(targetHead);
-    expect(await git(fixture.repo, "rev-parse", "main^2")).toBe(signedOff);
+    expect(await parseRevision(fixture.projectRoot, "main")).not.toBe(signedOff);
+    expect(await git(fixture.projectRoot, "rev-parse", "main^1")).toBe(targetHead);
+    expect(await git(fixture.projectRoot, "rev-parse", "main^2")).toBe(signedOff);
     expect(
-      await git(fixture.repo, "rev-list", "--count", "--first-parent", `${targetHead}..main`),
+      await git(
+        fixture.projectRoot,
+        "rev-list",
+        "--count",
+        "--first-parent",
+        `${targetHead}..main`,
+      ),
     ).toBe("1");
   });
 
@@ -231,9 +249,9 @@ describe("integrateTicket", () => {
     const failureTail = collisionFiles.at(-1);
     if (!failureTail) throw new Error("collision fixture should not be empty");
     for (const file of collisionFiles)
-      await fs.writeFile(path.join(fixture.repo, file), "target\n");
-    await git(fixture.repo, "add", "-A");
-    await git(fixture.repo, "commit", "-m", "add colliding target files");
+      await fs.writeFile(path.join(fixture.projectRoot, file), "target\n");
+    await git(fixture.projectRoot, "add", "-A");
+    await git(fixture.projectRoot, "commit", "-m", "add colliding target files");
     for (const file of collisionFiles)
       await fs.writeFile(path.join(outcome.worktree.path, file), "worktree\n");
 
@@ -261,7 +279,7 @@ describe("integrateTicket", () => {
       const ticket = await resolveTicket("Dirty at land time", gated.ticketsDirectory);
       const outcome = await runPipeline(context, ticket);
       if (outcome.status !== "passed") throw new Error("pipeline should pass");
-      await commitFile(gated.repo, "gamma.txt", "main version\n", "collide");
+      await commitFile(gated.projectRoot, "gamma.txt", "main version\n", "collide");
 
       const integrationContext = gated.context(async (prompt, options) => {
         const stage = sessionKindOf(prompt);
@@ -284,7 +302,7 @@ describe("integrateTicket", () => {
 
       expect(result).toEqual({ status: "merged" });
       const gateSaw = (await fs.readFile(listingFile, "utf8")).split("\n").filter(Boolean);
-      const landed = (await git(gated.repo, "ls-tree", "--name-only", "main"))
+      const landed = (await git(gated.projectRoot, "ls-tree", "--name-only", "main"))
         .split("\n")
         .filter(Boolean);
       expect(gateSaw).toContain("requalify-note.txt");
@@ -316,13 +334,13 @@ describe("integrateTicket", () => {
       const ticket = await resolveTicket("Gate tree", gated.ticketsDirectory);
       const outcome = await runPipeline(context, ticket);
       if (outcome.status !== "passed") throw new Error("pipeline should pass");
-      await commitFile(gated.repo, "other.txt", "other\n", "unrelated");
+      await commitFile(gated.projectRoot, "other.txt", "other\n", "unrelated");
 
       const result = await integrateTicket(context, ticket, outcome.worktree);
 
       expect(result).toEqual({ status: "merged" });
       const gatedTree = (await fs.readFile(treeFile, "utf8")).trim();
-      expect(await git(gated.repo, "rev-parse", "main^{tree}")).toBe(gatedTree);
+      expect(await git(gated.projectRoot, "rev-parse", "main^{tree}")).toBe(gatedTree);
     } finally {
       await gated.cleanup();
       await fs.rm(scratch, { recursive: true, force: true });
@@ -346,10 +364,10 @@ describe("integrateTicket", () => {
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     if (outcome.status !== "passed") return;
-    const signedOff = await revParse(fixture.repo, outcome.worktree.branch);
+    const signedOff = await parseRevision(fixture.projectRoot, outcome.worktree.branch);
 
     // Conflicting change on main.
-    await commitFile(fixture.repo, "README.md", "main version\n", "main edit");
+    await commitFile(fixture.projectRoot, "README.md", "main version\n", "main edit");
 
     // Swap in a proper conflict-resolving integration handler.
     let integrationSessions = 0;
@@ -366,11 +384,11 @@ describe("integrateTicket", () => {
     expect(result.status).toBe("merged");
     // One conflict, one agent session — the resolution happens once.
     expect(integrationSessions).toBe(1);
-    expect(await fs.readFile(path.join(fixture.repo, "README.md"), "utf8")).toBe(
+    expect(await fs.readFile(path.join(fixture.projectRoot, "README.md"), "utf8")).toBe(
       "merged version\n",
     );
     // The resolution lands in the merge commit, over the signed-off parent.
-    expect(await git(fixture.repo, "rev-parse", "main^2")).toBe(signedOff);
+    expect(await git(fixture.projectRoot, "rev-parse", "main^2")).toBe(signedOff);
     const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8");
     expect(note).toContain("kept both edits");
   });
@@ -391,7 +409,7 @@ describe("integrateTicket", () => {
     expect(outcome.status).toBe("passed");
     if (outcome.status !== "passed") return;
 
-    await commitFile(fixture.repo, "README.md", "main version\n", "main edit");
+    await commitFile(fixture.projectRoot, "README.md", "main version\n", "main edit");
 
     // The verdict's notes come straight from the Integration agent — the same
     // trust boundary every other verdict field crosses. These try to smuggle
@@ -445,7 +463,7 @@ describe("integrateTicket", () => {
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
-    await commitFile(fixture.repo, "feat2.txt", "main took the name\n", "collide");
+    await commitFile(fixture.projectRoot, "feat2.txt", "main took the name\n", "collide");
 
     const stages: string[] = [];
     const integrationContext = fixture.context(async (prompt, options) => {
@@ -469,9 +487,11 @@ describe("integrateTicket", () => {
     const result = await integrateTicket(integrationContext, ticket, outcome.worktree);
     expect(result.status).toBe("merged");
     // What lands is the tree as it stood after re-QA, not the pre-QA one.
-    expect(await git(fixture.repo, "show", "main:requalify.test.txt")).toBe("re-verified");
+    expect(await git(fixture.projectRoot, "show", "main:requalify.test.txt")).toBe("re-verified");
     expect(stages).toEqual(["integration", "qa"]);
-    expect(await fs.readFile(path.join(fixture.repo, "feat2.txt"), "utf8")).toBe("reconciled\n");
+    expect(await fs.readFile(path.join(fixture.projectRoot, "feat2.txt"), "utf8")).toBe(
+      "reconciled\n",
+    );
   });
 
   it("complicated resolution with failing re-QA blocks", async () => {
@@ -479,7 +499,7 @@ describe("integrateTicket", () => {
     const ticket = await resolveTicket("Bad landing", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
-    await commitFile(fixture.repo, "feat3.txt", "collision\n", "collide");
+    await commitFile(fixture.projectRoot, "feat3.txt", "collision\n", "collide");
 
     const integrationContext = fixture.context(async (prompt, options) => {
       const stage = sessionKindOf(prompt);
@@ -495,7 +515,7 @@ describe("integrateTicket", () => {
     });
     const result = await integrateTicket(integrationContext, ticket, outcome.worktree);
     expect(result.status).toBe("blocked");
-    expect(await isAncestor(fixture.repo, outcome.worktree.branch, "main")).toBe(false);
+    expect(await isAncestor(fixture.projectRoot, outcome.worktree.branch, "main")).toBe(false);
     const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8");
     expect(note).toContain("behavior regressed");
   });
@@ -505,8 +525,8 @@ describe("integrateTicket", () => {
     const ticket = await resolveTicket("Stale merge", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
-    const signedOff = await revParse(fixture.repo, outcome.worktree.branch);
-    await commitFile(fixture.repo, "feat5.txt", "main version\n", "collide");
+    const signedOff = await parseRevision(fixture.projectRoot, outcome.worktree.branch);
+    await commitFile(fixture.projectRoot, "feat5.txt", "main version\n", "collide");
 
     // First attempt: the agent walks away from the conflict, leaving the merge open.
     const abandoningContext = fixture.context(async (prompt) => {
@@ -517,7 +537,7 @@ describe("integrateTicket", () => {
     expect(first.status).toBe("blocked");
     expect(await isMergeInProgress(outcome.worktree.path)).toBe(true);
     // Aborting has to be lossless: the branch is still at its sign-off.
-    expect(await revParse(fixture.repo, outcome.worktree.branch)).toBe(signedOff);
+    expect(await parseRevision(fixture.projectRoot, outcome.worktree.branch)).toBe(signedOff);
 
     // Re-dispatch: the stale merge is aborted, so this is a normal conflicted
     // integration rather than "you have not concluded your merge".
@@ -531,7 +551,9 @@ describe("integrateTicket", () => {
     });
     const second = await integrateTicket(resolvingContext, ticket, outcome.worktree);
     expect(second).toEqual({ status: "merged" });
-    expect(await fs.readFile(path.join(fixture.repo, "feat5.txt"), "utf8")).toBe("reconciled\n");
+    expect(await fs.readFile(path.join(fixture.projectRoot, "feat5.txt"), "utf8")).toBe(
+      "reconciled\n",
+    );
   });
 
   /**
@@ -545,7 +567,7 @@ describe("integrateTicket", () => {
     const ticket = await resolveTicket("Unabortable merge", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
-    await commitFile(fixture.repo, "feat9.txt", "main version\n", "collide");
+    await commitFile(fixture.projectRoot, "feat9.txt", "main version\n", "collide");
 
     const abandoningContext = fixture.context(async (prompt) => {
       await writeVerdict(prompt, { resolution: "clean", notes: "gave up" });
@@ -553,9 +575,9 @@ describe("integrateTicket", () => {
     });
     const first = await integrateTicket(abandoningContext, ticket, outcome.worktree);
     expect(first.status).toBe("blocked");
-    const targetHead = await revParse(fixture.repo, "main");
-    const gitDir = await git(outcome.worktree.path, "rev-parse", "--absolute-git-dir");
-    await fs.writeFile(path.join(gitDir, "index.lock"), "");
+    const targetHead = await parseRevision(fixture.projectRoot, "main");
+    const gitDirectory = await git(outcome.worktree.path, "rev-parse", "--absolute-git-dir");
+    await fs.writeFile(path.join(gitDirectory, "index.lock"), "");
 
     const refusingContext = fixture.context(() =>
       Promise.reject(new Error("no session may run over a half-merged tree")),
@@ -567,7 +589,7 @@ describe("integrateTicket", () => {
     expect(blocked.reason).toContain("could not abort the merge in progress");
     expect(refusingContext.harness.calls).toHaveLength(0);
     // Nothing landed, and the worktree still holds the merge for a human.
-    expect(await revParse(fixture.repo, "main")).toBe(targetHead);
+    expect(await parseRevision(fixture.projectRoot, "main")).toBe(targetHead);
     expect(await isMergeInProgress(outcome.worktree.path)).toBe(true);
     const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8");
     expect(note).toContain("could not abort the merge in progress");
@@ -582,8 +604,8 @@ describe("integrateTicket", () => {
     const ticket = await resolveTicket("Vanished worktree", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
-    await commitFile(fixture.repo, "other.txt", "other\n", "unrelated");
-    const targetHead = await revParse(fixture.repo, "main");
+    await commitFile(fixture.projectRoot, "other.txt", "other\n", "unrelated");
+    const targetHead = await parseRevision(fixture.projectRoot, "main");
     await fs.rm(outcome.worktree.path, { recursive: true, force: true });
 
     const result = await integrateTicket(context, ticket, outcome.worktree);
@@ -591,7 +613,7 @@ describe("integrateTicket", () => {
     expect(result.status).toBe("blocked");
     if (result.status !== "blocked") return;
     expect(result.reason).toContain(`merging main into ${outcome.worktree.branch} failed`);
-    expect(await revParse(fixture.repo, "main")).toBe(targetHead);
+    expect(await parseRevision(fixture.projectRoot, "main")).toBe(targetHead);
     // The block is on the trail too, with the reason and where the card went.
     const note = parseTicketNote(
       await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8"),
@@ -612,7 +634,7 @@ describe("integrateTicket", () => {
     const ticket = await resolveTicket("Held integration", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
-    await commitFile(fixture.repo, "feat6.txt", "main version\n", "collide");
+    await commitFile(fixture.projectRoot, "feat6.txt", "main version\n", "collide");
 
     let integrationSessions = 0;
     const integrationContext = fixture.context(async (prompt, options) => {
@@ -644,7 +666,9 @@ describe("integrateTicket", () => {
     expect(result).toEqual({ status: "merged" });
     expect(pauseKinds).toEqual(["usage-limit"]);
     expect(integrationSessions).toBe(2);
-    expect(await fs.readFile(path.join(fixture.repo, "feat6.txt"), "utf8")).toBe("reconciled\n");
+    expect(await fs.readFile(path.join(fixture.projectRoot, "feat6.txt"), "utf8")).toBe(
+      "reconciled\n",
+    );
   });
 
   it("detects a branch the human already merged and closes without double-merging", async () => {
@@ -654,12 +678,12 @@ describe("integrateTicket", () => {
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
     // Human merges by hand.
-    await git(fixture.repo, "merge", "--ff-only", outcome.worktree.branch);
-    const headBefore = await git(fixture.repo, "rev-parse", "HEAD");
+    await git(fixture.projectRoot, "merge", "--ff-only", outcome.worktree.branch);
+    const headBefore = await git(fixture.projectRoot, "rev-parse", "HEAD");
 
     const result = await integrateTicket(context, ticket, outcome.worktree);
     expect(result.status).toBe("already-merged");
-    expect(await git(fixture.repo, "rev-parse", "HEAD")).toBe(headBefore);
+    expect(await git(fixture.projectRoot, "rev-parse", "HEAD")).toBe(headBefore);
   });
 
   it("closes an already-merged branch after the human removed its worktree", async () => {
@@ -668,8 +692,8 @@ describe("integrateTicket", () => {
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
-    await git(fixture.repo, "merge", "--ff-only", outcome.worktree.branch);
-    await git(fixture.repo, "worktree", "remove", "--force", outcome.worktree.path);
+    await git(fixture.projectRoot, "merge", "--ff-only", outcome.worktree.branch);
+    await git(fixture.projectRoot, "worktree", "remove", "--force", outcome.worktree.path);
 
     const result = await integrateTicket(context, ticket, outcome.worktree);
 
@@ -682,14 +706,16 @@ describe("integrateTicket", () => {
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
-    await git(fixture.repo, "merge", "--ff-only", outcome.worktree.branch);
+    await git(fixture.projectRoot, "merge", "--ff-only", outcome.worktree.branch);
     await fs.writeFile(path.join(outcome.worktree.path, "scratch.txt"), "keep me\n");
 
     const result = await integrateTicket(context, ticket, outcome.worktree);
 
     expect(result.status).toBe("merged");
-    expect(await fs.readFile(path.join(fixture.repo, "scratch.txt"), "utf8")).toBe("keep me\n");
-    expect(await git(fixture.repo, "log", "-1", "--format=%s", "main^2")).toBe(
+    expect(await fs.readFile(path.join(fixture.projectRoot, "scratch.txt"), "utf8")).toBe(
+      "keep me\n",
+    );
+    expect(await git(fixture.projectRoot, "log", "-1", "--format=%s", "main^2")).toBe(
       `jfdi(${ticket.id}): integration leftovers`,
     );
     await expect(fs.access(outcome.worktree.path)).rejects.toThrow();
@@ -708,7 +734,7 @@ describe("integrateTicket", () => {
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
-    await git(fixture.repo, "merge", "--ff-only", outcome.worktree.branch);
+    await git(fixture.projectRoot, "merge", "--ff-only", outcome.worktree.branch);
     // The session was mid-edit on a file it had already committed — the exact
     // "half-done manual resolution" the ticket names.
     await fs.writeFile(path.join(outcome.worktree.path, "edited.txt"), "half-done edit\n");
@@ -719,10 +745,10 @@ describe("integrateTicket", () => {
     // proof the dirty branch was not treated as "already merged, nothing to do".
     expect(result.status).toBe("merged");
     // The edit reached the target, reachable via the checkpoint on the sign-off side.
-    expect(await fs.readFile(path.join(fixture.repo, "edited.txt"), "utf8")).toBe(
+    expect(await fs.readFile(path.join(fixture.projectRoot, "edited.txt"), "utf8")).toBe(
       "half-done edit\n",
     );
-    expect(await git(fixture.repo, "show", "main^2:edited.txt")).toBe("half-done edit");
+    expect(await git(fixture.projectRoot, "show", "main^2:edited.txt")).toBe("half-done edit");
     // And the worktree that held the only copy is gone only after it landed.
     await expect(fs.access(outcome.worktree.path)).rejects.toThrow();
   });
@@ -747,7 +773,7 @@ describe("integrateTicket", () => {
       const ticket = await resolveTicket("Conflicted integration", mixed.ticketsDirectory);
       const outcome = await runPipeline(context, ticket);
       if (outcome.status !== "passed") throw new Error("pipeline should pass");
-      await commitFile(mixed.repo, "feat7.txt", "main version\n", "collide");
+      await commitFile(mixed.projectRoot, "feat7.txt", "main version\n", "collide");
 
       const resolvingHandler: FakeHandler = async (prompt, options) => {
         expect(sessionKindOf(prompt)).toBe("integration");
@@ -785,7 +811,9 @@ describe("integrateTicket", () => {
       expect(starts).toEqual([
         { stage: "integration", harness: "codex", model: "gpt-5.6-sol", effort: "medium" },
       ]);
-      expect(await fs.readFile(path.join(mixed.repo, "feat7.txt"), "utf8")).toBe("reconciled\n");
+      expect(await fs.readFile(path.join(mixed.projectRoot, "feat7.txt"), "utf8")).toBe(
+        "reconciled\n",
+      );
     } finally {
       await mixed.cleanup();
     }
@@ -798,33 +826,35 @@ describe("integrateTicket", () => {
    * and no earlier sign-off falls out of reachable history behind a later one.
    */
   it("keeps one first-parent entry per ticket and every sign-off reachable across tickets", async () => {
-    const base = await revParse(fixture.repo, "main");
+    const base = await parseRevision(fixture.projectRoot, "main");
     const landed: Array<{ signedOff: string; landing: string }> = [];
     for (const file of ["first.txt", "second.txt", "third.txt"]) {
       const context = fixture.context(passingHandler(file));
       const ticket = await resolveTicket(`Ship ${file}`, fixture.ticketsDirectory);
       const outcome = await runPipeline(context, ticket);
       if (outcome.status !== "passed") throw new Error(`pipeline should pass for ${file}`);
-      const signedOff = await revParse(fixture.repo, outcome.worktree.branch);
+      const signedOff = await parseRevision(fixture.projectRoot, outcome.worktree.branch);
       const result = await integrateTicket(context, ticket, outcome.worktree);
       expect(result).toEqual({ status: "merged" });
-      landed.push({ signedOff, landing: await revParse(fixture.repo, "main") });
+      landed.push({ signedOff, landing: await parseRevision(fixture.projectRoot, "main") });
     }
 
     // Three tickets, three entries on the first-parent line — no more.
-    expect(await git(fixture.repo, "rev-list", "--count", "--first-parent", `${base}..main`)).toBe(
-      "3",
-    );
+    expect(
+      await git(fixture.projectRoot, "rev-list", "--count", "--first-parent", `${base}..main`),
+    ).toBe("3");
     // ...and the whole graph is bigger than that line, so nothing was flattened.
-    expect(Number(await git(fixture.repo, "rev-list", "--count", `${base}..main`))).toBeGreaterThan(
-      3,
-    );
+    expect(
+      Number(await git(fixture.projectRoot, "rev-list", "--count", `${base}..main`)),
+    ).toBeGreaterThan(3);
     for (const [index, entry] of landed.entries()) {
       const previous = index === 0 ? base : landed[index - 1]?.landing;
-      expect(await git(fixture.repo, "rev-parse", `${entry.landing}^1`)).toBe(previous);
-      expect(await git(fixture.repo, "rev-parse", `${entry.landing}^2`)).toBe(entry.signedOff);
+      expect(await git(fixture.projectRoot, "rev-parse", `${entry.landing}^1`)).toBe(previous);
+      expect(await git(fixture.projectRoot, "rev-parse", `${entry.landing}^2`)).toBe(
+        entry.signedOff,
+      );
       // Every sign-off, not just the newest, survives later integrations.
-      expect(await isAncestor(fixture.repo, entry.signedOff, "main")).toBe(true);
+      expect(await isAncestor(fixture.projectRoot, entry.signedOff, "main")).toBe(true);
     }
   });
 
@@ -839,9 +869,9 @@ describe("integrateTicket", () => {
     const ticket = await resolveTicket("Conflicted sign-off", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
-    const signedOff = await revParse(fixture.repo, outcome.worktree.branch);
-    await commitFile(fixture.repo, "clash.txt", "target version\n", "collide");
-    const targetHead = await revParse(fixture.repo, "main");
+    const signedOff = await parseRevision(fixture.projectRoot, outcome.worktree.branch);
+    await commitFile(fixture.projectRoot, "clash.txt", "target version\n", "collide");
+    const targetHead = await parseRevision(fixture.projectRoot, "main");
 
     let integrationSessions = 0;
     const integrationContext = fixture.context(async (prompt, options) => {
@@ -864,15 +894,21 @@ describe("integrateTicket", () => {
     expect(result.status).toBe("merged");
     // Exactly one agent resolution for one merge — not one per branch commit.
     expect(integrationSessions).toBe(1);
-    expect(await isAncestor(fixture.repo, signedOff, "main")).toBe(true);
-    expect(await git(fixture.repo, "rev-parse", "main^1")).toBe(targetHead);
-    expect(await git(fixture.repo, "rev-parse", "main^2")).toBe(signedOff);
+    expect(await isAncestor(fixture.projectRoot, signedOff, "main")).toBe(true);
+    expect(await git(fixture.projectRoot, "rev-parse", "main^1")).toBe(targetHead);
+    expect(await git(fixture.projectRoot, "rev-parse", "main^2")).toBe(signedOff);
     expect(
-      await git(fixture.repo, "rev-list", "--count", "--first-parent", `${targetHead}..main`),
+      await git(
+        fixture.projectRoot,
+        "rev-list",
+        "--count",
+        "--first-parent",
+        `${targetHead}..main`,
+      ),
     ).toBe("1");
     // The branch ref is gone, but deleting it orphaned nothing.
-    expect(await git(fixture.repo, "branch", "--list", outcome.worktree.branch)).toBe("");
-    expect(await git(fixture.repo, "cat-file", "-t", signedOff)).toBe("commit");
+    expect(await git(fixture.projectRoot, "branch", "--list", outcome.worktree.branch)).toBe("");
+    expect(await git(fixture.projectRoot, "cat-file", "-t", signedOff)).toBe("commit");
   });
 
   /**
@@ -889,24 +925,24 @@ describe("integrateTicket", () => {
       },
     });
     try {
-      await git(trunk.repo, "branch", "trunk");
-      const mainHead = await revParse(trunk.repo, "main");
+      await git(trunk.projectRoot, "branch", "trunk");
+      const mainHead = await parseRevision(trunk.projectRoot, "main");
       const context = trunk.context(passingHandler("trunked.txt"));
       const ticket = await resolveTicket("Trunk ticket", trunk.ticketsDirectory);
       const outcome = await runPipeline(context, ticket);
       if (outcome.status !== "passed") throw new Error("pipeline should pass");
-      const signedOff = await revParse(trunk.repo, outcome.worktree.branch);
+      const signedOff = await parseRevision(trunk.projectRoot, outcome.worktree.branch);
 
       const result = await integrateTicket(context, ticket, outcome.worktree);
 
       expect(result).toEqual({ status: "merged" });
-      expect(await git(trunk.repo, "rev-parse", "trunk^1")).toBe(mainHead);
-      expect(await git(trunk.repo, "rev-parse", "trunk^2")).toBe(signedOff);
-      expect(await git(trunk.repo, "log", "-1", "--format=%s", "trunk")).toBe(
+      expect(await git(trunk.projectRoot, "rev-parse", "trunk^1")).toBe(mainHead);
+      expect(await git(trunk.projectRoot, "rev-parse", "trunk^2")).toBe(signedOff);
+      expect(await git(trunk.projectRoot, "log", "-1", "--format=%s", "trunk")).toBe(
         `Merge ${outcome.worktree.branch} into trunk`,
       );
       // `main` is checked out here and had nothing to do with this ticket.
-      expect(await revParse(trunk.repo, "main")).toBe(mainHead);
+      expect(await parseRevision(trunk.projectRoot, "main")).toBe(mainHead);
     } finally {
       await trunk.cleanup();
     }
@@ -914,7 +950,7 @@ describe("integrateTicket", () => {
 
   it("does no remote work when the remote block is disabled", async () => {
     const remote = await addOrigin();
-    const remoteHead = await revParse(remote, "refs/heads/main");
+    const remoteHead = await parseRevision(remote, "refs/heads/main");
     const context = fixture.context(passingHandler("local-only.txt"));
     const events: JfdiEvent[] = [];
     context.log.on((event) => events.push(event));
@@ -923,7 +959,7 @@ describe("integrateTicket", () => {
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
     expect(await integrateTicket(context, ticket, outcome.worktree)).toEqual({ status: "merged" });
-    expect(await revParse(remote, "refs/heads/main")).toBe(remoteHead);
+    expect(await parseRevision(remote, "refs/heads/main")).toBe(remoteHead);
     expect(events.filter((event) => event.type === "integration_activity")).toHaveLength(0);
   });
 
@@ -942,7 +978,7 @@ describe("integrateTicket", () => {
 
   it("fetches and fast-forwards a behind target before building the landing merge", async () => {
     const remote = await addOrigin();
-    await git(fixture.repo, "remote", "rename", "origin", "central");
+    await git(fixture.projectRoot, "remote", "rename", "origin", "central");
     const context = fixture.context(passingHandler("ticket-change.txt"));
     context.config.integration.remote.fetchBefore = true;
     const events: JfdiEvent[] = [];
@@ -954,11 +990,11 @@ describe("integrateTicket", () => {
     const publisher = await clonePublisher(remote);
     await commitFile(publisher, "remote-change.txt", "remote\n", "remote change");
     await git(publisher, "push", "origin", "main");
-    const remoteCommit = await revParse(remote, "refs/heads/main");
+    const remoteCommit = await parseRevision(remote, "refs/heads/main");
 
     expect(await integrateTicket(context, ticket, outcome.worktree)).toEqual({ status: "merged" });
-    expect(await git(fixture.repo, "rev-parse", "main^1")).toBe(remoteCommit);
-    expect(await fs.readFile(path.join(fixture.repo, "remote-change.txt"), "utf8")).toBe(
+    expect(await git(fixture.projectRoot, "rev-parse", "main^1")).toBe(remoteCommit);
+    expect(await fs.readFile(path.join(fixture.projectRoot, "remote-change.txt"), "utf8")).toBe(
       "remote\n",
     );
     expect(events).toContainEqual(
@@ -987,15 +1023,15 @@ describe("integrateTicket", () => {
 
     // Local main advances past the remote with no diverging remote commit:
     // the fetched ref is an ancestor of the local target, not a divergence.
-    await commitFile(fixture.repo, "unpushed-landing.txt", "local\n", "unpushed local work");
-    const remoteHead = await revParse(remote, "refs/heads/main");
-    expect(await isAncestor(fixture.repo, remoteHead, "main")).toBe(true);
+    await commitFile(fixture.projectRoot, "unpushed-landing.txt", "local\n", "unpushed local work");
+    const remoteHead = await parseRevision(remote, "refs/heads/main");
+    expect(await isAncestor(fixture.projectRoot, remoteHead, "main")).toBe(true);
 
     expect(await integrateTicket(context, ticket, outcome.worktree)).toEqual({ status: "merged" });
     // The landing built on the ahead local history; without pushAfter the
     // remote is left untouched.
-    expect(await isAncestor(fixture.repo, remoteHead, "main")).toBe(true);
-    expect(await revParse(remote, "refs/heads/main")).toBe(remoteHead);
+    expect(await isAncestor(fixture.projectRoot, remoteHead, "main")).toBe(true);
+    expect(await parseRevision(remote, "refs/heads/main")).toBe(remoteHead);
   });
 
   it("blocks before merging when the local target and the fetched ref have truly diverged", async () => {
@@ -1009,8 +1045,8 @@ describe("integrateTicket", () => {
     const publisher = await clonePublisher(remote);
     await commitFile(publisher, "remote-side.txt", "remote\n", "remote side");
     await git(publisher, "push", "origin", "main");
-    await commitFile(fixture.repo, "local-side.txt", "local\n", "local side");
-    const localHead = await revParse(fixture.repo, "main");
+    await commitFile(fixture.projectRoot, "local-side.txt", "local\n", "local side");
+    const localHead = await parseRevision(fixture.projectRoot, "main");
 
     const result = await integrateTicket(context, ticket, outcome.worktree);
 
@@ -1018,13 +1054,13 @@ describe("integrateTicket", () => {
     if (result.status !== "blocked") return;
     expect(result.reason).toContain("local target ref main");
     expect(result.reason).toContain("refs/remotes/origin/main");
-    expect(await revParse(fixture.repo, "main")).toBe(localHead);
-    expect(await isAncestor(fixture.repo, outcome.worktree.branch, "main")).toBe(false);
+    expect(await parseRevision(fixture.projectRoot, "main")).toBe(localHead);
+    expect(await isAncestor(fixture.projectRoot, outcome.worktree.branch, "main")).toBe(false);
   });
 
   it("pushes only the landed target branch", async () => {
     const remote = await addOrigin();
-    await git(fixture.repo, "branch", "--unset-upstream", "main");
+    await git(fixture.projectRoot, "branch", "--unset-upstream", "main");
     const context = fixture.context(passingHandler("pushed-ticket.txt"));
     context.config.integration.remote.pushAfter = true;
     const events: JfdiEvent[] = [];
@@ -1035,8 +1071,10 @@ describe("integrateTicket", () => {
     const ticketBranch = outcome.worktree.branch;
 
     expect(await integrateTicket(context, ticket, outcome.worktree)).toEqual({ status: "merged" });
-    expect(await revParse(remote, "refs/heads/main")).toBe(await revParse(fixture.repo, "main"));
-    await expect(revParse(remote, `refs/heads/${ticketBranch}`)).rejects.toThrow();
+    expect(await parseRevision(remote, "refs/heads/main")).toBe(
+      await parseRevision(fixture.projectRoot, "main"),
+    );
+    await expect(parseRevision(remote, `refs/heads/${ticketBranch}`)).rejects.toThrow();
     expect(events).toContainEqual(
       expect.objectContaining({
         type: "integration_activity",
@@ -1057,7 +1095,7 @@ describe("integrateTicket", () => {
     const ticket = await resolveTicket("Rejected remote push", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
-    const remoteHead = await revParse(remote, "refs/heads/main");
+    const remoteHead = await parseRevision(remote, "refs/heads/main");
     const queue = new IntegrationQueue();
     let hasStartedSecondIntegration = false;
 
@@ -1082,9 +1120,9 @@ describe("integrateTicket", () => {
     expect(events.filter((event) => event.data?.status === "attempt")).toHaveLength(5);
     expect(events.filter((event) => event.data?.status === "retry")).toHaveLength(4);
     expect(hasStartedSecondIntegration).toBe(true);
-    expect(await revParse(remote, "refs/heads/main")).toBe(remoteHead);
-    expect(await revParse(fixture.repo, "main")).not.toBe(remoteHead);
-    expect(await fs.readFile(path.join(fixture.repo, "rejected-push.txt"), "utf8")).toBe(
+    expect(await parseRevision(remote, "refs/heads/main")).toBe(remoteHead);
+    expect(await parseRevision(fixture.projectRoot, "main")).not.toBe(remoteHead);
+    expect(await fs.readFile(path.join(fixture.projectRoot, "rejected-push.txt"), "utf8")).toBe(
       "feature\n",
     );
     const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8");
@@ -1094,7 +1132,7 @@ describe("integrateTicket", () => {
 
   it("retries a failed fetch five times and leaves the ticket merge untouched", async () => {
     const missingRemote = path.join(fixture.root, "missing-origin.git");
-    await git(fixture.repo, "remote", "add", "origin", missingRemote);
+    await git(fixture.projectRoot, "remote", "add", "origin", missingRemote);
     const context = fixture.context(passingHandler("never-merged.txt"));
     context.config.integration.remote.fetchBefore = true;
     const events: JfdiEvent[] = [];
@@ -1102,7 +1140,7 @@ describe("integrateTicket", () => {
     const ticket = await resolveTicket("Failed remote fetch", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
-    const targetHead = await revParse(fixture.repo, "main");
+    const targetHead = await parseRevision(fixture.projectRoot, "main");
 
     vi.useFakeTimers();
     const integration = integrateTicket(context, ticket, outcome.worktree);
@@ -1115,8 +1153,8 @@ describe("integrateTicket", () => {
     expect(result.reason).toContain("git fetch with remote origin failed after 5 attempts");
     expect(result.reason).toContain(missingRemote);
     expect(events.filter((event) => event.data?.status === "attempt")).toHaveLength(5);
-    expect(await revParse(fixture.repo, "main")).toBe(targetHead);
-    expect(await isAncestor(fixture.repo, outcome.worktree.branch, "main")).toBe(false);
+    expect(await parseRevision(fixture.projectRoot, "main")).toBe(targetHead);
+    expect(await isAncestor(fixture.projectRoot, outcome.worktree.branch, "main")).toBe(false);
   });
 });
 

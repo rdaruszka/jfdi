@@ -94,18 +94,18 @@ export interface AppProps {
 export function App({ log, boardName, targetBranch, onQuit, onRetry }: AppProps) {
   const { exit } = useApp();
   const [state, setState] = useState<CoordinatorState>(log.snapshot());
-  const [recent, setRecent] = useState<Array<{ seq: number; event: JfdiEvent }>>([]);
+  const [recent, setRecent] = useState<Array<{ sequence: number; event: JfdiEvent }>>([]);
   const [pause, setPause] = useState<PauseBanner | null>(null);
 
   useEffect(() => {
-    let seq = 0;
+    let sequence = 0;
     return log.on((event, snapshot) => {
       setState(snapshot);
       if (event.type === "harness_paused") setPause(pauseBannerFrom(event.data));
       if (event.type === "harness_resumed") setPause(null);
       if (event.type === "session_activity" || event.type === "card_moved") return;
-      seq += 1;
-      const entry = { seq, event };
+      sequence += 1;
+      const entry = { sequence, event };
       setRecent((previous) => [...previous.slice(-(MAX_RECENT_EVENTS - 1)), entry]);
     });
   }, [log]);
@@ -192,8 +192,8 @@ export function App({ log, boardName, targetBranch, onQuit, onRetry }: AppProps)
         <Text bold underline>
           Events
         </Text>
-        {recent.map(({ seq, event }) => (
-          <Text key={seq} dimColor wrap="truncate">
+        {recent.map(({ sequence, event }) => (
+          <Text key={sequence} dimColor wrap="truncate">
             {event.ts.slice(ISO_TIME_START, ISO_TIME_END)}{" "}
             {event.ticketId ? `[${event.ticketId}] ` : ""}
             {event.type}

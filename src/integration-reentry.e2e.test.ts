@@ -28,8 +28,8 @@ import { spawnTtyCli, waitFor } from "./test-helpers.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 const SCENARIO_TIMEOUT_MS = 180_000;
 /** How long one coordinator scan gets to reach the state a scenario waits for. */
@@ -106,11 +106,11 @@ process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_err
 
 interface Sandbox {
   root: string;
-  project: string;
+  projectRoot: string;
   home: string;
   jfdiHome: string;
-  stateDir: string;
-  binDir: string;
+  stateDirectory: string;
+  executableDirectory: string;
   controlPath: string;
   tracePath: string;
   boardPath: string;
@@ -123,45 +123,45 @@ async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-reentry-"));
   const root = await fs.realpath(created);
   sandboxRoots.push(created);
-  const project = path.join(root, "project");
+  const projectRoot = path.join(root, "project");
   const home = path.join(root, "home");
-  const binDir = path.join(root, "bin");
-  await fs.mkdir(project, { recursive: true });
+  const executableDirectory = path.join(root, "bin");
+  await fs.mkdir(projectRoot, { recursive: true });
   await fs.mkdir(home);
-  await fs.mkdir(binDir);
+  await fs.mkdir(executableDirectory);
   // Both CLIs the scaffolded config selects, played by the same script:
   // the default mix reviews on Codex and implements on Claude.
   for (const executable of ["claude", "codex"]) {
-    await fs.writeFile(path.join(binDir, executable), STUB_AGENT, { mode: 0o755 });
+    await fs.writeFile(path.join(executableDirectory, executable), STUB_AGENT, { mode: 0o755 });
   }
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
   const jfdiHome = path.join(home, ".jfdi");
   const tracePath = path.join(root, "trace.txt");
   await fs.writeFile(tracePath, "");
   return {
     root,
-    project,
+    projectRoot,
     home,
     jfdiHome,
-    binDir,
+    executableDirectory,
     controlPath: path.join(root, "control.json"),
     tracePath,
-    boardPath: path.join(project, ".jfdi", "board.md"),
-    stateDir: path.join(jfdiHome, "projects", project.split(path.sep).join("-")),
+    boardPath: path.join(projectRoot, ".jfdi", "board.md"),
+    stateDirectory: path.join(jfdiHome, "projects", projectRoot.split(path.sep).join("-")),
   };
 }
 
 function sandboxEnv(sandbox: Sandbox): NodeJS.ProcessEnv {
   return {
     ...process.env,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
     STUB_CONTROL: sandbox.controlPath,
@@ -178,7 +178,7 @@ interface CliResult {
 async function runCli(sandbox: Sandbox, args: string[]): Promise<CliResult> {
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: sandbox.project,
+      cwd: sandbox.projectRoot,
       env: sandboxEnv(sandbox),
       maxBuffer: 64 * 1024 * 1024,
     });
@@ -276,7 +276,7 @@ async function runCoordinatorUntil(
   postCondition: CoordinatorPostCondition,
 ): Promise<string> {
   const child = spawnTtyCli(cliPath, ["start"], {
-    cwd: sandbox.project,
+    cwd: sandbox.projectRoot,
     env: sandboxEnv(sandbox),
     detached: true,
   });
@@ -331,7 +331,7 @@ async function hasPersistedTicketStatus(
   status: CoordinatorPostCondition["status"],
 ): Promise<boolean> {
   try {
-    const raw = await fs.readFile(path.join(sandbox.stateDir, "state.json"), "utf8");
+    const raw = await fs.readFile(path.join(sandbox.stateDirectory, "state.json"), "utf8");
     const parsed = JSON.parse(raw) as { tickets?: Record<string, { status?: unknown }> };
     return Object.values(parsed.tickets ?? {}).some((ticket) => ticket.status === status);
   } catch (error) {
@@ -373,7 +373,7 @@ async function stagesRun(sandbox: Sandbox, stage: string): Promise<number> {
 }
 
 async function ticketIdOf(sandbox: Sandbox): Promise<string> {
-  const runs = await fs.readdir(path.join(sandbox.stateDir, "runs"));
+  const runs = await fs.readdir(path.join(sandbox.stateDirectory, "runs"));
   expect(runs).toHaveLength(1);
   const [ticketId] = runs;
   if (!ticketId) throw new Error("no run directory under the state dir");
@@ -382,10 +382,10 @@ async function ticketIdOf(sandbox: Sandbox): Promise<string> {
 
 async function savedReportCommitIfReady(sandbox: Sandbox): Promise<string | null> {
   try {
-    const runs = await fs.readdir(path.join(sandbox.stateDir, "runs"));
+    const runs = await fs.readdir(path.join(sandbox.stateDirectory, "runs"));
     if (runs.length !== 1 || runs[0] === undefined) return null;
     const raw = await fs.readFile(
-      path.join(sandbox.stateDir, "runs", runs[0], "report.json"),
+      path.join(sandbox.stateDirectory, "runs", runs[0], "report.json"),
       "utf8",
     );
     const commit = (JSON.parse(raw) as { commit?: unknown }).commit;
@@ -398,14 +398,14 @@ async function savedReportCommitIfReady(sandbox: Sandbox): Promise<string | null
 
 async function savedReportCommit(sandbox: Sandbox, ticketId: string): Promise<string> {
   const raw = await fs.readFile(
-    path.join(sandbox.stateDir, "runs", ticketId, "report.json"),
+    path.join(sandbox.stateDirectory, "runs", ticketId, "report.json"),
     "utf8",
   );
   return (JSON.parse(raw) as { commit: string }).commit;
 }
 
 async function isMidMerge(sandbox: Sandbox, ticketId: string): Promise<boolean> {
-  const entries = await fs.readdir(path.join(sandbox.project, ".git", "worktrees", ticketId));
+  const entries = await fs.readdir(path.join(sandbox.projectRoot, ".git", "worktrees", ticketId));
   return entries.includes("MERGE_HEAD");
 }
 
@@ -432,9 +432,9 @@ async function runToMergeReady(sandbox: Sandbox): Promise<string> {
 
 /** A commit on the target branch that collides with what the branch built. */
 async function collideOnTarget(sandbox: Sandbox): Promise<void> {
-  await fs.writeFile(path.join(sandbox.project, "feature.txt"), "main version\n");
-  await git(sandbox.project, "add", "-A");
-  await git(sandbox.project, "commit", "-m", "collide on main");
+  await fs.writeFile(path.join(sandbox.projectRoot, "feature.txt"), "main version\n");
+  await git(sandbox.projectRoot, "add", "-A");
+  await git(sandbox.projectRoot, "commit", "-m", "collide on main");
 }
 
 /**
@@ -450,7 +450,7 @@ function mentionsStaleMerge(text: string): boolean {
 
 afterEach(async () => {
   await Promise.all(
-    sandboxRoots.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    sandboxRoots.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -478,7 +478,7 @@ describe("re-entering integration from the begin column", () => {
       expect(await isMidMerge(sandbox, ticketId)).toBe(true);
       // Aborting has to be lossless, so the branch must still be where the
       // sign-off left it — a conflicted merge commits nothing.
-      expect(await git(sandbox.project, "rev-parse", `jfdi/${ticketId}`)).toBe(
+      expect(await git(sandbox.projectRoot, "rev-parse", `jfdi/${ticketId}`)).toBe(
         await savedReportCommit(sandbox, ticketId),
       );
 
@@ -492,7 +492,7 @@ describe("re-entering integration from the begin column", () => {
         {
           status: "done",
           isReady: async () =>
-            (await git(sandbox.project, "show", "main:feature.txt")) === "reconciled" &&
+            (await git(sandbox.projectRoot, "show", "main:feature.txt")) === "reconciled" &&
             (await stagesRun(sandbox, "implementation")) === 1,
           description: "the reconciled target and single implementation run",
         },
@@ -503,12 +503,14 @@ describe("re-entering integration from the begin column", () => {
       ]);
       expect(mentionsStaleMerge(abandoned + retried)).toBe(false);
       const note = await fs.readFile(
-        path.join(sandbox.project, ".jfdi", "tickets", `${ticketId}.md`),
+        path.join(sandbox.projectRoot, ".jfdi", "tickets", `${ticketId}.md`),
         "utf8",
       );
       expect(mentionsStaleMerge(note)).toBe(false);
-      expect(await git(sandbox.project, "log", "--oneline", "main")).toContain("implemented v1");
-      expect(await git(sandbox.project, "show", "main:feature.txt")).toBe("reconciled");
+      expect(await git(sandbox.projectRoot, "log", "--oneline", "main")).toContain(
+        "implemented v1",
+      );
+      expect(await git(sandbox.projectRoot, "show", "main:feature.txt")).toBe("reconciled");
       // The work was integrated, not rebuilt: implementation ran exactly once.
       expect(await stagesRun(sandbox, "implementation")).toBe(1);
     },
@@ -530,7 +532,7 @@ describe("re-entering integration from the begin column", () => {
 
       // The human takes the colliding commit back off the target instead of
       // resolving in the worktree; the retry must find the branch intact.
-      await git(sandbox.project, "reset", "--hard", "HEAD~1");
+      await git(sandbox.projectRoot, "reset", "--hard", "HEAD~1");
 
       const merged = await runCli(sandbox, ["merge", ticketId]);
       expect(merged.code, merged.output).toBe(0);
@@ -538,8 +540,8 @@ describe("re-entering integration from the begin column", () => {
       // No conflict left, so no second integration agent: exactly the one that
       // abandoned. The signed-off commit is the merge commit's second parent.
       expect(await stagesRun(sandbox, "integration")).toBe(1);
-      expect(await git(sandbox.project, "rev-parse", "main^2")).toBe(signedOff);
-      expect(await git(sandbox.project, "show", "main:feature.txt")).toBe("v1");
+      expect(await git(sandbox.projectRoot, "rev-parse", "main^2")).toBe(signedOff);
+      expect(await git(sandbox.projectRoot, "show", "main:feature.txt")).toBe("v1");
     },
     SCENARIO_TIMEOUT_MS,
   );
@@ -554,11 +556,11 @@ describe("re-entering integration from the begin column", () => {
 
       // A human commits on the branch after the sign-off and drags the card
       // back expecting fresh work — not a silent merge of what was reviewed.
-      const worktree = path.join(sandbox.project, ".jfdi", "worktrees", ticketId);
+      const worktree = path.join(sandbox.projectRoot, ".jfdi", "worktrees", ticketId);
       await fs.writeFile(path.join(worktree, "by-hand.txt"), "human edit\n");
       await git(worktree, "add", "-A");
       await git(worktree, "commit", "-m", "human edit");
-      expect(await git(sandbox.project, "rev-parse", `jfdi/${ticketId}`)).not.toBe(signedOff);
+      expect(await git(sandbox.projectRoot, "rev-parse", `jfdi/${ticketId}`)).not.toBe(signedOff);
 
       await setControl(sandbox, { integration: "resolve", feature: "v2" });
       await moveCardTo(sandbox, "Ready");
@@ -569,7 +571,7 @@ describe("re-entering integration from the begin column", () => {
           status: "merge-ready",
           isReady: async () =>
             (await savedReportCommitIfReady(sandbox)) ===
-              (await git(sandbox.project, "rev-parse", `jfdi/${ticketId}`)) &&
+              (await git(sandbox.projectRoot, "rev-parse", `jfdi/${ticketId}`)) &&
             (await stagesRun(sandbox, "implementation")) === 2,
           description: "the refreshed sign-off and second implementation run",
         },
@@ -577,12 +579,12 @@ describe("re-entering integration from the begin column", () => {
 
       // The pipeline ran again, and nothing was merged behind the human's back.
       expect(await stagesRun(sandbox, "implementation"), output).toBe(2);
-      expect(await git(sandbox.project, "log", "--oneline", "main")).not.toContain("implement");
+      expect(await git(sandbox.projectRoot, "log", "--oneline", "main")).not.toContain("implement");
       expect(columnCards(await readBoard(sandbox), "Done")).toHaveLength(0);
       expect(columnCards(await readBoard(sandbox), "Ready to Merge")).toHaveLength(1);
       // The fresh run re-signed the branch as it now stands.
       expect(await savedReportCommit(sandbox, ticketId)).toBe(
-        await git(sandbox.project, "rev-parse", `jfdi/${ticketId}`),
+        await git(sandbox.projectRoot, "rev-parse", `jfdi/${ticketId}`),
       );
     },
     SCENARIO_TIMEOUT_MS,
@@ -603,7 +605,7 @@ describe("re-entering integration from the begin column", () => {
         {
           status: "done",
           isReady: async () =>
-            (await git(sandbox.project, "branch", "--list", `jfdi/${ticketId}`)) === "" &&
+            (await git(sandbox.projectRoot, "branch", "--list", `jfdi/${ticketId}`)) === "" &&
             (await stagesRun(sandbox, "implementation")) === 1,
           description: "the removed ticket branch and single implementation run",
         },
@@ -612,12 +614,12 @@ describe("re-entering integration from the begin column", () => {
       // Approval, not a rebuild: no second pipeline, and the exact commit the
       // reviews signed off on is a parent of what reached the target branch.
       expect(await stagesRun(sandbox, "implementation"), output).toBe(1);
-      expect(await git(sandbox.project, "rev-parse", "main^2")).toBe(signedOff);
-      expect(await git(sandbox.project, "log", "--format=%s", "--first-parent", "main")).toContain(
-        `Merge jfdi/${ticketId} into main`,
-      );
+      expect(await git(sandbox.projectRoot, "rev-parse", "main^2")).toBe(signedOff);
+      expect(
+        await git(sandbox.projectRoot, "log", "--format=%s", "--first-parent", "main"),
+      ).toContain(`Merge jfdi/${ticketId} into main`);
       expect(columnCards(await readBoard(sandbox), "Done")).toEqual([`- [x] ${CARD_TEXT}`]);
-      expect(await git(sandbox.project, "branch", "--list", `jfdi/${ticketId}`)).toBe("");
+      expect(await git(sandbox.projectRoot, "branch", "--list", `jfdi/${ticketId}`)).toBe("");
     },
     SCENARIO_TIMEOUT_MS,
   );

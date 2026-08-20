@@ -31,8 +31,8 @@ import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 const SCENARIO_TIMEOUT_MS = 180_000;
 
@@ -78,15 +78,15 @@ process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_err
  */
 const GATE_MARKER = "LEGACY_CMD_RAN";
 const GATE_COMMAND = `echo ${GATE_MARKER}`;
-const LEGACY_TICKETS_DIR = ".legacy-tickets";
+const LEGACY_TICKETS_DIRECTORY = ".legacy-tickets";
 
 interface Sandbox {
   root: string;
-  project: string;
+  projectRoot: string;
   home: string;
   jfdiHome: string;
-  stateDir: string;
-  binDir: string;
+  stateDirectory: string;
+  executableDirectory: string;
 }
 
 const sandboxes: string[] = [];
@@ -99,31 +99,31 @@ async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-cfg-alias-"));
   const root = await fs.realpath(created);
   sandboxes.push(created);
-  const project = path.join(root, "project");
+  const projectRoot = path.join(root, "project");
   const home = path.join(root, "home");
-  const binDir = path.join(root, "bin");
-  await fs.mkdir(project, { recursive: true });
+  const executableDirectory = path.join(root, "bin");
+  await fs.mkdir(projectRoot, { recursive: true });
   await fs.mkdir(home);
-  await fs.mkdir(binDir);
+  await fs.mkdir(executableDirectory);
   for (const executable of ["claude", "codex"]) {
-    await fs.writeFile(path.join(binDir, executable), STUB_AGENT, { mode: 0o755 });
+    await fs.writeFile(path.join(executableDirectory, executable), STUB_AGENT, { mode: 0o755 });
   }
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
   const jfdiHome = path.join(home, ".jfdi");
   return {
     root,
-    project,
+    projectRoot,
     home,
     jfdiHome,
-    stateDir: path.join(jfdiHome, "projects", expectedProjectKey(project)),
-    binDir,
+    stateDirectory: path.join(jfdiHome, "projects", expectedProjectKey(projectRoot)),
+    executableDirectory,
   };
 }
 
@@ -136,13 +136,13 @@ interface CliResult {
 async function runCli(sandbox: Sandbox, args: string[]): Promise<CliResult> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
   };
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: sandbox.project,
+      cwd: sandbox.projectRoot,
       env,
     });
     return { code: 0, stdout, stderr };
@@ -160,17 +160,19 @@ function ticketIdOf(result: CliResult): string {
 
 /** Read the config.json `init --bare` wrote (all canonical keys). */
 async function readConfig(sandbox: Sandbox): Promise<Record<string, unknown>> {
-  const configPath = path.join(sandbox.project, ".jfdi", "config.json");
+  const configPath = path.join(sandbox.projectRoot, ".jfdi", "config.json");
   return JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
 }
 
 async function writeConfig(sandbox: Sandbox, config: unknown): Promise<void> {
-  const configPath = path.join(sandbox.project, ".jfdi", "config.json");
+  const configPath = path.join(sandbox.projectRoot, ".jfdi", "config.json");
   await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
 }
 
 afterEach(async () => {
-  await Promise.all(sandboxes.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    sandboxes.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe("legacy config keys drive a real run identically to canonical", () => {
@@ -186,7 +188,7 @@ describe("legacy config keys drive a real run identically to canonical", () => {
       const canonical = await readConfig(sandbox);
       const legacyConfig = {
         board: canonical.board,
-        ticketsDir: LEGACY_TICKETS_DIR,
+        ticketsDir: LEGACY_TICKETS_DIRECTORY,
         gate: [{ name: "check", cmd: GATE_COMMAND }],
         pipeline: { max_rounds: 3 },
         integration: {
@@ -215,7 +217,7 @@ describe("legacy config keys drive a real run identically to canonical", () => {
       // is in the persisted transcript under the run directory.
       const gateLog = await fs.readFile(
         path.join(
-          sandbox.stateDir,
+          sandbox.stateDirectory,
           "runs",
           ticketId,
           "run-1",
@@ -227,23 +229,26 @@ describe("legacy config keys drive a real run identically to canonical", () => {
       expect(gateLog).toContain(GATE_MARKER);
 
       // `ticketsDir` (legacy) directed where the ticket note was written.
-      const legacyTicketsDir = path.join(sandbox.project, LEGACY_TICKETS_DIR);
-      const notes = await fs.readdir(legacyTicketsDir);
+      const legacyTicketsDirectory = path.join(sandbox.projectRoot, LEGACY_TICKETS_DIRECTORY);
+      const notes = await fs.readdir(legacyTicketsDirectory);
       expect(notes.some((name) => name.endsWith(".md"))).toBe(true);
-      const noteBody = await fs.readFile(path.join(legacyTicketsDir, `${ticketId}.md`), "utf8");
+      const noteBody = await fs.readFile(
+        path.join(legacyTicketsDirectory, `${ticketId}.md`),
+        "utf8",
+      );
       // The note carries the pipeline's phase comments, proving the run wrote
       // through the legacy-configured directory, not the default `.jfdi/tickets`.
       expect(noteBody).toContain("## Comments");
 
       // The default tickets directory was never used for this run's note.
-      const defaultTicketsDir = path.join(sandbox.project, ".jfdi", "tickets");
-      const defaultNotes = await fs.readdir(defaultTicketsDir).catch(() => [] as string[]);
+      const defaultTicketsDirectory = path.join(sandbox.projectRoot, ".jfdi", "tickets");
+      const defaultNotes = await fs.readdir(defaultTicketsDirectory).catch(() => [] as string[]);
       expect(defaultNotes).not.toContain(`${ticketId}.md`);
 
       // It really is mergeable: approval lands it on the (legacy-named) target.
       const merge = await runCli(sandbox, ["merge", ticketId]);
       expect(merge.code).toBe(0);
-      expect(await git(sandbox.project, "log", "--oneline", "main")).toContain(`${ticketId}:`);
+      expect(await git(sandbox.projectRoot, "log", "--oneline", "main")).toContain(`${ticketId}:`);
     },
     SCENARIO_TIMEOUT_MS,
   );

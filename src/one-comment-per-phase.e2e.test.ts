@@ -27,8 +27,8 @@ import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 const PIPELINE_TIMEOUT_MS = 120_000;
 
@@ -100,10 +100,10 @@ echo "gate ok"; exit 0
 
 interface Sandbox {
   root: string;
-  project: string;
+  projectRoot: string;
   home: string;
   jfdiHome: string;
-  binDir: string;
+  executableDirectory: string;
   ticketsDirectory: string;
 }
 
@@ -113,32 +113,33 @@ async function makeSandbox(options: { flakyGate?: boolean } = {}): Promise<Sandb
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-one-comment-e2e-"));
   const root = await fs.realpath(created);
   sandboxes.push(created);
-  const project = path.join(root, "project");
+  const projectRoot = path.join(root, "project");
   const home = path.join(root, "home");
-  const binDir = path.join(root, "bin");
-  for (const dir of [project, home, binDir]) await fs.mkdir(dir, { recursive: true });
+  const executableDirectory = path.join(root, "bin");
+  for (const directory of [projectRoot, home, executableDirectory])
+    await fs.mkdir(directory, { recursive: true });
   for (const executable of ["claude", "codex"]) {
-    await fs.writeFile(path.join(binDir, executable), STUB_AGENT, { mode: 0o755 });
+    await fs.writeFile(path.join(executableDirectory, executable), STUB_AGENT, { mode: 0o755 });
   }
   if (options.flakyGate) {
-    await fs.writeFile(path.join(binDir, "flaky-gate"), FLAKY_GATE, { mode: 0o755 });
+    await fs.writeFile(path.join(executableDirectory, "flaky-gate"), FLAKY_GATE, { mode: 0o755 });
   }
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
   const jfdiHome = path.join(home, ".jfdi");
   const sandbox: Sandbox = {
     root,
-    project,
+    projectRoot,
     home,
     jfdiHome,
-    binDir,
-    ticketsDirectory: path.join(project, ".jfdi", "tickets"),
+    executableDirectory,
+    ticketsDirectory: path.join(projectRoot, ".jfdi", "tickets"),
   };
   expect((await runCli(sandbox, ["init", "--bare"])).code).toBe(0);
   // Auto integration so one `run` produces the whole trail, Integration
@@ -148,7 +149,7 @@ async function makeSandbox(options: { flakyGate?: boolean } = {}): Promise<Sandb
     if (options.flakyGate) config.gate = [{ name: "flaky", command: "flaky-gate" }];
   });
   if (options.flakyGate) {
-    await fs.appendFile(path.join(project, ".jfdi", ".gitignore"), "\n.gate-count\n");
+    await fs.appendFile(path.join(projectRoot, ".jfdi", ".gitignore"), "\n.gate-count\n");
   }
   return sandbox;
 }
@@ -163,7 +164,7 @@ async function patchConfig(
   sandbox: Sandbox,
   mutate: (config: MutableConfig) => void,
 ): Promise<void> {
-  const configPath = path.join(sandbox.project, ".jfdi", "config.json");
+  const configPath = path.join(sandbox.projectRoot, ".jfdi", "config.json");
   const config = JSON.parse(await fs.readFile(configPath, "utf8")) as MutableConfig;
   mutate(config);
   await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
@@ -178,13 +179,13 @@ interface CliResult {
 async function runCli(sandbox: Sandbox, args: string[]): Promise<CliResult> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
   };
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: sandbox.project,
+      cwd: sandbox.projectRoot,
       env,
     });
     return { code: 0, stdout, stderr };
@@ -239,7 +240,9 @@ function commentEntries(note: string): Entry[] {
 }
 
 afterEach(async () => {
-  await Promise.all(sandboxes.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    sandboxes.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe("a clean auto-mode run's comment trail", () => {
@@ -290,7 +293,7 @@ describe("a clean auto-mode run's comment trail", () => {
       // Auto mode cleans the branch up after the merge, so the stage commits are
       // read from `main` — reachable as the merge's second parent.
       const stageSubjects = await git(
-        sandbox.project,
+        sandbox.projectRoot,
         "log",
         "main",
         "--format=%H %s",
@@ -301,7 +304,7 @@ describe("a clean auto-mode run's comment trail", () => {
         .filter((line) => line.trim() !== "")
         .map((line) => line.split(" ")[0] ?? "");
       const messages = await Promise.all(
-        shas.map((sha) => git(sandbox.project, "show", "-s", "--format=%B", sha)),
+        shas.map((sha) => git(sandbox.projectRoot, "show", "-s", "--format=%B", sha)),
       );
       const trimmed = messages.map((message) => message.trimEnd());
       expect(trimmed).toContain(implementation?.body);
@@ -356,12 +359,12 @@ describe("a round that needed an in-round gate fix", () => {
       // complete, not merely narrated. Counted by the file the Implementation
       // stub touches, so QA's own commit (same scribe subject) is not mistaken
       // for one of them.
-      const implCommits = (
-        await git(sandbox.project, "log", "main", "--format=%H", "--", "impl.txt")
+      const implementationCommits = (
+        await git(sandbox.projectRoot, "log", "main", "--format=%H", "--", "impl.txt")
       )
         .split("\n")
         .filter((line) => line.trim() !== "");
-      expect(implCommits.length).toBe(2);
+      expect(implementationCommits.length).toBe(2);
     },
     PIPELINE_TIMEOUT_MS,
   );
@@ -375,13 +378,13 @@ async function runCliWithEnv(
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     ...extraEnv,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
   };
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: sandbox.project,
+      cwd: sandbox.projectRoot,
       env,
     });
     return { code: 0, stdout, stderr };

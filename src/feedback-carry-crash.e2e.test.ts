@@ -28,8 +28,8 @@ import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 const PIPELINE_TIMEOUT_MS = 120_000;
 const KILL_DEADLINE_MS = 60_000;
@@ -53,7 +53,7 @@ const dashP = argv.indexOf("-p");
 const prompt = (dashP === -1 ? argv[argv.length - 1] : argv[dashP + 1]) || "";
 process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "stub-thread" }) + "\\n");
 process.on("exit", () => process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "done" } }) + "\\n"));
-const promptDir = process.env.STUB_PROMPT_DIR;
+const promptDir = process.env.STUB_PROMPT_DIRECTORY;
 fs.mkdirSync(promptDir, { recursive: true });
 process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "stub" }] } }) + "\\n");
 const HANG_MS = 20000;
@@ -97,12 +97,12 @@ process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_err
 
 interface Sandbox {
   root: string;
-  project: string;
+  projectRoot: string;
   home: string;
   jfdiHome: string;
-  stateDir: string;
-  binDir: string;
-  promptDir: string;
+  stateDirectory: string;
+  executableDirectory: string;
+  promptDirectory: string;
 }
 
 const sandboxRoots: string[] = [];
@@ -111,38 +111,38 @@ async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-carry-"));
   const root = await fs.realpath(created);
   sandboxRoots.push(created);
-  const project = path.join(root, "project");
+  const projectRoot = path.join(root, "project");
   const home = path.join(root, "home");
-  const binDir = path.join(root, "bin");
-  await fs.mkdir(project, { recursive: true });
+  const executableDirectory = path.join(root, "bin");
+  await fs.mkdir(projectRoot, { recursive: true });
   await fs.mkdir(home);
-  await fs.mkdir(binDir);
+  await fs.mkdir(executableDirectory);
   for (const executable of ["claude", "codex"]) {
-    await fs.writeFile(path.join(binDir, executable), STUB_AGENT, { mode: 0o755 });
+    await fs.writeFile(path.join(executableDirectory, executable), STUB_AGENT, { mode: 0o755 });
   }
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
   const jfdiHome = path.join(home, ".jfdi");
   return {
     root,
-    project,
+    projectRoot,
     home,
     jfdiHome,
-    binDir,
-    promptDir: path.join(root, "prompts"),
-    stateDir: path.join(jfdiHome, "projects", project.split(path.sep).join("-")),
+    executableDirectory,
+    promptDirectory: path.join(root, "prompts"),
+    stateDirectory: path.join(jfdiHome, "projects", projectRoot.split(path.sep).join("-")),
   };
 }
 
 interface StubOptions {
   reviewFeedback?: string;
-  hangImplFromIndex?: number;
+  hangImplementationFromIndex?: number;
   tag?: string;
   promptSubdir?: string;
 }
@@ -150,16 +150,16 @@ interface StubOptions {
 function stubEnv(sandbox: Sandbox, options: StubOptions): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
     STUB_TAG: options.tag ?? "work",
-    STUB_PROMPT_DIR: path.join(sandbox.promptDir, options.promptSubdir ?? "default"),
+    STUB_PROMPT_DIRECTORY: path.join(sandbox.promptDirectory, options.promptSubdir ?? "default"),
     NO_COLOR: "1",
   };
   if (options.reviewFeedback !== undefined) env.STUB_REVIEW_FEEDBACK = options.reviewFeedback;
-  if (options.hangImplFromIndex !== undefined)
-    env.STUB_HANG_IMPL_FROM_INDEX = String(options.hangImplFromIndex);
+  if (options.hangImplementationFromIndex !== undefined)
+    env.STUB_HANG_IMPLEMENTATION_FROM_INDEX = String(options.hangImplementationFromIndex);
   return env;
 }
 
@@ -176,7 +176,7 @@ async function runCli(
 ): Promise<CliResult> {
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: sandbox.project,
+      cwd: sandbox.projectRoot,
       env: stubEnv(sandbox, options),
       maxBuffer: 64 * 1024 * 1024,
     });
@@ -200,7 +200,7 @@ interface LiveCli {
 
 function spawnCli(sandbox: Sandbox, args: string[], options: StubOptions = {}): LiveCli {
   const child = spawn(process.execPath, [cliPath, ...args], {
-    cwd: sandbox.project,
+    cwd: sandbox.projectRoot,
     env: stubEnv(sandbox, options),
   });
   let output = "";
@@ -226,11 +226,11 @@ function ticketIdOf(result: CliResult): string {
 }
 
 function readPrompt(sandbox: Sandbox, subdir: string, name: string): Promise<string> {
-  return fs.readFile(path.join(sandbox.promptDir, subdir, name), "utf8");
+  return fs.readFile(path.join(sandbox.promptDirectory, subdir, name), "utf8");
 }
 
 function runHistoryPath(sandbox: Sandbox, ticketId: string, runNumber: number): string {
-  return path.join(sandbox.stateDir, "runs", ticketId, `run-${runNumber}`, "history.json");
+  return path.join(sandbox.stateDirectory, "runs", ticketId, `run-${runNumber}`, "history.json");
 }
 
 function readRunHistory(sandbox: Sandbox, ticketId: string, runNumber: number): Promise<string> {
@@ -257,7 +257,7 @@ async function initProject(sandbox: Sandbox): Promise<void> {
 
 afterEach(async () => {
   await Promise.all(
-    sandboxRoots.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    sandboxRoots.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -287,7 +287,7 @@ describe("feedback carry across a crash mid-retry", () => {
       // kill it — a coordinator death between persisted retry rounds.
       const run2 = spawnCli(sandbox, ["run", "Fix the carry"], {
         reviewFeedback: Run2Feedback,
-        hangImplFromIndex: 1,
+        hangImplementationFromIndex: 1,
         tag: "two",
         promptSubdir: "run2",
       });

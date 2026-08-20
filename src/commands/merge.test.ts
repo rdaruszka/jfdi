@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { findColumn, parseBoard } from "../board.js";
 import { defaultConfig } from "../config.js";
 import { createWorktree, git } from "../git.js";
-import { worktreesDir } from "../pipeline.js";
+import { worktreesDirectory } from "../pipeline.js";
 import { commitFile, type Fixture, makeFixture } from "../test-helpers.js";
 import { mergeCommand } from "./merge.js";
 
@@ -46,15 +46,18 @@ function silence(): void {
 let fixture: Fixture;
 
 function runMerge(): Promise<number> {
-  return mergeCommand(TICKET_ID, { cwd: fixture.repo, stateDir: fixture.stateDir });
+  return mergeCommand(TICKET_ID, {
+    cwd: fixture.projectRoot,
+    stateDirectory: fixture.stateDirectory,
+  });
 }
 
 async function writeBoard(content: string): Promise<void> {
-  await fs.writeFile(path.join(fixture.jfdiDir, "board.md"), content);
+  await fs.writeFile(path.join(fixture.jfdiDirectory, "board.md"), content);
 }
 
 async function readColumns(): Promise<ReturnType<typeof parseBoard>> {
-  return parseBoard(await fs.readFile(path.join(fixture.jfdiDir, "board.md"), "utf8"));
+  return parseBoard(await fs.readFile(path.join(fixture.jfdiDirectory, "board.md"), "utf8"));
 }
 
 function cardsIn(columns: ReturnType<typeof parseBoard>, name: string): string[] {
@@ -64,8 +67,8 @@ function cardsIn(columns: ReturnType<typeof parseBoard>, name: string): string[]
 /** A ticket branch with one commit, in the worktree `jfdi merge` expects to find. */
 async function makeTicketBranch(): Promise<void> {
   const worktree = await createWorktree(
-    fixture.repo,
-    worktreesDir(fixture.jfdiDir),
+    fixture.projectRoot,
+    worktreesDirectory(fixture.jfdiDirectory),
     TICKET_ID,
     "main",
   );
@@ -87,14 +90,14 @@ describe("mergeCommand board bookkeeping", () => {
   it("refuses a corrupt report without touching the branch and preserves the evidence", async () => {
     await writeBoard(board([CARD]));
     await makeTicketBranch();
-    const reportPath = path.join(fixture.stateDir, "runs", TICKET_ID, "report.json");
+    const reportPath = path.join(fixture.stateDirectory, "runs", TICKET_ID, "report.json");
     await fs.mkdir(path.dirname(reportPath), { recursive: true });
     const corruptContent = '{"summary":';
     await fs.writeFile(reportPath, corruptContent);
 
     expect(await runMerge()).toBe(2);
 
-    expect(await git(fixture.repo, "log", "--oneline", "main")).not.toContain(
+    expect(await git(fixture.projectRoot, "log", "--oneline", "main")).not.toContain(
       "implement the thing",
     );
     expect(await fs.readFile(reportPath, "utf8")).toBe(corruptContent);
@@ -111,7 +114,9 @@ describe("mergeCommand board bookkeeping", () => {
 
     expect(await runMerge()).toBe(0);
 
-    expect(await git(fixture.repo, "log", "--oneline", "main")).toContain("implement the thing");
+    expect(await git(fixture.projectRoot, "log", "--oneline", "main")).toContain(
+      "implement the thing",
+    );
     const columns = await readColumns();
     expect(cardsIn(columns, "Ready to Merge")).toEqual([]);
     expect(cardsIn(columns, "Done")).toEqual([`- [x] Ship the thing [[${TICKET_ID}]]`]);
@@ -130,7 +135,7 @@ describe("mergeCommand board bookkeeping", () => {
 
   it("moves the card to Blocked when integration blocks", async () => {
     await fs.writeFile(
-      path.join(fixture.jfdiDir, "config.json"),
+      path.join(fixture.jfdiDirectory, "config.json"),
       JSON.stringify({
         gate: [{ name: "check", command: "exit 1" }],
         stages: defaultConfig().stages,
@@ -141,7 +146,7 @@ describe("mergeCommand board bookkeeping", () => {
 
     expect(await runMerge()).toBe(2);
 
-    expect(await git(fixture.repo, "log", "--oneline", "main")).not.toContain(
+    expect(await git(fixture.projectRoot, "log", "--oneline", "main")).not.toContain(
       "implement the thing",
     );
     const columns = await readColumns();
@@ -156,8 +161,10 @@ describe("mergeCommand board bookkeeping", () => {
 
     expect(await runMerge()).toBe(0);
 
-    expect(await git(fixture.repo, "log", "--oneline", "main")).toContain("implement the thing");
-    expect(await fs.readFile(path.join(fixture.jfdiDir, "board.md"), "utf8")).toBe(unrelated);
+    expect(await git(fixture.projectRoot, "log", "--oneline", "main")).toContain(
+      "implement the thing",
+    );
+    expect(await fs.readFile(path.join(fixture.jfdiDirectory, "board.md"), "utf8")).toBe(unrelated);
   });
 
   it("merges with no board at all", async () => {
@@ -165,7 +172,9 @@ describe("mergeCommand board bookkeeping", () => {
 
     expect(await runMerge()).toBe(0);
 
-    expect(await git(fixture.repo, "log", "--oneline", "main")).toContain("implement the thing");
+    expect(await git(fixture.projectRoot, "log", "--oneline", "main")).toContain(
+      "implement the thing",
+    );
   });
 
   // Runs mergeCommand end-to-end through buildContext (which now returns
@@ -173,10 +182,10 @@ describe("mergeCommand board bookkeeping", () => {
   // Guards that collapsing the two context types left the command's entry
   // path intact.
   it("returns 1 and leaves the target untouched when the ticket has no branch", async () => {
-    const before = await git(fixture.repo, "rev-parse", "main");
+    const before = await git(fixture.projectRoot, "rev-parse", "main");
 
     expect(await runMerge()).toBe(1);
 
-    expect(await git(fixture.repo, "rev-parse", "main")).toBe(before);
+    expect(await git(fixture.projectRoot, "rev-parse", "main")).toBe(before);
   });
 });

@@ -13,14 +13,14 @@ import {
   renderPrompt,
 } from "./prompts.js";
 
-let dir: string;
+let directory: string;
 
 beforeEach(async () => {
-  dir = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-prompts-"));
+  directory = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-prompts-"));
 });
 
 afterEach(async () => {
-  await fs.rm(dir, { recursive: true, force: true });
+  await fs.rm(directory, { recursive: true, force: true });
 });
 
 describe("renderPrompt", () => {
@@ -31,8 +31,8 @@ describe("renderPrompt", () => {
 
 describe("ensurePrompts / loadPrompt", () => {
   it("seeds all eight on-disk prompt files", async () => {
-    await ensurePrompts(dir);
-    const files = await fs.readdir(path.join(dir, "prompts"));
+    await ensurePrompts(directory);
+    const files = await fs.readdir(path.join(directory, "prompts"));
     expect(files.sort()).toEqual([
       "code-review-continue.md",
       "code-review.md",
@@ -46,21 +46,21 @@ describe("ensurePrompts / loadPrompt", () => {
   });
 
   it("does not overwrite user-tuned prompts", async () => {
-    await ensurePrompts(dir);
-    const file = path.join(dir, "prompts/qa.md");
+    await ensurePrompts(directory);
+    const file = path.join(directory, "prompts/qa.md");
     await fs.writeFile(file, "my custom QA prompt {{VERDICT_PATH}}");
-    await ensurePrompts(dir);
+    await ensurePrompts(directory);
     expect(await fs.readFile(file, "utf8")).toBe("my custom QA prompt {{VERDICT_PATH}}");
-    expect(await loadPrompt(dir, "qa")).toBe("my custom QA prompt {{VERDICT_PATH}}");
+    expect(await loadPrompt(directory, "qa")).toBe("my custom QA prompt {{VERDICT_PATH}}");
   });
 
   it("leaves legacy init prompt files untouched", async () => {
-    const promptsDirectory = path.join(dir, "prompts");
+    const promptsDirectory = path.join(directory, "prompts");
     await fs.mkdir(promptsDirectory);
     await fs.writeFile(path.join(promptsDirectory, "init.md"), "legacy init");
     await fs.writeFile(path.join(promptsDirectory, "convo.md"), "legacy convo");
 
-    await ensurePrompts(dir);
+    await ensurePrompts(directory);
 
     expect(await fs.readFile(path.join(promptsDirectory, "init.md"), "utf8")).toBe("legacy init");
     expect(await fs.readFile(path.join(promptsDirectory, "convo.md"), "utf8")).toBe("legacy convo");
@@ -124,12 +124,12 @@ describe("ensurePrompts / loadPrompt", () => {
   });
 
   it("seeds the default on load when the file is absent, and the file is authoritative", async () => {
-    const prompt = await loadPrompt(dir, "implementation");
+    const prompt = await loadPrompt(directory, "implementation");
     expect(prompt).toContain("Implement the ticket below completely");
     expect(prompt).toContain("{{VERDICT_PATH}}");
     expect(prompt).toContain("decide, log, proceed");
     // The prompt that ran is now on disk — no silent in-code fallback.
-    const onDisk = await fs.readFile(path.join(dir, "prompts/implementation.md"), "utf8");
+    const onDisk = await fs.readFile(path.join(directory, "prompts/implementation.md"), "utf8");
     expect(onDisk).toBe(prompt);
   });
 });

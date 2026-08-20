@@ -239,36 +239,39 @@ describe("parseConfig stages", () => {
 });
 
 describe("loadConfig", () => {
-  let dir: string;
+  let directory: string;
   beforeEach(async () => {
-    dir = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-cfg-"));
+    directory = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-cfg-"));
   });
   afterEach(async () => {
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(directory, { recursive: true, force: true });
   });
 
   it("returns defaults when config.json is absent", async () => {
-    expect(await loadConfig(dir)).toEqual(defaultConfig());
+    expect(await loadConfig(directory)).toEqual(defaultConfig());
   });
 
   it("loads from .jfdi/config.json", async () => {
-    await fs.mkdir(path.join(dir, ".jfdi"), { recursive: true });
+    await fs.mkdir(path.join(directory, ".jfdi"), { recursive: true });
     await fs.writeFile(
-      path.join(dir, ".jfdi/config.json"),
+      path.join(directory, ".jfdi/config.json"),
       JSON.stringify({ maxConcurrent: 7, stages: STAGES }),
     );
-    expect((await loadConfig(dir)).maxConcurrent).toBe(7);
+    expect((await loadConfig(directory)).maxConcurrent).toBe(7);
   });
 
   it("rejects a config.json that predates per-stage selection", async () => {
-    await fs.mkdir(path.join(dir, ".jfdi"), { recursive: true });
-    await fs.writeFile(path.join(dir, ".jfdi/config.json"), JSON.stringify({ harness: "claude" }));
-    await expect(loadConfig(dir)).rejects.toThrow(/"harness" key is no longer supported/);
+    await fs.mkdir(path.join(directory, ".jfdi"), { recursive: true });
+    await fs.writeFile(
+      path.join(directory, ".jfdi/config.json"),
+      JSON.stringify({ harness: "claude" }),
+    );
+    await expect(loadConfig(directory)).rejects.toThrow(/"harness" key is no longer supported/);
   });
 
   it("throws ConfigError on invalid JSON", async () => {
-    await fs.mkdir(path.join(dir, ".jfdi"), { recursive: true });
-    await fs.writeFile(path.join(dir, ".jfdi/config.json"), "{nope");
-    await expect(loadConfig(dir)).rejects.toThrow(ConfigError);
+    await fs.mkdir(path.join(directory, ".jfdi"), { recursive: true });
+    await fs.writeFile(path.join(directory, ".jfdi/config.json"), "{nope");
+    await expect(loadConfig(directory)).rejects.toThrow(ConfigError);
   });
 });

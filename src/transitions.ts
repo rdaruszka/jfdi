@@ -22,10 +22,10 @@ export const STAGE_LABELS: Record<StageName, string> = {
 export const BLOCKED_ROUTING = "moving to Blocked for human review";
 
 /** Commit sha as a human reads one: abbreviated, in an activity line or a comment. */
-const SHORT_SHA_CHARS = 7;
+const SHORT_SHA_CHARACTERS = 7;
 
 export function shortSha(sha: string): string {
-  return sha.slice(0, SHORT_SHA_CHARS);
+  return sha.slice(0, SHORT_SHA_CHARACTERS);
 }
 
 /** `JFDI <Stage> <outcome> — <routing>`: what happened, and where the run went. */

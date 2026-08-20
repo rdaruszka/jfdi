@@ -20,19 +20,21 @@ import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 const sandboxes: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(sandboxes.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    sandboxes.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
+  );
 });
 
 interface Sandbox {
-  project: string;
+  projectRoot: string;
   jfdiHome: string;
-  stateDir: string;
+  stateDirectory: string;
 }
 
 /** Dash-flattened absolute path, derived here rather than from the module under test. */
@@ -45,19 +47,19 @@ async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-logs-e2e-"));
   const root = await fs.realpath(created);
   sandboxes.push(created);
-  const project = path.join(root, "project");
+  const projectRoot = path.join(root, "project");
   const jfdiHome = path.join(root, "home", ".jfdi");
-  await fs.mkdir(project, { recursive: true });
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await fs.mkdir(projectRoot, { recursive: true });
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
   return {
-    project,
+    projectRoot,
     jfdiHome,
-    stateDir: path.join(jfdiHome, "projects", expectedProjectKey(project)),
+    stateDirectory: path.join(jfdiHome, "projects", expectedProjectKey(projectRoot)),
   };
 }
 
@@ -68,7 +70,7 @@ async function runCli(
   const env: NodeJS.ProcessEnv = { ...process.env, JFDI_HOME: sandbox.jfdiHome };
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: sandbox.project,
+      cwd: sandbox.projectRoot,
       env,
     });
     return { code: 0, stdout, stderr };
@@ -91,7 +93,7 @@ describe("jfdi logs recursive discovery over the built CLI", () => {
     const sandbox = await makeSandbox();
     expect((await runCli(sandbox, ["init", "--bare"])).code).toBe(0);
 
-    const runs = path.join(sandbox.stateDir, "runs", "my-ticket");
+    const runs = path.join(sandbox.stateDirectory, "runs", "my-ticket");
     await writeFileTree(runs, {
       // An earlier run: numeric sort must pick run-2 over run-1, so this is skipped.
       "run-1/round-1/stale.log.jsonl": "stale-run",

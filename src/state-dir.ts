@@ -28,6 +28,6 @@ export function projectKey(projectRoot: string): string {
  * process — state written on behalf of a worktree still keys off the project,
  * never the worktree's own path. Worktrees themselves stay in `.jfdi/`.
  */
-export function projectStateDir(projectRoot: string): string {
+export function projectStateDirectory(projectRoot: string): string {
   return path.join(jfdiHome(), "projects", projectKey(projectRoot));
 }

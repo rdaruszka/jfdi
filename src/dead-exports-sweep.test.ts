@@ -33,7 +33,7 @@ describe("dead-exports sweep stays swept", () => {
   });
 
   it("tickets.ensureTicketsDir is gone (scaffold uses ensureDir directly)", () => {
-    expect(surface(tickets).ensureTicketsDir).toBeUndefined();
+    expect(Reflect.get(surface(tickets), "ensureTicketsDir")).toBeUndefined();
     expect(typeof tickets.ensureTicketNote).toBe("function");
   });
 
@@ -41,11 +41,11 @@ describe("dead-exports sweep stays swept", () => {
     expect(surface(usage).usageRowFor).toBeUndefined();
   });
 
-  it("worktreesDir is exported by pipeline, not re-exported by integrate", () => {
+  it("worktreesDirectory is exported by pipeline, not re-exported by integrate", () => {
     // The mid-branch build failure was a leftover integrate re-export; every
     // caller (coordinator, commands/merge) imports it from pipeline.
-    expect(typeof pipeline.worktreesDir).toBe("function");
-    expect(surface(integrate).worktreesDir).toBeUndefined();
+    expect(typeof pipeline.worktreesDirectory).toBe("function");
+    expect(surface(integrate).worktreesDirectory).toBeUndefined();
   });
 
   it("the Harness interface no longer carries a name field", () => {

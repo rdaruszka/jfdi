@@ -4,26 +4,31 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EventLog, integrationRecords, type JfdiEvent, loadState } from "./events.js";
 
-let dir: string;
+let directory: string;
 
 beforeEach(async () => {
-  dir = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-events-"));
+  directory = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-events-"));
 });
 
 afterEach(async () => {
-  await fs.rm(dir, { recursive: true, force: true });
+  await fs.rm(directory, { recursive: true, force: true });
 });
 
 describe("EventLog", () => {
   it("appends jsonl and maintains a state snapshot", async () => {
-    const log = new EventLog(dir);
+    const log = new EventLog(directory);
     log.emit("dispatch", "t1", { title: "Ticket One", branch: "jfdi/t1" });
     log.emit("round_start", "t1", { round: 1 });
     log.emit("stage_start", "t1", { stage: "implementation" });
     await log.flush();
 
-    const lines = (await fs.readFile(path.join(dir, "events.jsonl"), "utf8")).trim().split("\n");
+    const lines = (await fs.readFile(path.join(directory, "events.jsonl"), "utf8"))
+      .trim()
+      .split("\n");
     expect(lines).toHaveLength(3);
+    const dispatch = JSON.parse(lines[0] ?? "") as Record<string, unknown>;
+    expect(Object.keys(dispatch)).toEqual(["ts", "type", "ticketId", "origin", "data"]);
+    expect(Object.keys(dispatch.data as Record<string, unknown>)).toEqual(["title", "branch"]);
     const state = log.snapshot();
     expect(state.tickets.t1?.stage).toBe("implementation");
     expect(state.tickets.t1?.round).toBe(1);
@@ -31,7 +36,7 @@ describe("EventLog", () => {
   });
 
   it("tracks the integration queue through merge lifecycle", () => {
-    const log = new EventLog(dir, false);
+    const log = new EventLog(directory, false);
     log.emit("dispatch", "a", { title: "A" });
     log.emit("dispatch", "b", { title: "B" });
     log.emit("merge_queued", "a");
@@ -45,7 +50,7 @@ describe("EventLog", () => {
   });
 
   it("sets running cost/time totals from a stage_end, idempotent under re-folding", () => {
-    const log = new EventLog(dir, false);
+    const log = new EventLog(directory, false);
     log.emit("dispatch", "t1", { title: "Ticket One" });
     // A stage_end carries the run's cumulative; the reducer sets, never adds.
     const stageEnd = {
@@ -78,7 +83,7 @@ describe("EventLog", () => {
   });
 
   it("reads an absent run cost as unknown, never as zero dollars", () => {
-    const log = new EventLog(dir, false);
+    const log = new EventLog(directory, false);
     log.emit("dispatch", "t1", { title: "Ticket One" });
     // runCostUsd null means a session had no known price — total cost is unknown.
     log.emit("stage_end", "t1", {
@@ -93,7 +98,7 @@ describe("EventLog", () => {
   });
 
   it("shows a resumed ticket's prior work in the activity line", () => {
-    const log = new EventLog(dir, false);
+    const log = new EventLog(directory, false);
     log.emit("dispatch", "t1", { title: "Ticket One" });
     log.emit("resumed", "t1", { commitCount: 4, hasCheckpointedChanges: true });
     const ticket = log.snapshot().tickets.t1;
@@ -102,7 +107,7 @@ describe("EventLog", () => {
   });
 
   it("names an unresolved ticket link in the activity line, without moving status", () => {
-    const log = new EventLog(dir, false);
+    const log = new EventLog(directory, false);
     log.emit("dispatch", "t1", { title: "Ticket One" });
     log.emit("unresolved_link", "t1", { kind: "blocked-by", target: "never-written" });
     const ticket = log.snapshot().tickets.t1;
@@ -111,7 +116,7 @@ describe("EventLog", () => {
   });
 
   it("blocked removes from queue and sets status", () => {
-    const log = new EventLog(dir, false);
+    const log = new EventLog(directory, false);
     log.emit("merge_queued", "x");
     log.emit("blocked", "x", { reason: "escalated: which db?" });
     expect(log.snapshot().integrationQueue).toEqual([]);
@@ -119,7 +124,7 @@ describe("EventLog", () => {
   });
 
   it("blocked_by parks a held card in a waiting state naming its blockers", () => {
-    const log = new EventLog(dir, false);
+    const log = new EventLog(directory, false);
     log.emit("blocked_by", "held", { blockers: ["dep-a", "dep-b"], missing: ["dep-b"] });
     const ticket = log.snapshot().tickets.held;
     expect(ticket?.status).toBe("waiting");
@@ -128,7 +133,7 @@ describe("EventLog", () => {
   });
 
   it("blocked_by tolerates a malformed blocker payload", () => {
-    const log = new EventLog(dir, false);
+    const log = new EventLog(directory, false);
     // The payload is untyped and re-parsed from disk: a non-array must not throw.
     log.emit("blocked_by", "held", { blockers: "not-an-array" });
     const ticket = log.snapshot().tickets.held;
@@ -137,7 +142,7 @@ describe("EventLog", () => {
   });
 
   it("unblocked narrates without unwinding the waiting status before dispatch", () => {
-    const log = new EventLog(dir, false);
+    const log = new EventLog(directory, false);
     log.emit("blocked_by", "held", { blockers: ["dep-a"] });
     log.emit("unblocked", "held");
     const ticket = log.snapshot().tickets.held;
@@ -147,7 +152,7 @@ describe("EventLog", () => {
   });
 
   it("notifies in-process listeners (renderer contract)", () => {
-    const log = new EventLog(dir, false);
+    const log = new EventLog(directory, false);
     const seen: string[] = [];
     const off = log.on((event) => seen.push(event.type));
     log.emit("dispatch", "t");
@@ -157,24 +162,24 @@ describe("EventLog", () => {
   });
 
   it("state is rebuildable purely from events.jsonl", async () => {
-    const log = new EventLog(dir);
+    const log = new EventLog(directory);
     log.emit("dispatch", "t1", { title: "T1", branch: "jfdi/t1" });
     log.emit("merge_queued", "t1");
     await log.flush();
     // Delete the snapshot; rebuild must reproduce it.
-    await fs.rm(path.join(dir, "state.json"));
-    const rebuilt = await EventLog.rebuild(dir);
+    await fs.rm(path.join(directory, "state.json"));
+    const rebuilt = await EventLog.rebuild(directory);
     expect(rebuilt.tickets.t1?.status).toBe("merge-queued");
     expect(rebuilt.integrationQueue).toEqual(["t1"]);
   });
 
   it("folds in another process's events and skips its own", async () => {
-    const log = new EventLog(dir);
+    const log = new EventLog(directory);
     log.emit("dispatch", "t1", { title: "T1" });
     await log.followFromEnd();
     log.emit("merge_ready", "t1");
     // A second process — `jfdi merge` in another terminal — on the same stream.
-    const other = new EventLog(dir);
+    const other = new EventLog(directory);
     other.emit("merged", "t1");
     await Promise.all([log.flush(), other.flush()]);
 
@@ -188,7 +193,7 @@ describe("EventLog", () => {
   });
 
   it("does not re-fold its own events on a second pull", async () => {
-    const log = new EventLog(dir);
+    const log = new EventLog(directory);
     await log.followFromEnd();
     log.emit("round_start", "r1");
     log.emit("round_start", "r1");
@@ -200,12 +205,12 @@ describe("EventLog", () => {
   });
 
   it("keeps following past a line that is not an event", async () => {
-    const log = new EventLog(dir, false);
+    const log = new EventLog(directory, false);
     await log.followFromEnd();
-    const other = new EventLog(dir);
+    const other = new EventLog(directory);
     other.emit("dispatch", "t1", { title: "T1" });
     await other.flush();
-    await fs.appendFile(path.join(dir, "events.jsonl"), "not json at all\n", "utf8");
+    await fs.appendFile(path.join(directory, "events.jsonl"), "not json at all\n", "utf8");
     other.emit("merged", "t1");
     await other.flush();
 
@@ -215,7 +220,7 @@ describe("EventLog", () => {
   });
 
   it("steps past an oversized line written outside JFDI", async () => {
-    const log = new EventLog(dir, false);
+    const log = new EventLog(directory, false);
     await log.followFromEnd();
     const oversizedLine = "x".repeat(1_048_576);
     const event = JSON.stringify({
@@ -223,7 +228,11 @@ describe("EventLog", () => {
       type: "dispatch",
       ticketId: "t1",
     });
-    await fs.writeFile(path.join(dir, "events.jsonl"), `${oversizedLine}\n${event}\n`, "utf8");
+    await fs.writeFile(
+      path.join(directory, "events.jsonl"),
+      `${oversizedLine}\n${event}\n`,
+      "utf8",
+    );
 
     expect(await log.pullForeignEvents()).toEqual([]);
     expect((await log.pullForeignEvents()).map((foreignEvent) => foreignEvent.type)).toEqual([
@@ -232,7 +241,7 @@ describe("EventLog", () => {
   });
 
   it("terminates on a line spanning several chunks and surfaces its remainder", async () => {
-    const log = new EventLog(dir, false);
+    const log = new EventLog(directory, false);
     await log.followFromEnd();
     const errors: string[] = [];
     log.on((event) => {
@@ -247,7 +256,11 @@ describe("EventLog", () => {
       type: "dispatch",
       ticketId: "t1",
     });
-    await fs.writeFile(path.join(dir, "events.jsonl"), `${oversizedLine}\n${event}\n`, "utf8");
+    await fs.writeFile(
+      path.join(directory, "events.jsonl"),
+      `${oversizedLine}\n${event}\n`,
+      "utf8",
+    );
 
     // First pull steps over a full chunk with no newline: nothing yet.
     expect(await log.pullForeignEvents()).toEqual([]);
@@ -261,7 +274,7 @@ describe("EventLog", () => {
   });
 
   it("does not step over a long line still shorter than a full chunk", async () => {
-    const log = new EventLog(dir, false);
+    const log = new EventLog(directory, false);
     await log.followFromEnd();
     // A large but sub-chunk line with no newline yet is a mid-append partial,
     // not an oversized line: it must be left for the next pull, never skipped.
@@ -272,7 +285,7 @@ describe("EventLog", () => {
       title: "a".repeat(700_000),
     });
     expect(Buffer.byteLength(event, "utf8")).toBeLessThan(1_048_576);
-    const eventsPath = path.join(dir, "events.jsonl");
+    const eventsPath = path.join(directory, "events.jsonl");
     await fs.writeFile(eventsPath, event, "utf8");
     // No trailing newline: the partial line is withheld, not stepped over.
     expect(await log.pullForeignEvents()).toEqual([]);
@@ -285,11 +298,11 @@ describe("EventLog", () => {
   });
 
   it("leaves a half-written trailing line for the next pull", async () => {
-    const log = new EventLog(dir, false);
+    const log = new EventLog(directory, false);
     await log.followFromEnd();
     const complete = JSON.stringify({ ts: "2020-01-01T00:00:00.000Z", type: "dispatch" });
     const partial = `{"ts":"2020-01-01T00:00:01.000Z","type":"mer`;
-    const eventsPath = path.join(dir, "events.jsonl");
+    const eventsPath = path.join(directory, "events.jsonl");
     await fs.writeFile(eventsPath, `${complete}\n${partial}`, "utf8");
     expect(await log.pullForeignEvents()).toHaveLength(1);
 
@@ -299,7 +312,7 @@ describe("EventLog", () => {
   });
 
   it("integrationRecords tells a recorded merge from one still in flight", async () => {
-    const log = new EventLog(dir);
+    const log = new EventLog(directory);
     log.emit("dispatch", "a");
     log.emit("merge_start", "a");
     log.emit("merged", "a");
@@ -313,8 +326,8 @@ describe("EventLog", () => {
     await log.flush();
     // A corrupt line costs its own evidence, not the whole answer — the
     // coordinator's scan asks this question and cannot afford to abort.
-    await fs.appendFile(path.join(dir, "events.jsonl"), "{ half a line\n", "utf8");
-    const records = await integrationRecords(dir);
+    await fs.appendFile(path.join(directory, "events.jsonl"), "{ half a line\n", "utf8");
+    const records = await integrationRecords(directory);
     expect(records.get("a")?.phase).toBe("merged");
     expect(records.get("b")?.phase).toBe("in-flight");
     expect(records.has("c")).toBe(false);
@@ -323,10 +336,10 @@ describe("EventLog", () => {
   });
 
   it("foldRecorded updates state and listeners without appending", async () => {
-    const log = new EventLog(dir);
+    const log = new EventLog(directory);
     log.emit("dispatch", "a", { title: "A" });
     await log.flush();
-    const eventsPath = path.join(dir, "events.jsonl");
+    const eventsPath = path.join(directory, "events.jsonl");
     const sizeBefore = (await fs.stat(eventsPath)).size;
 
     const seen: JfdiEvent[] = [];
@@ -340,11 +353,11 @@ describe("EventLog", () => {
   });
 
   it("loadState falls back to rebuild when state.json is missing", async () => {
-    const log = new EventLog(dir);
+    const log = new EventLog(directory);
     log.emit("dispatch", "z", { title: "Z" });
     await log.flush();
-    await fs.rm(path.join(dir, "state.json"));
-    const state = await loadState(dir);
+    await fs.rm(path.join(directory, "state.json"));
+    const state = await loadState(directory);
     expect(state.tickets.z).toBeDefined();
   });
 });

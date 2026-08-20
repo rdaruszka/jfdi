@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import { parseTicketNote, type TicketNote, ticketSpec } from "./ticket-note.js";
+import { parseTicketNote, type TicketNote, ticketDescription } from "./ticket-note.js";
 import { atomicWrite, fileExists, readIfExists } from "./util/fsx.js";
 import { extractWikilink, ticketIdFromCard } from "./util/ids.js";
 
@@ -16,8 +16,8 @@ export interface Ticket {
   id: string;
   /** The card line text (checkbox marker stripped). */
   cardText: string;
-  /** The task spec handed to the Implementation agent. */
-  spec: string;
+  /** The description handed to the Implementation agent. */
+  description: string;
   /** Path to the ticket note; exists only if the card wikilinked one (or one was created). */
   notePath: string | null;
   /** Frontmatter links to other tickets; empty for a card with no note. */
@@ -29,8 +29,8 @@ export interface Ticket {
 /**
  * Resolve a card into a Ticket. Wikilinks resolve ONLY against ticketsDirectory —
  * the tool never searches beyond that folder. When a note exists, its defined
- * slice (title, description, open questions, logged decisions) is the spec;
- * otherwise the card line itself is the entire spec.
+ * slice (title, description, open questions, logged decisions) is the description;
+ * otherwise the card line itself is the entire description.
  */
 export async function resolveTicket(cardText: string, ticketsDirectory: string): Promise<Ticket> {
   const id = ticketIdFromCard(cardText);
@@ -43,17 +43,17 @@ export async function resolveTicket(cardText: string, ticketsDirectory: string):
       return {
         id,
         cardText,
-        spec: ticketSpec(note),
+        description: ticketDescription(note),
         notePath,
         links: await resolveLinks(note, ticketsDirectory),
         mode: note.mode,
       };
     }
-    // Linked note missing: treat the card line as spec but keep the note path
+    // Linked note missing: treat the card line as the description but keep the note path
     // so run records land where the link points.
-    return { id, cardText, spec: cardText, notePath, links: [], mode: "default" };
+    return { id, cardText, description: cardText, notePath, links: [], mode: "default" };
   }
-  return { id, cardText, spec: cardText, notePath: null, links: [], mode: "default" };
+  return { id, cardText, description: cardText, notePath: null, links: [], mode: "default" };
 }
 
 async function resolveLinks(note: TicketNote, ticketsDirectory: string): Promise<TicketLink[]> {
@@ -86,7 +86,7 @@ async function linkedNotePath(target: string, ticketsDirectory: string): Promise
 export async function ensureTicketNote(ticket: Ticket, ticketsDirectory: string): Promise<string> {
   const notePath = ticket.notePath ?? path.join(ticketsDirectory, `${ticket.id}.md`);
   if (!(await fileExists(notePath))) {
-    await atomicWrite(notePath, `# ${ticket.cardText}\n\n${ticket.spec}\n`);
+    await atomicWrite(notePath, `# ${ticket.cardText}\n\n${ticket.description}\n`);
   }
   return notePath;
 }

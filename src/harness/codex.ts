@@ -20,7 +20,7 @@ import type {
   SpawnOptions,
 } from "./types.js";
 
-const STDERR_TAIL_CHARS = 4_000;
+const STDERR_TAIL_CHARACTERS = 4_000;
 const SIGKILL_DELAY_MS = 5_000;
 
 /**
@@ -303,7 +303,7 @@ export class CodexHarness implements Harness {
     let stderrTail = "";
     child.stderr?.on("data", (chunk: Buffer) => {
       const text = chunk.toString();
-      stderrTail = (stderrTail + text).slice(-STDERR_TAIL_CHARS);
+      stderrTail = (stderrTail + text).slice(-STDERR_TAIL_CHARACTERS);
       log?.write(text);
     });
 

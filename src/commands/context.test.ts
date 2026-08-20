@@ -4,7 +4,7 @@ import { EventLog } from "../events.js";
 import type { HarnessFailure } from "../harness/types.js";
 import { PauseController } from "../pause.js";
 import type { PipelineContext } from "../pipeline.js";
-import { projectStateDir } from "../state-dir.js";
+import { projectStateDirectory } from "../state-dir.js";
 import { type Fixture, makeFixture } from "../test-helpers.js";
 import { attachRetryKey, buildContext, type KeyInput } from "./context.js";
 
@@ -171,21 +171,21 @@ describe("buildContext state directory injection", () => {
   // The CLI's real invocation path passes no state dir, so it must still derive
   // one from the resolved repo root exactly as before the seam was added.
   it("derives the state dir from the repo when none is injected", async () => {
-    const context = await buildContext(fixture.repo);
+    const context = await buildContext(fixture.projectRoot);
 
     expectTypeOf(context).toEqualTypeOf<PipelineContext>();
-    expect(context.stateDir).toBe(projectStateDir(context.repoRoot));
-    expect(context.log.eventsPath).toBe(path.join(context.stateDir, "events.jsonl"));
+    expect(context.stateDirectory).toBe(projectStateDirectory(context.projectRoot));
+    expect(context.log.eventsPath).toBe(path.join(context.stateDirectory, "events.jsonl"));
   });
 
   // The additive seam command tests use: an injected dir wins over the derived
   // one, and the event log follows it there.
   it("uses an injected state dir verbatim", async () => {
     const injected = path.join(fixture.root, "injected-state");
-    const context = await buildContext(fixture.repo, injected);
+    const context = await buildContext(fixture.projectRoot, injected);
 
-    expect(context.stateDir).toBe(injected);
-    expect(context.stateDir).not.toBe(projectStateDir(context.repoRoot));
+    expect(context.stateDirectory).toBe(injected);
+    expect(context.stateDirectory).not.toBe(projectStateDirectory(context.projectRoot));
     expect(context.log.eventsPath).toBe(path.join(injected, "events.jsonl"));
   });
 
@@ -193,11 +193,11 @@ describe("buildContext state directory injection", () => {
   // root, the .jfdi dir, or the config the rest of the command reads.
   it("leaves everything but the state dir derived from the repo", async () => {
     const injected = path.join(fixture.root, "injected-state");
-    const derived = await buildContext(fixture.repo);
-    const overridden = await buildContext(fixture.repo, injected);
+    const derived = await buildContext(fixture.projectRoot);
+    const overridden = await buildContext(fixture.projectRoot, injected);
 
-    expect(overridden.repoRoot).toBe(derived.repoRoot);
-    expect(overridden.jfdiDir).toBe(derived.jfdiDir);
+    expect(overridden.projectRoot).toBe(derived.projectRoot);
+    expect(overridden.jfdiDirectory).toBe(derived.jfdiDirectory);
     expect(overridden.config).toEqual(derived.config);
   });
 });

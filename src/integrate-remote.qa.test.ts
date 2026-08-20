@@ -12,7 +12,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EventLog, JfdiEvent } from "./events.js";
-import { git, isAncestor, revParse } from "./git.js";
+import { git, isAncestor, parseRevision } from "./git.js";
 import { integrateTicket } from "./integrate.js";
 import { runPipeline } from "./pipeline.js";
 import {
@@ -47,8 +47,8 @@ async function addOrigin(): Promise<string> {
   const remote = path.join(fixture.root, "origin.git");
   await fs.mkdir(remote);
   await git(remote, "init", "--bare", "--initial-branch=main");
-  await git(fixture.repo, "remote", "add", "origin", remote);
-  await git(fixture.repo, "push", "-u", "origin", "main");
+  await git(fixture.projectRoot, "remote", "add", "origin", remote);
+  await git(fixture.projectRoot, "push", "-u", "origin", "main");
   return remote;
 }
 
@@ -106,7 +106,7 @@ describe("remote integration — QA regression", () => {
    */
   it("pushes the landed target to a non-origin configured upstream", async () => {
     const remote = await addOrigin();
-    await git(fixture.repo, "remote", "rename", "origin", "central");
+    await git(fixture.projectRoot, "remote", "rename", "origin", "central");
     const context = fixture.context(passingHandler("upstream-push.txt"));
     context.config.integration.remote.pushAfter = true;
     const events: JfdiEvent[] = [];
@@ -118,7 +118,9 @@ describe("remote integration — QA regression", () => {
     expect(await integrateTicket(context, ticket, outcome.worktree)).toEqual({ status: "merged" });
     // The remote's target now equals the local landing commit — pushed via
     // "central", the resolved upstream, never a hard-coded "origin".
-    expect(await revParse(remote, "refs/heads/main")).toBe(await revParse(fixture.repo, "main"));
+    expect(await parseRevision(remote, "refs/heads/main")).toBe(
+      await parseRevision(fixture.projectRoot, "main"),
+    );
     expect(events).toContainEqual(
       expect.objectContaining({
         type: "integration_activity",
@@ -155,15 +157,17 @@ describe("remote integration — QA regression", () => {
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
     expect(await integrateTicket(context, ticket, outcome.worktree)).toEqual({ status: "merged" });
-    const trackingRefs = (
-      await git(fixture.repo, "for-each-ref", "--format=%(refname)", "refs/remotes/")
+    const trackingReferences = (
+      await git(fixture.projectRoot, "for-each-ref", "--format=%(refname)", "refs/remotes/")
     )
       .split("\n")
       .filter(Boolean);
-    expect(trackingRefs).toContain("refs/remotes/origin/main");
-    expect(trackingRefs).not.toContain("refs/remotes/origin/sidebranch");
+    expect(trackingReferences).toContain("refs/remotes/origin/main");
+    expect(trackingReferences).not.toContain("refs/remotes/origin/sidebranch");
     // The remote target's work still made it into the landed merge.
-    expect(await fs.readFile(path.join(fixture.repo, "remote-main.txt"), "utf8")).toBe("remote\n");
+    expect(await fs.readFile(path.join(fixture.projectRoot, "remote-main.txt"), "utf8")).toBe(
+      "remote\n",
+    );
   });
 
   /**
@@ -177,10 +181,10 @@ describe("remote integration — QA regression", () => {
   it("proceeds when the local target is strictly ahead of the fetched ref", async () => {
     const remote = await addOrigin();
     // Local main advances past the remote without any diverging remote commit.
-    await commitFile(fixture.repo, "unpushed-landing.txt", "local\n", "unpushed local work");
-    const remoteHead = await revParse(remote, "refs/heads/main");
+    await commitFile(fixture.projectRoot, "unpushed-landing.txt", "local\n", "unpushed local work");
+    const remoteHead = await parseRevision(remote, "refs/heads/main");
     // This is the ahead case, not a true divergence: remote is an ancestor of local.
-    expect(await isAncestor(fixture.repo, remoteHead, "main")).toBe(true);
+    expect(await isAncestor(fixture.projectRoot, remoteHead, "main")).toBe(true);
 
     const context = fixture.context(passingHandler("ahead-ticket.txt"));
     context.config.integration.remote.fetchBefore = true;
@@ -191,8 +195,8 @@ describe("remote integration — QA regression", () => {
     expect(await integrateTicket(context, ticket, outcome.worktree)).toEqual({ status: "merged" });
     // The landing built on top of the ahead local history, and the fetch-only
     // config never touched the remote.
-    expect(await isAncestor(fixture.repo, remoteHead, "main")).toBe(true);
-    expect(await revParse(remote, "refs/heads/main")).toBe(remoteHead);
+    expect(await isAncestor(fixture.projectRoot, remoteHead, "main")).toBe(true);
+    expect(await parseRevision(remote, "refs/heads/main")).toBe(remoteHead);
   });
 
   /**
@@ -213,7 +217,9 @@ describe("remote integration — QA regression", () => {
         status: "merged",
       });
       // After every ticket the remote target equals the local target.
-      expect(await revParse(remote, "refs/heads/main")).toBe(await revParse(fixture.repo, "main"));
+      expect(await parseRevision(remote, "refs/heads/main")).toBe(
+        await parseRevision(fixture.projectRoot, "main"),
+      );
     }
     // All three landings reached the remote target's first-parent line.
     expect(await git(remote, "rev-list", "--count", "--first-parent", "refs/heads/main")).not.toBe(
@@ -240,8 +246,8 @@ describe("remote integration — QA regression", () => {
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
     const branch = outcome.worktree.branch;
-    const preLandingHead = await revParse(fixture.repo, "main");
-    const remoteHead = await revParse(remote, "refs/heads/main");
+    const preLandingHead = await parseRevision(fixture.projectRoot, "main");
+    const remoteHead = await parseRevision(remote, "refs/heads/main");
 
     vi.useFakeTimers();
     const integration = integrateTicket(context, ticket, outcome.worktree);
@@ -252,16 +258,16 @@ describe("remote integration — QA regression", () => {
     expect(result.status).toBe("blocked");
     // The local merge stands: main advanced to the landing commit and was NOT
     // rolled back despite the push failure.
-    const landedLocally = await revParse(fixture.repo, "main");
+    const landedLocally = await parseRevision(fixture.projectRoot, "main");
     expect(landedLocally).not.toBe(preLandingHead);
     // The branch carrying the sign-off is still present for a manual push +
     // re-dispatch, and it is reachable from the landed merge.
-    expect(await git(fixture.repo, "branch", "--list", branch)).not.toBe("");
-    expect(await isAncestor(fixture.repo, branch, "main")).toBe(true);
+    expect(await git(fixture.projectRoot, "branch", "--list", branch)).not.toBe("");
+    expect(await isAncestor(fixture.projectRoot, branch, "main")).toBe(true);
     // The worktree is kept for inspection rather than force-removed.
     await expect(fs.access(outcome.worktree.path)).resolves.toBeUndefined();
     // Five attempts, and the remote never advanced past where it began.
     expect(events.filter((event) => event.data?.status === "attempt")).toHaveLength(5);
-    expect(await revParse(remote, "refs/heads/main")).toBe(remoteHead);
+    expect(await parseRevision(remote, "refs/heads/main")).toBe(remoteHead);
   });
 });

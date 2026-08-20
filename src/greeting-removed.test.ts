@@ -14,13 +14,13 @@ import { describe, expect, it } from "vitest";
 // deliberately keeps it as a documented smoke/canary target — undocumented
 // dead scaffolding is the defect either way.
 
-const SRC_DIR = fileURLToPath(new URL(".", import.meta.url));
+const SOURCE_DIRECTORY = fileURLToPath(new URL(".", import.meta.url));
 
-async function sourceFiles(dir: string): Promise<string[]> {
-  const entries = await fs.readdir(dir, { withFileTypes: true });
+async function sourceFiles(directory: string): Promise<string[]> {
+  const entries = await fs.readdir(directory, { withFileTypes: true });
   const found: string[] = [];
   for (const entry of entries) {
-    const full = path.join(dir, entry.name);
+    const full = path.join(directory, entry.name);
     if (entry.isDirectory()) {
       found.push(...(await sourceFiles(full)));
     } else if (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) {
@@ -34,7 +34,7 @@ describe("milestone-0 greeting scaffold stays removed", () => {
   it("has no src/greeting.ts unless it is documented as a deliberate canary", async () => {
     let source: string | null = null;
     try {
-      source = await fs.readFile(path.join(SRC_DIR, "greeting.ts"), "utf8");
+      source = await fs.readFile(path.join(SOURCE_DIRECTORY, "greeting.ts"), "utf8");
     } catch {
       source = null; // absent — the expected state after the deletion
     }
@@ -52,9 +52,9 @@ describe("milestone-0 greeting scaffold stays removed", () => {
     // which never appear as a slashed import path.
     const importPattern = /(?:from|import\(?)\s*["'][^"']*\/greeting(?:\.js|\.ts)?["']/;
     const offenders: string[] = [];
-    for (const file of await sourceFiles(SRC_DIR)) {
+    for (const file of await sourceFiles(SOURCE_DIRECTORY)) {
       const text = await fs.readFile(file, "utf8");
-      if (importPattern.test(text)) offenders.push(path.relative(SRC_DIR, file));
+      if (importPattern.test(text)) offenders.push(path.relative(SOURCE_DIRECTORY, file));
     }
     expect(
       offenders,

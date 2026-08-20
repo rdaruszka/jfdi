@@ -33,8 +33,8 @@ import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 const PIPELINE_TIMEOUT_MS = 120_000;
 
@@ -110,11 +110,11 @@ process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "age
 
 interface Sandbox {
   root: string;
-  project: string;
+  projectRoot: string;
   home: string;
   jfdiHome: string;
-  stateDir: string;
-  binDir: string;
+  stateDirectory: string;
+  executableDirectory: string;
   /** Every stub invocation's CLI name and argv, one JSON line each. */
   argvLog: string;
 }
@@ -129,31 +129,31 @@ async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-conformance-"));
   const root = await fs.realpath(created);
   sandboxRoots.push(created);
-  const project = path.join(root, "project");
+  const projectRoot = path.join(root, "project");
   const home = path.join(root, "home");
-  const binDir = path.join(root, "bin");
-  await fs.mkdir(project, { recursive: true });
+  const executableDirectory = path.join(root, "bin");
+  await fs.mkdir(projectRoot, { recursive: true });
   await fs.mkdir(home);
-  await fs.mkdir(binDir);
-  await fs.writeFile(path.join(binDir, "claude"), STUB_CLAUDE, { mode: 0o755 });
-  await fs.writeFile(path.join(binDir, "codex"), STUB_CODEX, { mode: 0o755 });
+  await fs.mkdir(executableDirectory);
+  await fs.writeFile(path.join(executableDirectory, "claude"), STUB_CLAUDE, { mode: 0o755 });
+  await fs.writeFile(path.join(executableDirectory, "codex"), STUB_CODEX, { mode: 0o755 });
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
   const jfdiHome = path.join(home, ".jfdi");
   return {
     root,
-    project,
+    projectRoot,
     home,
     jfdiHome,
-    binDir,
+    executableDirectory,
     argvLog: path.join(root, "argv.jsonl"),
-    stateDir: path.join(jfdiHome, "projects", project.split(path.sep).join("-")),
+    stateDirectory: path.join(jfdiHome, "projects", projectRoot.split(path.sep).join("-")),
   };
 }
 
@@ -170,7 +170,7 @@ async function runCli(
 ): Promise<CliResult> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
     STUB_MODE: options.stubMode ?? "pass",
@@ -179,7 +179,7 @@ async function runCli(
   };
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: sandbox.project,
+      cwd: sandbox.projectRoot,
       env,
       maxBuffer: 64 * 1024 * 1024,
     });
@@ -192,7 +192,7 @@ async function runCli(
 
 /** The ticket note as it stands on disk, from outside the process. */
 function readTicketNote(sandbox: Sandbox, ticketId: string): Promise<string> {
-  return fs.readFile(path.join(sandbox.project, ".jfdi", "tickets", `${ticketId}.md`), "utf8");
+  return fs.readFile(path.join(sandbox.projectRoot, ".jfdi", "tickets", `${ticketId}.md`), "utf8");
 }
 
 function ticketIdOf(result: CliResult): string {
@@ -208,7 +208,7 @@ interface RecordedEvent {
 }
 
 async function readEvents(sandbox: Sandbox): Promise<RecordedEvent[]> {
-  const raw = await fs.readFile(path.join(sandbox.stateDir, "events.jsonl"), "utf8");
+  const raw = await fs.readFile(path.join(sandbox.stateDirectory, "events.jsonl"), "utf8");
   return raw
     .split("\n")
     .filter(Boolean)
@@ -233,9 +233,9 @@ async function initProject(sandbox: Sandbox): Promise<void> {
 
 /** Overwrite events.jsonl and read back the snapshot the CLI derives from it. */
 async function replayEvents(sandbox: Sandbox, lines: string[]): Promise<Record<string, unknown>> {
-  await fs.mkdir(sandbox.stateDir, { recursive: true });
-  await fs.writeFile(path.join(sandbox.stateDir, "events.jsonl"), `${lines.join("\n")}\n`);
-  await fs.rm(path.join(sandbox.stateDir, "state.json"), { force: true });
+  await fs.mkdir(sandbox.stateDirectory, { recursive: true });
+  await fs.writeFile(path.join(sandbox.stateDirectory, "events.jsonl"), `${lines.join("\n")}\n`);
+  await fs.rm(path.join(sandbox.stateDirectory, "state.json"), { force: true });
   const status = await runCli(sandbox, ["status", "--json"]);
   expect(status.code).toBe(0);
   return JSON.parse(status.stdout) as Record<string, unknown>;
@@ -254,7 +254,7 @@ function eventLine(type: string, ticketId: string | null, data?: unknown): strin
 
 afterEach(async () => {
   await Promise.all(
-    sandboxRoots.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    sandboxRoots.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -299,8 +299,8 @@ describe("CLI surface", () => {
       const sandbox = await makeSandbox();
       await initProject(sandbox);
 
-      const jfdiDir = path.join(sandbox.project, ".jfdi");
-      const entries = await fs.readdir(jfdiDir);
+      const jfdiDirectory = path.join(sandbox.projectRoot, ".jfdi");
+      const entries = await fs.readdir(jfdiDirectory);
       expect(entries.sort()).toEqual([
         ".gitignore",
         "board.md",
@@ -315,7 +315,7 @@ describe("CLI surface", () => {
       // The eight generic stage prompt defaults — raw material the init
       // session instantiates for the project. No init.md: that prompt is
       // source-owned and never on disk.
-      expect((await fs.readdir(path.join(jfdiDir, "prompts"))).sort()).toEqual([
+      expect((await fs.readdir(path.join(jfdiDirectory, "prompts"))).sort()).toEqual([
         "code-review-continue.md",
         "code-review.md",
         "commit-message.md",
@@ -327,14 +327,14 @@ describe("CLI surface", () => {
       ]);
 
       // The board skeleton is the Obsidian-Kanban format the coordinator parses.
-      const board = await fs.readFile(path.join(jfdiDir, "board.md"), "utf8");
+      const board = await fs.readFile(path.join(jfdiDirectory, "board.md"), "utf8");
       expect(board).toContain("kanban-plugin: board");
       for (const column of ["Ready", "In Progress", "Done", "Blocked", "Ready to Merge", "Inbox"]) {
         expect(board, `column: ${column}`).toContain(`## ${column}`);
       }
 
       // Config keys are the contract config.ts validates against.
-      const config = JSON.parse(await fs.readFile(path.join(jfdiDir, "config.json"), "utf8"));
+      const config = JSON.parse(await fs.readFile(path.join(jfdiDirectory, "config.json"), "utf8"));
       expect(Object.keys(config).sort()).toEqual(
         [
           "board",
@@ -360,10 +360,10 @@ describe("CLI surface", () => {
       });
 
       // Re-running init must not rewrite or duplicate anything.
-      const before = await fs.readFile(path.join(jfdiDir, "config.json"), "utf8");
+      const before = await fs.readFile(path.join(jfdiDirectory, "config.json"), "utf8");
       expect((await runCli(sandbox, ["init", "--bare"])).code).toBe(0);
-      expect(await fs.readFile(path.join(jfdiDir, "config.json"), "utf8")).toBe(before);
-      expect((await fs.readdir(jfdiDir)).sort()).toEqual(entries.sort());
+      expect(await fs.readFile(path.join(jfdiDirectory, "config.json"), "utf8")).toBe(before);
+      expect((await fs.readdir(jfdiDirectory)).sort()).toEqual(entries.sort());
     },
     PIPELINE_TIMEOUT_MS,
   );
@@ -395,7 +395,9 @@ describe("CLI surface", () => {
             // Claude spells effort as a flag; Codex as a `-c` config override.
             effort:
               valueAfter("--effort") ??
-              argv.find((arg) => arg.startsWith("model_reasoning_effort="))?.split("=")[1],
+              argv
+                .find((argument) => argument.startsWith("model_reasoning_effort="))
+                ?.split("=")[1],
           };
         });
 
@@ -443,13 +445,16 @@ describe("pipeline behavior", () => {
       ]);
 
       // Stage observations become inbox proposal cards — never fixed inline.
-      const board = await fs.readFile(path.join(sandbox.project, ".jfdi", "board.md"), "utf8");
+      const board = await fs.readFile(path.join(sandbox.projectRoot, ".jfdi", "board.md"), "utf8");
       expect(board).toContain(`stray TODO in foo.ts *(from ${ticketId})*`);
       expect(board).toContain(`nit: long function *(from ${ticketId})*`);
 
       // The saved report keeps the shape merge reads back.
       const report = JSON.parse(
-        await fs.readFile(path.join(sandbox.stateDir, "runs", ticketId, "report.json"), "utf8"),
+        await fs.readFile(
+          path.join(sandbox.stateDirectory, "runs", ticketId, "report.json"),
+          "utf8",
+        ),
       );
       expect(report.summary).toBe("implemented");
       expect(report.rounds).toBe(1);
@@ -465,10 +470,10 @@ describe("pipeline behavior", () => {
       expect(merge.stdout).toContain("Merged into main.");
       // The branch carries the pipeline's own commit, written by the scribe —
       // and not the one the agent made for itself despite the prompt.
-      const landed = await git(sandbox.project, "log", "--oneline", "main");
+      const landed = await git(sandbox.projectRoot, "log", "--oneline", "main");
       expect(landed).toContain("stub-scribed subject");
       expect(landed).not.toContain("implement round 1");
-      expect(await git(sandbox.project, "branch", "--list", `jfdi/${ticketId}`)).toBe("");
+      expect(await git(sandbox.projectRoot, "branch", "--list", `jfdi/${ticketId}`)).toBe("");
 
       // The other surface tells the same story on its own: every transition of
       // the run, ending at the merge, in the note's Comments trail.
@@ -529,14 +534,20 @@ describe("pipeline behavior", () => {
       }
 
       // Collected: each stage's verdict lands in the round directory as before…
-      const roundDir = path.join(sandbox.stateDir, "runs", ticketId, "run-1", "round-1");
+      const roundDirectory = path.join(
+        sandbox.stateDirectory,
+        "runs",
+        ticketId,
+        "run-1",
+        "round-1",
+      );
       for (const stage of ["implementation", "code-review", "qa"]) {
-        await fs.access(path.join(roundDir, `${stage}.verdict.json`));
+        await fs.access(path.join(roundDirectory, `${stage}.verdict.json`));
       }
 
       // …and never in a commit: the landed tree holds no verdict file.
       expect(await runCli(sandbox, ["merge", ticketId]).then((result) => result.code)).toBe(0);
-      const landedFiles = await git(sandbox.project, "ls-tree", "-r", "--name-only", "main");
+      const landedFiles = await git(sandbox.projectRoot, "ls-tree", "-r", "--name-only", "main");
       expect(landedFiles).not.toContain(".verdict.json");
     },
     PIPELINE_TIMEOUT_MS,
@@ -566,11 +577,11 @@ describe("pipeline behavior", () => {
 
       const blocked = events.find((event) => event.type === "blocked");
       expect(blocked?.data?.reason).toBe("retries exhausted after 3 rounds");
-      const board = await fs.readFile(path.join(sandbox.project, ".jfdi", "board.md"), "utf8");
+      const board = await fs.readFile(path.join(sandbox.projectRoot, ".jfdi", "board.md"), "utf8");
       expect(board).toContain(`stray TODO in foo.ts *(from ${ticketIdOf(run)})*`);
 
       // Nothing reached the target branch.
-      expect(await git(sandbox.project, "log", "--oneline", "main")).not.toContain("implement");
+      expect(await git(sandbox.projectRoot, "log", "--oneline", "main")).not.toContain("implement");
 
       // The note carries each failed round's handback — the reviewer's exact
       // words — and the exhaustion that sent the card to Blocked.
@@ -601,7 +612,7 @@ describe("pipeline behavior", () => {
       });
       expect(run.code).toBe(2);
 
-      const board = await fs.readFile(path.join(sandbox.project, ".jfdi", "board.md"), "utf8");
+      const board = await fs.readFile(path.join(sandbox.projectRoot, ".jfdi", "board.md"), "utf8");
       const ticketId = ticketIdOf(run);
       // The failing reviewer's own flag reached the inbox…
       expect(board).toContain(
@@ -626,9 +637,9 @@ describe("pipeline behavior", () => {
       // proposals, so the only place a parsed observation can still surface is
       // the run summary the operator reads on stdout — the boardless drop this
       // ticket fixes ("observations land nowhere at all").
-      const jfdiDir = path.join(sandbox.project, ".jfdi");
-      await fs.rm(path.join(jfdiDir, "board.md"));
-      const configPath = path.join(jfdiDir, "config.json");
+      const jfdiDirectory = path.join(sandbox.projectRoot, ".jfdi");
+      await fs.rm(path.join(jfdiDirectory, "board.md"));
+      const configPath = path.join(jfdiDirectory, "config.json");
       const config = JSON.parse(await fs.readFile(configPath, "utf8"));
       config.integration = { ...config.integration, mode: "on-approval" };
       await fs.writeFile(configPath, JSON.stringify(config));
@@ -637,7 +648,7 @@ describe("pipeline behavior", () => {
       // though every stage passed and there is no board.
       const passed = await runCli(sandbox, ["run", "Add a greeting"]);
       expect(passed.code).toBe(0);
-      await expect(fs.access(path.join(jfdiDir, "board.md"))).rejects.toThrow();
+      await expect(fs.access(path.join(jfdiDirectory, "board.md"))).rejects.toThrow();
       expect(passed.stdout).toContain("Observations:");
       expect(passed.stdout).toContain("stray TODO in foo.ts");
 
@@ -662,14 +673,14 @@ describe("pipeline behavior", () => {
       await initProject(sandbox);
 
       // Reproduce the vault setup: board and tickets are symlinks out of the repo.
-      const jfdiDir = path.join(sandbox.project, ".jfdi");
+      const jfdiDirectory = path.join(sandbox.projectRoot, ".jfdi");
       const vault = path.join(sandbox.root, "vault");
       await fs.mkdir(path.join(vault, "tickets"), { recursive: true });
-      const boardLink = path.join(jfdiDir, "board.md");
+      const boardLink = path.join(jfdiDirectory, "board.md");
       const realBoard = path.join(vault, "board.md");
       await fs.rename(boardLink, realBoard);
       await fs.symlink(realBoard, boardLink);
-      const ticketsLink = path.join(jfdiDir, "tickets");
+      const ticketsLink = path.join(jfdiDirectory, "tickets");
       await fs.rm(ticketsLink, { recursive: true, force: true });
       await fs.symlink(path.join(vault, "tickets"), ticketsLink);
 
@@ -690,8 +701,8 @@ describe("pipeline behavior", () => {
       expect(await fs.readdir(path.join(vault, "tickets"))).toContain(`${ticketId}.md`);
 
       // The temp file the atomic write renames from is never left behind.
-      for (const dir of [vault, jfdiDir]) {
-        expect((await fs.readdir(dir)).filter((name) => name.includes(".tmp"))).toEqual([]);
+      for (const directory of [vault, jfdiDirectory]) {
+        expect((await fs.readdir(directory)).filter((name) => name.includes(".tmp"))).toEqual([]);
       }
     },
     PIPELINE_TIMEOUT_MS,
@@ -704,7 +715,7 @@ describe("trust boundaries", () => {
     async () => {
       const sandbox = await makeSandbox();
       await initProject(sandbox);
-      const configPath = path.join(sandbox.project, ".jfdi", "config.json");
+      const configPath = path.join(sandbox.projectRoot, ".jfdi", "config.json");
       const goodConfig = await fs.readFile(configPath, "utf8");
 
       const rejected: Array<[string, string]> = [
@@ -808,10 +819,10 @@ describe("trust boundaries", () => {
       // A line that is JSON but not an event is refused by name, loudly — the
       // snapshot is never rebuilt from a stream we cannot vouch for.
       await fs.writeFile(
-        path.join(sandbox.stateDir, "events.jsonl"),
+        path.join(sandbox.stateDirectory, "events.jsonl"),
         `${JSON.stringify({ nothing: "like an event" })}\n`,
       );
-      await fs.rm(path.join(sandbox.stateDir, "state.json"), { force: true });
+      await fs.rm(path.join(sandbox.stateDirectory, "state.json"), { force: true });
       const refused = await runCli(sandbox, ["status", "--json"]);
       expect(refused.code).toBe(1);
       expect(refused.stderr).toContain("is not a JFDI event");
@@ -828,7 +839,7 @@ describe("trust boundaries", () => {
       expect(run.code).toBe(0);
       const ticketId = ticketIdOf(run);
 
-      const reportPath = path.join(sandbox.stateDir, "runs", ticketId, "report.json");
+      const reportPath = path.join(sandbox.stateDirectory, "runs", ticketId, "report.json");
       const realCommit = JSON.parse(await fs.readFile(reportPath, "utf8")).commit;
       // Parses as JSON, but `decisions`/`observations` are missing — the shape a
       // hand edit or an older JFDI leaves behind.
@@ -842,9 +853,9 @@ describe("trust boundaries", () => {
       expect(merge.stderr).toContain("fix or restore");
       expect(merge.stderr).toContain("delete the file");
       expect(await fs.readFile(reportPath, "utf8")).toBe(corruptContent);
-      const landed = await git(sandbox.project, "log", "--oneline", "main");
+      const landed = await git(sandbox.projectRoot, "log", "--oneline", "main");
       expect(landed).not.toContain("stub-scribed subject");
-      expect(await git(sandbox.project, "branch", "--list", `jfdi/${ticketId}`)).toContain(
+      expect(await git(sandbox.projectRoot, "branch", "--list", `jfdi/${ticketId}`)).toContain(
         `jfdi/${ticketId}`,
       );
     },
@@ -867,7 +878,7 @@ describe("trust boundaries", () => {
       const spawnsAfterPass = await spawnCount();
       expect(spawnsAfterPass).toBeGreaterThan(0);
 
-      const reportPath = path.join(sandbox.stateDir, "runs", ticketId, "report.json");
+      const reportPath = path.join(sandbox.stateDirectory, "runs", ticketId, "report.json");
       const validReport = await fs.readFile(reportPath, "utf8");
       // A truncated write is the parse-failure shape; the shape-invalid case is
       // pinned by the merge test above. Re-running must not re-dispatch over it.
@@ -884,7 +895,7 @@ describe("trust boundaries", () => {
       // signed-off branch exactly as they were — the evidence and the tripwire.
       expect(await spawnCount()).toBe(spawnsAfterPass);
       expect(await fs.readFile(reportPath, "utf8")).toBe(corruptContent);
-      expect(await git(sandbox.project, "branch", "--list", `jfdi/${ticketId}`)).toContain(
+      expect(await git(sandbox.projectRoot, "branch", "--list", `jfdi/${ticketId}`)).toContain(
         `jfdi/${ticketId}`,
       );
       expect(await readTicketNote(sandbox, ticketId)).toContain("fix or restore");
@@ -896,7 +907,7 @@ describe("trust boundaries", () => {
       expect(merge.code).toBe(0);
       expect(merge.stdout).toContain("Merged into main.");
       expect(await spawnCount()).toBe(spawnsAfterPass);
-      expect(await git(sandbox.project, "log", "--oneline", "main")).toContain(
+      expect(await git(sandbox.projectRoot, "log", "--oneline", "main")).toContain(
         "stub-scribed subject",
       );
     },

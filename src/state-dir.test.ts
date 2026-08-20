@@ -1,7 +1,7 @@
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { jfdiHome, projectKey, projectStateDir } from "./state-dir.js";
+import { jfdiHome, projectKey, projectStateDirectory } from "./state-dir.js";
 
 const ORIGINAL_JFDI_HOME = process.env.JFDI_HOME;
 
@@ -28,10 +28,10 @@ describe("projectKey", () => {
   });
 });
 
-describe("projectStateDir", () => {
+describe("projectStateDirectory", () => {
   it("lands under <home>/projects/<key>, leaving the rest of ~/.jfdi free", () => {
     process.env.JFDI_HOME = "/tmp/fake-home";
-    expect(projectStateDir("/Users/alice/dev/app")).toBe(
+    expect(projectStateDirectory("/Users/alice/dev/app")).toBe(
       path.join("/tmp/fake-home", "projects", "-Users-alice-dev-app"),
     );
   });
@@ -39,7 +39,7 @@ describe("projectStateDir", () => {
   it("defaults to ~/.jfdi when JFDI_HOME is unset", () => {
     delete process.env.JFDI_HOME;
     expect(jfdiHome()).toBe(path.join(os.homedir(), ".jfdi"));
-    expect(projectStateDir("/Users/alice/dev/app")).toBe(
+    expect(projectStateDirectory("/Users/alice/dev/app")).toBe(
       path.join(os.homedir(), ".jfdi", "projects", "-Users-alice-dev-app"),
     );
   });

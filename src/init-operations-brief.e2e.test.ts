@@ -19,8 +19,8 @@ import { TICKET_FORMAT } from "./ticket-format.js";
  * that dumps its argv (see harness/claude.ts spawnInteractive).
  */
 const execFileAsync = promisify(execFile);
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 const sandboxRoots: string[] = [];
 
@@ -36,23 +36,23 @@ interface InitRun {
   systemPrompt: string;
   userPrompt: string;
   args: string[];
-  project: string;
+  projectRoot: string;
 }
 
 async function runInitAndCapturePrompt(staleInitPrompt?: string): Promise<InitRun> {
   const createdSandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-init-operations-"));
   sandboxRoots.push(createdSandboxRoot);
   const sandboxRoot = await fs.realpath(createdSandboxRoot);
-  const project = path.join(sandboxRoot, "project");
-  const binDir = path.join(sandboxRoot, "bin");
+  const projectRoot = path.join(sandboxRoot, "project");
+  const executableDirectory = path.join(sandboxRoot, "bin");
   const jfdiHome = path.join(sandboxRoot, "home");
   const tracePath = path.join(sandboxRoot, "trace.json");
-  await fs.mkdir(project, { recursive: true });
-  await fs.mkdir(binDir);
+  await fs.mkdir(projectRoot, { recursive: true });
+  await fs.mkdir(executableDirectory);
   await fs.mkdir(jfdiHome);
   if (staleInitPrompt !== undefined) {
-    await fs.mkdir(path.join(project, ".jfdi/prompts"), { recursive: true });
-    await fs.writeFile(path.join(project, ".jfdi/prompts/init.md"), staleInitPrompt);
+    await fs.mkdir(path.join(projectRoot, ".jfdi/prompts"), { recursive: true });
+    await fs.writeFile(path.join(projectRoot, ".jfdi/prompts/init.md"), staleInitPrompt);
   }
 
   // The default scaffold routes the interactive launch through Claude; stub both
@@ -63,19 +63,19 @@ fs.writeFileSync(process.env.TRACE_PATH, JSON.stringify({ args: process.argv.sli
 `;
   await Promise.all(
     ["claude", "codex"].map((executable) =>
-      fs.writeFile(path.join(binDir, executable), stub, { mode: 0o755 }),
+      fs.writeFile(path.join(executableDirectory, executable), stub, { mode: 0o755 }),
     ),
   );
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
 
   await execFileAsync(process.execPath, [cliPath, "init"], {
-    cwd: project,
+    cwd: projectRoot,
     env: {
       ...process.env,
-      PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      PATH: `${executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
       TRACE_PATH: tracePath,
       JFDI_HOME: jfdiHome,
     },
@@ -87,7 +87,7 @@ fs.writeFileSync(process.env.TRACE_PATH, JSON.stringify({ args: process.argv.sli
   const userPrompt = trace.args.at(-1);
   if (systemPrompt === undefined || systemPrompt === "" || userPrompt === undefined)
     throw new Error("init launched no agent session with a system prompt and opening message");
-  return { systemPrompt, userPrompt, args: trace.args, project };
+  return { systemPrompt, userPrompt, args: trace.args, projectRoot };
 }
 
 describe("jfdi init builds an isolated fresh-eyes setup session", () => {
@@ -116,9 +116,9 @@ describe("jfdi init builds an isolated fresh-eyes setup session", () => {
   });
 
   it("ships the authoritative ticket format for the setup agent to link", async () => {
-    const { project } = await runInitAndCapturePrompt();
+    const { projectRoot } = await runInitAndCapturePrompt();
 
-    expect(await fs.readFile(path.join(project, ".jfdi/ticket-format.md"), "utf8")).toBe(
+    expect(await fs.readFile(path.join(projectRoot, ".jfdi/ticket-format.md"), "utf8")).toBe(
       TICKET_FORMAT,
     );
   });
@@ -148,14 +148,14 @@ describe("jfdi init builds an isolated fresh-eyes setup session", () => {
     const legacyBootstrapPrompt =
       "You are bootstrapping **JFDI** (an automated implement → review → QA → merge\n" +
       "pipeline) for this repository. A skeleton .jfdi/ directory has just been scaffolded.";
-    const { systemPrompt, userPrompt, project } =
+    const { systemPrompt, userPrompt, projectRoot } =
       await runInitAndCapturePrompt(legacyBootstrapPrompt);
 
     expect(systemPrompt).not.toContain("bootstrapping **JFDI**");
     expect(userPrompt).not.toContain("bootstrapping **JFDI**");
     // The stale init.md is gone from prompts/ (init's prompt is source-owned,
     // so the reseeded set never contains one).
-    const reseeded = await fs.readdir(path.join(project, ".jfdi/prompts"));
+    const reseeded = await fs.readdir(path.join(projectRoot, ".jfdi/prompts"));
     expect(reseeded).not.toContain("init.md");
     expect(reseeded).toHaveLength(8);
   });
@@ -163,12 +163,15 @@ describe("jfdi init builds an isolated fresh-eyes setup session", () => {
   // Retired means preserved for the human, byte-for-byte — never deleted.
   it("preserves a retired prompt file in the backup directory unchanged", async () => {
     const staleInitPrompt = "legacy bootstrap text — SENTINEL-DO-NOT-TOUCH\n";
-    const { project } = await runInitAndCapturePrompt(staleInitPrompt);
+    const { projectRoot } = await runInitAndCapturePrompt(staleInitPrompt);
 
-    const jfdiEntries = await fs.readdir(path.join(project, ".jfdi"));
+    const jfdiEntries = await fs.readdir(path.join(projectRoot, ".jfdi"));
     const backupName = jfdiEntries.find((entry) => entry.startsWith("prompts.backup-"));
     if (backupName === undefined) throw new Error("no prompts backup directory was created");
-    const onDisk = await fs.readFile(path.join(project, ".jfdi", backupName, "init.md"), "utf8");
+    const onDisk = await fs.readFile(
+      path.join(projectRoot, ".jfdi", backupName, "init.md"),
+      "utf8",
+    );
     expect(onDisk).toBe(staleInitPrompt);
   });
 });

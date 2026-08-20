@@ -18,7 +18,7 @@ import { extractWikilink } from "./util/ids.js";
  */
 
 export interface ProjectFixture {
-  repo: string;
+  projectRoot: string;
   /** Raw card lines promoted into Ready, in board order. */
   readyCards: string[];
 }
@@ -36,7 +36,7 @@ const BACKLOG_COLUMN = "Backlog";
 const READY_COLUMN = "Ready";
 
 /** Working artifacts that may exist in the template checkout but aren't part of it. */
-const SKIP_DIRS = new Set(["node_modules", "dist", ".git"]);
+const SKIP_DIRECTORIES = new Set(["node_modules", "dist", ".git"]);
 
 function matchesSelector(selector: string, cardText: string, position: number): boolean {
   if (/^\d+$/.test(selector)) return Number(selector) === position;
@@ -46,9 +46,9 @@ function matchesSelector(selector: string, cardText: string, position: number): 
   return cardText.toLowerCase().includes(wanted);
 }
 
-async function commitPaths(repo: string, message: string, paths: string[]): Promise<void> {
-  await git(repo, "add", "--", ...paths);
-  await git(repo, "commit", "-m", message);
+async function commitPaths(projectRoot: string, message: string, paths: string[]): Promise<void> {
+  await git(projectRoot, "add", "--", ...paths);
+  await git(projectRoot, "commit", "-m", message);
 }
 
 async function promoteCards(
@@ -71,28 +71,28 @@ async function promoteCards(
 }
 
 export async function createProjectFixture(
-  templateDir: string,
-  destinationDir: string,
+  templateDirectory: string,
+  destinationDirectory: string,
   options: ProjectFixtureOptions = {},
 ): Promise<ProjectFixture> {
-  await fs.cp(templateDir, destinationDir, {
+  await fs.cp(templateDirectory, destinationDirectory, {
     recursive: true,
-    filter: (src) => !SKIP_DIRS.has(path.basename(src)),
+    filter: (source) => !SKIP_DIRECTORIES.has(path.basename(source)),
   });
-  await git(destinationDir, "init", "-b", "main");
-  await git(destinationDir, "config", "user.email", "fixture@jfdi.local");
-  await git(destinationDir, "config", "user.name", "JFDI Fixture");
+  await git(destinationDirectory, "init", "-b", "main");
+  await git(destinationDirectory, "config", "user.email", "fixture@jfdi.local");
+  await git(destinationDirectory, "config", "user.name", "JFDI Fixture");
 
   // Seed what the template can't carry: the canonical stage prompts, and the
   // .jfdi/.gitignore (a gitignore inside the template would hide the board and
   // tickets from THIS repo too, so scaffold it at mint time instead).
-  const jfdiDir = path.join(destinationDir, ".jfdi");
-  await ensureJfdiGitignore(jfdiDir);
-  await ensurePrompts(jfdiDir);
+  const jfdiDirectory = path.join(destinationDirectory, ".jfdi");
+  await ensureJfdiGitignore(jfdiDirectory);
+  await ensurePrompts(jfdiDirectory);
 
   // A short realistic history, not one blob commit — merges get a
   // deterministic baseline and `git log` archaeology has something to find.
-  await commitPaths(destinationDir, "chore: project tooling", [
+  await commitPaths(destinationDirectory, "chore: project tooling", [
     "package.json",
     "pnpm-lock.yaml",
     "tsconfig.json",
@@ -101,17 +101,17 @@ export async function createProjectFixture(
     ".gitignore",
     "README.md",
   ]);
-  await commitPaths(destinationDir, "feat: add, list, and total commands", ["src"]);
+  await commitPaths(destinationDirectory, "feat: add, list, and total commands", ["src"]);
 
   // Only config, sandbox, and prompts land in the commit — .jfdi/.gitignore
   // keeps the board, tickets, and runtime state out of product history
   // (work tracking is external to the product, like JIRA would be).
-  await commitPaths(destinationDir, "chore: adopt jfdi (config, sandbox contract, prompts)", [
+  await commitPaths(destinationDirectory, "chore: adopt jfdi (config, sandbox contract, prompts)", [
     ".jfdi",
   ]);
 
-  const boardPath = path.join(destinationDir, ".jfdi", "board.md");
+  const boardPath = path.join(destinationDirectory, ".jfdi", "board.md");
   const readyCards = await promoteCards(boardPath, options.ready ?? "all");
 
-  return { repo: destinationDir, readyCards };
+  return { projectRoot: destinationDirectory, readyCards };
 }

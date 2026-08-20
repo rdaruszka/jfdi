@@ -6,7 +6,7 @@
  * temp dir, with stub `claude`/`codex` binaries on PATH that capture the prompt
  * they were handed. That is the only way to see what an agent actually reads:
  * the slice is assembled from a note on disk, rendered into a template, and
- * handed to a subprocess, and a unit test on `ticketSpec` cannot prove the
+ * handed to a subprocess, and a unit test on `ticketDescription` cannot prove the
  * whole chain carries it.
  *
  * Assertions are written against uniquely-named markers planted in the note,
@@ -27,14 +27,14 @@ import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 const PIPELINE_TIMEOUT_MS = 120_000;
 
 /**
  * The agent both stubbed CLIs play. It never talks to the network: it replays a
- * few stream-json lines, copies the prompt it was given into `CAPTURE_DIR`, and
+ * few stream-json lines, copies the prompt it was given into `CAPTURE_DIRECTORY`, and
  * writes the verdict file its prompt names. The implementation stage commits,
  * so there is a real commit for the later stages to review and gate.
  *
@@ -56,8 +56,8 @@ const match = prompt.match(/(\\/\\S+\\.verdict\\.json)/);
 if (match) {
   const verdictPath = match[1];
   const stage = verdictPath.split("/").pop().replace(".verdict.json", "");
-  fs.mkdirSync(process.env.CAPTURE_DIR, { recursive: true });
-  fs.writeFileSync(process.env.CAPTURE_DIR + "/" + stage + ".prompt.txt", prompt);
+  fs.mkdirSync(process.env.CAPTURE_DIRECTORY, { recursive: true });
+  fs.writeFileSync(process.env.CAPTURE_DIRECTORY + "/" + stage + ".prompt.txt", prompt);
   let verdict;
   if (stage === "implementation") {
     fs.writeFileSync(process.cwd() + "/feature.txt", "the feature\\n");
@@ -77,12 +77,12 @@ process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_err
 
 interface Sandbox {
   root: string;
-  project: string;
+  projectRoot: string;
   home: string;
   jfdiHome: string;
-  stateDir: string;
-  binDir: string;
-  captureDir: string;
+  stateDirectory: string;
+  executableDirectory: string;
+  captureDirectory: string;
   ticketsDirectory: string;
 }
 
@@ -93,32 +93,33 @@ async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-anatomy-e2e-"));
   const root = await fs.realpath(created);
   sandboxes.push(created);
-  const project = path.join(root, "project");
+  const projectRoot = path.join(root, "project");
   const home = path.join(root, "home");
-  const binDir = path.join(root, "bin");
-  const captureDir = path.join(root, "capture");
-  for (const dir of [project, home, binDir, captureDir]) await fs.mkdir(dir, { recursive: true });
+  const executableDirectory = path.join(root, "bin");
+  const captureDirectory = path.join(root, "capture");
+  for (const directory of [projectRoot, home, executableDirectory, captureDirectory])
+    await fs.mkdir(directory, { recursive: true });
   for (const executable of ["claude", "codex"]) {
-    await fs.writeFile(path.join(binDir, executable), STUB_AGENT, { mode: 0o755 });
+    await fs.writeFile(path.join(executableDirectory, executable), STUB_AGENT, { mode: 0o755 });
   }
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
   const jfdiHome = path.join(home, ".jfdi");
   const sandbox: Sandbox = {
     root,
-    project,
+    projectRoot,
     home,
     jfdiHome,
-    stateDir: path.join(jfdiHome, "projects", project.split(path.sep).join("-")),
-    binDir,
-    captureDir,
-    ticketsDirectory: path.join(project, ".jfdi", "tickets"),
+    stateDirectory: path.join(jfdiHome, "projects", projectRoot.split(path.sep).join("-")),
+    executableDirectory,
+    captureDirectory,
+    ticketsDirectory: path.join(projectRoot, ".jfdi", "tickets"),
   };
   expect((await runCli(sandbox, ["init", "--bare"])).code).toBe(0);
   return sandbox;
@@ -137,15 +138,15 @@ async function runCli(
 ): Promise<CliResult> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
-    CAPTURE_DIR: sandbox.captureDir,
+    CAPTURE_DIRECTORY: sandbox.captureDirectory,
     STUB_DECISIONS: JSON.stringify(options.decisions ?? []),
   };
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: sandbox.project,
+      cwd: sandbox.projectRoot,
       env,
     });
     return { code: 0, stdout, stderr };
@@ -156,7 +157,7 @@ async function runCli(
 }
 
 function capturedPrompt(sandbox: Sandbox, stage: string): Promise<string> {
-  return fs.readFile(path.join(sandbox.captureDir, `${stage}.prompt.txt`), "utf8");
+  return fs.readFile(path.join(sandbox.captureDirectory, `${stage}.prompt.txt`), "utf8");
 }
 
 function readNote(sandbox: Sandbox, id: string): Promise<string> {
@@ -172,7 +173,7 @@ async function eventsOfType(
   sandbox: Sandbox,
   type: string,
 ): Promise<Array<Record<string, string>>> {
-  const stream = await fs.readFile(path.join(sandbox.stateDir, "events.jsonl"), "utf8");
+  const stream = await fs.readFile(path.join(sandbox.stateDirectory, "events.jsonl"), "utf8");
   return stream
     .split("\n")
     .filter((line) => line.length > 0)
@@ -258,12 +259,14 @@ async function seedProbe(sandbox: Sandbox): Promise<void> {
   await fs.writeFile(path.join(sandbox.ticketsDirectory, "resolvable-ticket.md"), "# Resolvable\n");
   // A note one level up from ticketsDirectory: the `[[../outside-scope]]` link names
   // a real file, and must still resolve to nothing.
-  await fs.writeFile(path.join(sandbox.project, ".jfdi", "outside-scope.md"), "# Outside\n");
+  await fs.writeFile(path.join(sandbox.projectRoot, ".jfdi", "outside-scope.md"), "# Outside\n");
   await fs.writeFile(path.join(sandbox.ticketsDirectory, `${PROBE_ID}.md`), PROBE_NOTE);
 }
 
 afterEach(async () => {
-  await Promise.all(sandboxes.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    sandboxes.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe("the slice of a ticket note that reaches a stage prompt", () => {
@@ -422,7 +425,7 @@ describe("frontmatter links between tickets", () => {
       ]);
       // The file the escaping link names is real, and stayed untouched.
       expect(
-        await fs.readFile(path.join(sandbox.project, ".jfdi", "outside-scope.md"), "utf8"),
+        await fs.readFile(path.join(sandbox.projectRoot, ".jfdi", "outside-scope.md"), "utf8"),
       ).toBe("# Outside\n");
     },
     PIPELINE_TIMEOUT_MS,

@@ -8,11 +8,11 @@ import { scaffoldJfdi } from "./scaffold.js";
 import { TICKET_FORMAT } from "./ticket-format.js";
 
 let root: string;
-let jfdiDir: string;
+let jfdiDirectory: string;
 
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-scaffold-"));
-  jfdiDir = path.join(root, ".jfdi");
+  jfdiDirectory = path.join(root, ".jfdi");
 });
 
 afterEach(async () => {
@@ -21,13 +21,13 @@ afterEach(async () => {
 
 describe("scaffoldJfdi", () => {
   it("creates config, board, tickets dir, prompts, ticket format, sandbox, and gitignore", async () => {
-    await scaffoldJfdi(root, jfdiDir);
+    await scaffoldJfdi(root, jfdiDirectory);
     const scaffoldedConfig = JSON.parse(
-      await fs.readFile(path.join(jfdiDir, "config.json"), "utf8"),
+      await fs.readFile(path.join(jfdiDirectory, "config.json"), "utf8"),
     );
     expect(scaffoldedConfig).toEqual(defaultConfig());
     expect(scaffoldedConfig.permissions).toEqual({ mode: "auto" });
-    const board = parseBoard(await fs.readFile(path.join(jfdiDir, "board.md"), "utf8"));
+    const board = parseBoard(await fs.readFile(path.join(jfdiDirectory, "board.md"), "utf8"));
     expect(board.columns.map((c) => c.name)).toEqual([
       "Ready",
       "In Progress",
@@ -36,21 +36,23 @@ describe("scaffoldJfdi", () => {
       "Ready to Merge",
       "Inbox",
     ]);
-    const stats = await fs.stat(path.join(jfdiDir, "tickets"));
+    const stats = await fs.stat(path.join(jfdiDirectory, "tickets"));
     expect(stats.isDirectory()).toBe(true);
     // The eight generic stage prompt defaults — the raw material the init
     // session instantiates for the project.
-    expect(await fs.readdir(path.join(jfdiDir, "prompts"))).toHaveLength(8);
-    expect(await fs.readFile(path.join(jfdiDir, "sandbox.md"), "utf8")).toContain(
+    expect(await fs.readdir(path.join(jfdiDirectory, "prompts"))).toHaveLength(8);
+    expect(await fs.readFile(path.join(jfdiDirectory, "sandbox.md"), "utf8")).toContain(
       "Sandbox Contract",
     );
-    expect(await fs.readFile(path.join(jfdiDir, "ticket-format.md"), "utf8")).toBe(TICKET_FORMAT);
+    expect(await fs.readFile(path.join(jfdiDirectory, "ticket-format.md"), "utf8")).toBe(
+      TICKET_FORMAT,
+    );
     // Hook config for JFDI-spawned Claude sessions: format-on-edit.
-    const settings = await fs.readFile(path.join(jfdiDir, "claude-settings.json"), "utf8");
+    const settings = await fs.readFile(path.join(jfdiDirectory, "claude-settings.json"), "utf8");
     expect(JSON.parse(settings).hooks.PostToolUse[0].matcher).toBe("Edit|Write");
-    const hookStats = await fs.stat(path.join(jfdiDir, "hooks", "format.sh"));
+    const hookStats = await fs.stat(path.join(jfdiDirectory, "hooks", "format.sh"));
     expect(hookStats.mode & 0o100).toBeTruthy();
-    const ignore = await fs.readFile(path.join(jfdiDir, ".gitignore"), "utf8");
+    const ignore = await fs.readFile(path.join(jfdiDirectory, ".gitignore"), "utf8");
     // Worktrees plus the board and tickets — work tracking stays out of
     // product history (work tracking is external to the product). "tickets" has no trailing slash so the
     // pattern also matches a symlink into a vault.
@@ -61,11 +63,11 @@ describe("scaffoldJfdi", () => {
   });
 
   it("retires an existing prompts directory to a backup and reseeds defaults", async () => {
-    const promptsDir = path.join(jfdiDir, "prompts");
-    await fs.mkdir(promptsDir, { recursive: true });
-    await fs.writeFile(path.join(promptsDir, "implementation.md"), "tuned prompt — keep me");
+    const promptsDirectory = path.join(jfdiDirectory, "prompts");
+    await fs.mkdir(promptsDirectory, { recursive: true });
+    await fs.writeFile(path.join(promptsDirectory, "implementation.md"), "tuned prompt — keep me");
 
-    const { retiredPromptsPath } = await scaffoldJfdi(root, jfdiDir);
+    const { retiredPromptsPath } = await scaffoldJfdi(root, jfdiDirectory);
 
     expect(retiredPromptsPath).not.toBeNull();
     expect(path.basename(retiredPromptsPath ?? "")).toMatch(/^prompts\.backup-/);
@@ -77,21 +79,23 @@ describe("scaffoldJfdi", () => {
     expect(preserved).toBe("tuned prompt — keep me");
     // ...and the prompts directory holds clean generic defaults again — the
     // raw material the init session instantiates, never the old adaptation.
-    const reseeded = await fs.readFile(path.join(promptsDir, "implementation.md"), "utf8");
+    const reseeded = await fs.readFile(path.join(promptsDirectory, "implementation.md"), "utf8");
     expect(reseeded).toContain("Implement the ticket below completely");
   });
 
   it("is idempotent and never overwrites user files", async () => {
-    await scaffoldJfdi(root, jfdiDir);
-    await fs.writeFile(path.join(jfdiDir, "sandbox.md"), "my custom contract");
-    await fs.writeFile(path.join(jfdiDir, "ticket-format.md"), "my local ticket format");
-    await fs.writeFile(path.join(jfdiDir, "config.json"), '{"maxConcurrent": 9}');
-    await scaffoldJfdi(root, jfdiDir);
-    expect(await fs.readFile(path.join(jfdiDir, "sandbox.md"), "utf8")).toBe("my custom contract");
-    expect(await fs.readFile(path.join(jfdiDir, "config.json"), "utf8")).toBe(
+    await scaffoldJfdi(root, jfdiDirectory);
+    await fs.writeFile(path.join(jfdiDirectory, "sandbox.md"), "my custom contract");
+    await fs.writeFile(path.join(jfdiDirectory, "ticket-format.md"), "my local ticket format");
+    await fs.writeFile(path.join(jfdiDirectory, "config.json"), '{"maxConcurrent": 9}');
+    await scaffoldJfdi(root, jfdiDirectory);
+    expect(await fs.readFile(path.join(jfdiDirectory, "sandbox.md"), "utf8")).toBe(
+      "my custom contract",
+    );
+    expect(await fs.readFile(path.join(jfdiDirectory, "config.json"), "utf8")).toBe(
       '{"maxConcurrent": 9}',
     );
-    expect(await fs.readFile(path.join(jfdiDir, "ticket-format.md"), "utf8")).toBe(
+    expect(await fs.readFile(path.join(jfdiDirectory, "ticket-format.md"), "utf8")).toBe(
       "my local ticket format",
     );
   });
@@ -99,8 +103,8 @@ describe("scaffoldJfdi", () => {
   it("respects configured column names and paths", async () => {
     const config = defaultConfig();
     config.board.columns.begin = "To Do";
-    await scaffoldJfdi(root, jfdiDir, config);
-    const board = parseBoard(await fs.readFile(path.join(jfdiDir, "board.md"), "utf8"));
+    await scaffoldJfdi(root, jfdiDirectory, config);
+    const board = parseBoard(await fs.readFile(path.join(jfdiDirectory, "board.md"), "utf8"));
     expect(board.columns[0]?.name).toBe("To Do");
   });
 });

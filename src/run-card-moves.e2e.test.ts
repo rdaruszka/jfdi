@@ -27,8 +27,8 @@ import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 const PIPELINE_TIMEOUT_MS = 120_000;
 
@@ -103,11 +103,11 @@ const CARD_LINE = `- [ ] Add feature alpha [[${TICKET_ID}]]`;
 
 interface Sandbox {
   root: string;
-  project: string;
+  projectRoot: string;
   home: string;
   jfdiHome: string;
-  stateDir: string;
-  binDir: string;
+  stateDirectory: string;
+  executableDirectory: string;
   boardPath: string;
 }
 
@@ -118,38 +118,38 @@ async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-card-e2e-"));
   const root = await fs.realpath(created);
   sandboxes.push(created);
-  const project = path.join(root, "project");
+  const projectRoot = path.join(root, "project");
   const home = path.join(root, "home");
-  const binDir = path.join(root, "bin");
-  await fs.mkdir(project, { recursive: true });
+  const executableDirectory = path.join(root, "bin");
+  await fs.mkdir(projectRoot, { recursive: true });
   await fs.mkdir(home);
-  await fs.mkdir(binDir);
+  await fs.mkdir(executableDirectory);
   // Both CLIs the scaffolded config selects, played by the same script:
   // the default mix reviews on Codex and implements on Claude.
   for (const executable of ["claude", "codex"]) {
-    await fs.writeFile(path.join(binDir, executable), STUB_AGENT, { mode: 0o755 });
+    await fs.writeFile(path.join(executableDirectory, executable), STUB_AGENT, { mode: 0o755 });
   }
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
   const jfdiHome = path.join(home, ".jfdi");
   const sandbox: Sandbox = {
     root,
-    project,
+    projectRoot,
     home,
     jfdiHome,
-    stateDir: path.join(jfdiHome, "projects", project.split(path.sep).join("-")),
-    binDir,
-    boardPath: path.join(project, ".jfdi", "board.md"),
+    stateDirectory: path.join(jfdiHome, "projects", projectRoot.split(path.sep).join("-")),
+    executableDirectory,
+    boardPath: path.join(projectRoot, ".jfdi", "board.md"),
   };
   expect((await runCli(sandbox, ["init", "--bare"])).code).toBe(0);
   await fs.writeFile(
-    path.join(project, ".jfdi", "tickets", `${TICKET_ID}.md`),
+    path.join(projectRoot, ".jfdi", "tickets", `${TICKET_ID}.md`),
     `# Alpha feature\n\nAdd the alpha feature.\n`,
   );
   return sandbox;
@@ -168,7 +168,7 @@ async function runCli(
 ): Promise<CliResult> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
     STUB_BOARD: sandbox.boardPath,
@@ -177,7 +177,7 @@ async function runCli(
   };
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: sandbox.project,
+      cwd: sandbox.projectRoot,
       env,
     });
     return { code: 0, stdout, stderr };
@@ -235,7 +235,7 @@ async function seedCard(sandbox: Sandbox, column: string): Promise<void> {
 }
 
 async function cardMoves(sandbox: Sandbox): Promise<Array<{ from: string; to: string }>> {
-  const stream = await fs.readFile(path.join(sandbox.stateDir, "events.jsonl"), "utf8");
+  const stream = await fs.readFile(path.join(sandbox.stateDirectory, "events.jsonl"), "utf8");
   return stream
     .split("\n")
     .filter((line) => line.length > 0)
@@ -245,7 +245,7 @@ async function cardMoves(sandbox: Sandbox): Promise<Array<{ from: string; to: st
 }
 
 async function setMode(sandbox: Sandbox, mode: "auto" | "on-approval"): Promise<void> {
-  const configPath = path.join(sandbox.project, ".jfdi", "config.json");
+  const configPath = path.join(sandbox.projectRoot, ".jfdi", "config.json");
   const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
     integration: { mode: string };
   };
@@ -254,7 +254,9 @@ async function setMode(sandbox: Sandbox, mode: "auto" | "on-approval"): Promise<
 }
 
 afterEach(async () => {
-  await Promise.all(sandboxes.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    sandboxes.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe("jfdi run moves the matching card", () => {
@@ -298,7 +300,9 @@ describe("jfdi run moves the matching card", () => {
         `Done: ${CARD_LINE.replace("- [ ]", "- [x]")}`,
       ]);
       // The pipeline's own commit, subject-prefixed with the ticket id.
-      expect(await git(sandbox.project, "log", "--oneline", "main")).toContain("alpha-feature:");
+      expect(await git(sandbox.projectRoot, "log", "--oneline", "main")).toContain(
+        "alpha-feature:",
+      );
     },
     PIPELINE_TIMEOUT_MS,
   );
@@ -324,7 +328,7 @@ describe("jfdi run moves the matching card", () => {
       await seedCard(sandbox, "Ready");
       // An unmergeable target branch makes worktree creation throw mid-run; the
       // card must not be stranded In Progress by a crash.
-      const configPath = path.join(sandbox.project, ".jfdi", "config.json");
+      const configPath = path.join(sandbox.projectRoot, ".jfdi", "config.json");
       const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
         integration: { targetBranch: string };
       };

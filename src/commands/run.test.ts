@@ -37,7 +37,7 @@ kanban-plugin: board
 const CARD = "Add feature alpha";
 
 function boardPath(): string {
-  return path.join(fixture.jfdiDir, "board.md");
+  return path.join(fixture.jfdiDirectory, "board.md");
 }
 
 async function writeBoard(content: string): Promise<void> {
@@ -79,7 +79,7 @@ describe("jfdi run — board card", () => {
   it("refuses a corrupt report, preserves it, and moves the card to Blocked", async () => {
     await writeBoard(BOARD);
     const ticketId = ticketIdFromCard(CARD);
-    const reportPath = path.join(fixture.stateDir, "runs", ticketId, "report.json");
+    const reportPath = path.join(fixture.stateDirectory, "runs", ticketId, "report.json");
     await fs.mkdir(path.dirname(reportPath), { recursive: true });
     const corruptContent = '{"summary":';
     await fs.writeFile(reportPath, corruptContent);
@@ -116,7 +116,7 @@ describe("jfdi run — board card", () => {
 
     expect(await runTicketInline(fixture.context(passingHandler()), CARD)).toBe(0);
 
-    expect(await fs.readFile(path.join(fixture.repo, "alpha.txt"), "utf8")).toBe("alpha\n");
+    expect(await fs.readFile(path.join(fixture.projectRoot, "alpha.txt"), "utf8")).toBe("alpha\n");
     const done = findColumn(await readBoard(), "Done")?.cards ?? [];
     expect(done.map((c) => c.text)).toEqual([CARD]);
     expect(done.map((c) => c.checked)).toEqual([true]);

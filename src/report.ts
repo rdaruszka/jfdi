@@ -1,19 +1,19 @@
 import * as path from "node:path";
 import { addCardIfAbsent } from "./board.js";
 import type { PipelineContext, RunReport } from "./pipeline.js";
-import { runsDir } from "./pipeline.js";
+import { runsDirectory } from "./pipeline.js";
 import { recordTransition } from "./transitions.js";
 import { usageTotals } from "./usage.js";
 import { atomicWrite, fileExists, readIfExists } from "./util/fsx.js";
 
 /** Persist the pipeline report so a later `jfdi merge` / restart can pick it up. */
 export async function saveReport(
-  stateDir: string,
+  stateDirectory: string,
   ticketId: string,
   report: RunReport,
 ): Promise<void> {
   await atomicWrite(
-    path.join(runsDir(stateDir, ticketId), "report.json"),
+    path.join(runsDirectory(stateDirectory, ticketId), "report.json"),
     `${JSON.stringify(report, null, 2)}\n`,
   );
 }
@@ -60,10 +60,10 @@ export function isCorruptReport(report: RunReport | CorruptReport): report is Co
 }
 
 export async function loadReport(
-  stateDir: string,
+  stateDirectory: string,
   ticketId: string,
 ): Promise<RunReport | CorruptReport | null> {
-  const reportPath = path.join(runsDir(stateDir, ticketId), "report.json");
+  const reportPath = path.join(runsDirectory(stateDirectory, ticketId), "report.json");
   const content = await readIfExists(reportPath);
   if (content === null) return null;
   let parsed: unknown;
@@ -127,7 +127,7 @@ export async function recordObservations(
   observations: string[],
 ): Promise<boolean> {
   if (observations.length === 0) return true;
-  const boardPath = path.join(context.repoRoot, context.config.board.path);
+  const boardPath = path.join(context.projectRoot, context.config.board.path);
   if (!(await fileExists(boardPath))) return false;
   for (const observation of observations) {
     const added = await addCardIfAbsent(
@@ -150,7 +150,7 @@ export async function recordMergeReady(
   ticketId: string,
   report: RunReport,
 ): Promise<void> {
-  await saveReport(context.stateDir, ticketId, report);
+  await saveReport(context.stateDirectory, ticketId, report);
   // Carry the complete run total so the status/TUI snapshot lands the final
   // figure — including this run's last scribe, which ran after the last stage_end.
   const totals = usageTotals(report.usageRows);

@@ -66,13 +66,14 @@ export async function main(argv: string[]): Promise<number> {
     switch (command) {
       case "run": {
         const isForced = rest.includes("--force");
-        const ref = rest
-          .filter((arg) => arg !== "--force")
+        const ticketReference = rest
+          .filter((argument) => argument !== "--force")
           .join(" ")
           .trim();
-        if (!ref) return usageError("jfdi run <ticket> — a ticket reference is required");
+        if (!ticketReference)
+          return usageError("jfdi run <ticket> — a ticket reference is required");
         const { runCommand } = await import("./commands/run.js");
-        return await runCommand(ref, { isForced });
+        return await runCommand(ticketReference, { isForced });
       }
       case "start": {
         const { startCommand } = await import("./commands/start.js");
