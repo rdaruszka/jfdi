@@ -11,6 +11,7 @@ Usage:
   jfdi status [--json]  Snapshot of coordinator state
   jfdi logs <ticket>    Dump a ticket's raw session logs
   jfdi merge <ticket>   Approve a Ready-to-Merge ticket (on-approval mode)
+  jfdi update-config    Rewrite legacy config keys to the canonical schema
   jfdi init [options]   Scaffold .jfdi/ and conversationally tune the setup
 
 Init options:
@@ -119,6 +120,18 @@ and close the card itself.
 | 0 | Merged (or branch was already contained in the target — closed without merging) |
 | 1 | No such branch |
 | 2 | Integration blocked — reason in the ticket note; worktree kept |
+
+## `jfdi update-config`
+
+Mechanically rewrites the legacy key spellings in `.jfdi/config.json` to the
+canonical schema. The command reports every rename, preserves keys JFDI does
+not recognize, and writes the result atomically. It does not launch an agent
+session or run `jfdi init`.
+
+An absent or already-canonical config is a successful no-op. Invalid JSON exits
+non-zero with the file path and parse error and leaves the file unchanged.
+Running the command again after a successful migration reports that there is
+nothing to update.
 
 ## `jfdi init [options]`
 
