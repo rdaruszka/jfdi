@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { JFDI_DIR, loadConfig, type SessionConfig } from "../config.js";
+import {
+  defaultConfig,
+  JFDI_DIR,
+  type JfdiConfig,
+  loadConfig,
+  type PermissionMode,
+  type SessionConfig,
+} from "../config.js";
 import { runGate } from "../gate.js";
 import { repoRoot } from "../git.js";
 import { CODING_GUIDELINES } from "../guidelines.js";
@@ -14,6 +21,7 @@ import { scaffoldJfdi } from "../scaffold.js";
 
 const DEFAULT_INIT_HARNESS: HarnessName = "claude";
 const DEFAULT_INIT_MODEL = "claude-fable-5";
+const CONFIG_PATH = path.join(JFDI_DIR, "config.json");
 
 export interface InitOptions {
   isBare?: boolean;
@@ -38,7 +46,16 @@ function initSessionConfig(options: InitOptions): SessionConfig {
 }
 
 async function verifyGate(root: string): Promise<boolean> {
-  const config = await loadConfig(root);
+  let config: JfdiConfig;
+  try {
+    config = await loadConfig(root);
+  } catch (error) {
+    console.error(
+      `gate could not load ${CONFIG_PATH}: ${(error as Error).message}; ` +
+        "rerun `jfdi init` to finish setup",
+    );
+    return false;
+  }
   const temporaryDir = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-init-gate-"));
   try {
     const result = await runGate(config.gate, root, path.join(temporaryDir, "gate.log"));
@@ -75,7 +92,18 @@ export async function initCommand(options: InitOptions = {}): Promise<number> {
     );
   }
 
-  const config = await loadConfig(root);
+  let permissionMode: PermissionMode = defaultConfig().permissions.mode;
+  let configWarning: string | null = null;
+  try {
+    permissionMode = (await loadConfig(root)).permissions.mode;
+  } catch (error) {
+    const reason = (error as Error).message;
+    configWarning =
+      `Warning: failed to load ${CONFIG_PATH}: "${reason}". ` +
+      `Using default permissions.mode "${permissionMode}" for setup; ` +
+      "treat the config as broken and repair it during setup.";
+    console.warn(configWarning);
+  }
   if (options.isBare) {
     console.log(
       "next: fill in the gate commands and sandbox contract, then link " +
@@ -89,12 +117,15 @@ export async function initCommand(options: InitOptions = {}): Promise<number> {
   const exitCode = await createHarness(
     "implementation",
     initSessionConfig(options),
-    config.permissions.mode,
-  ).spawnInteractive(INIT_USER_PROMPT, {
-    cwd: root,
-    systemPrompt,
-    shouldIgnoreProjectContext: true,
-  });
+    permissionMode,
+  ).spawnInteractive(
+    configWarning === null ? INIT_USER_PROMPT : `${configWarning}\n\n${INIT_USER_PROMPT}`,
+    {
+      cwd: root,
+      systemPrompt,
+      shouldIgnoreProjectContext: true,
+    },
+  );
   if (exitCode !== 0) console.error(`setup session exited with code ${exitCode}`);
   const isGateVerified = await verifyGate(root);
   if (!isGateVerified && exitCode === 0) return 1;

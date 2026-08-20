@@ -123,6 +123,10 @@ human asks otherwise.
   \`permissions.mode\` (\`auto\` = sandboxed autonomous, default; \`bypass\` =
   opt-in full access); \`max_concurrent\`; per-stage \`stages\` entries
   (harness, model, effort per stage plus the scribe).
+  Setup does not require this file to be valid: when it cannot load, the setup
+  command warns, runs its session with sandboxed \`auto\` permissions, and puts
+  the load error in the opening message so you can repair the file. A config
+  that still cannot load after the session fails the gate epilogue.
 - **\`.jfdi/prompts/*.md\`** — the stage prompt templates, seeded as generic
   defaults at setup. Setup builds every one of them into this project's own
   prompt: each carries what its stage needs to know about *this* project —

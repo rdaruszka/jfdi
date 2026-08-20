@@ -133,7 +133,9 @@ Sets up or revisits JFDI in the current repo, in three parts:
    agent never reads, so the seeded set is always clean raw material.
 2. **Conversational setup**: an interactive fresh-eyes session — isolated from
    the project's own agent instructions, carrying the operational brief and
-   coding guidelines as its appended system prompt. It explores the project's
+   coding guidelines as its appended system prompt. An unloadable config does
+   not prevent setup: init warns, uses sandboxed `auto` permissions, and puts
+   the load error in the session's opening message. It explores the project's
    code first (never git history), then the workflow configuration,
    interviews you one question at a time, and writes nothing until you
    explicitly approve the complete plan. The approved setup gives the gate
@@ -146,10 +148,12 @@ Sets up or revisits JFDI in the current repo, in three parts:
    setup.
 3. **Gate epilogue**: after the interactive CLI exits, JFDI reloads the config,
    runs the gate itself, and prints either `gate verified` or the failing step
-   with a suggestion to rerun init.
+   with a suggestion to rerun init. If the config still cannot load, that is
+   reported as a failed verification with the same suggestion.
 
-`--bare` stops after the idempotent scaffold; link `.jfdi/ticket-format.md` from
-the project's agent instructions yourself. The interactive session defaults to
+`--bare` stops after the idempotent scaffold; it still warns about an unloadable
+config, but exits successfully. Link `.jfdi/ticket-format.md` from the project's
+agent instructions yourself. The interactive session defaults to
 Claude with `claude-fable-5`; `--harness`, `--model`, and `--effort` select it
 directly and do not borrow a pipeline stage's selection. The provider's native
 interactive CLI is the frontend, so exit with its usual `/exit` or Ctrl-C.
