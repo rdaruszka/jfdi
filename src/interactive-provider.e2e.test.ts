@@ -343,4 +343,34 @@ describe("interactive provider selection", () => {
     });
     expect((failure as { stderr: string }).stderr).not.toContain("jfdi: invalid JSON");
   });
+
+  it.each(["status", "run"])(
+    "%s keeps failing loud on a bad config — the init fallback stays init-only",
+    async (command) => {
+      const sandbox = await makeProject();
+      await writeConfig(sandbox.project, "{nope");
+
+      let failure: unknown;
+      try {
+        await runCli(
+          sandbox.project,
+          { ...sandbox.environment, JFDI_HOME: path.join(sandbox.project, ".jfdi-home") },
+          command === "run" ? [command, "do a thing"] : [command],
+        );
+      } catch (error) {
+        failure = error;
+      }
+
+      // Fails loud: the raw ConfigError reaches the top-level `jfdi:` handler,
+      // never the init-only warning-and-continue path.
+      expect(failure).toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining("jfdi: invalid JSON in"),
+      });
+      const { stderr } = failure as { stderr: string };
+      expect(stderr).not.toContain("treat the config as broken");
+      expect(stderr).not.toContain("Using default permissions.mode");
+      await expect(fs.access(sandbox.tracePath)).rejects.toThrow();
+    },
+  );
 });
