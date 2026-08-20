@@ -90,6 +90,7 @@ jfdi start            Watch the board, run continuously (live TUI)
 jfdi status [--json]  Coordinator state snapshot
 jfdi logs <ticket>    A ticket's raw session logs
 jfdi merge <ticket>   Approve a Ready-to-Merge ticket (on-approval mode)
+jfdi update-config    Rewrite legacy config keys to the canonical schema
 jfdi init [options]   Scaffold .jfdi/ and conversationally tune the setup
 ```
 

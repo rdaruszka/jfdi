@@ -6,8 +6,10 @@ import {
   defaultConfig,
   JFDI_DIR,
   type JfdiConfig,
+  type LegacyConfigNotice,
   loadConfig,
   type PermissionMode,
+  printLegacyConfigNotice,
   type SessionConfig,
 } from "../config.js";
 import { runGate } from "../gate.js";
@@ -45,10 +47,10 @@ function initSessionConfig(options: InitOptions): SessionConfig {
   };
 }
 
-async function verifyGate(root: string): Promise<boolean> {
+async function verifyGate(root: string, onLegacyKeys: LegacyConfigNotice): Promise<boolean> {
   let config: JfdiConfig;
   try {
-    config = await loadConfig(root);
+    config = await loadConfig(root, { onLegacyKeys });
   } catch (error) {
     console.error(
       `gate could not load ${CONFIG_PATH}: ${(error as Error).message}; ` +
@@ -94,8 +96,14 @@ export async function initCommand(options: InitOptions = {}): Promise<number> {
 
   let permissionMode: PermissionMode = defaultConfig().permissions.mode;
   let configWarning: string | null = null;
+  let hasPrintedLegacyNotice = false;
+  const onLegacyKeys: LegacyConfigNotice = (legacyKeys, file) => {
+    if (hasPrintedLegacyNotice) return;
+    hasPrintedLegacyNotice = true;
+    printLegacyConfigNotice(legacyKeys, file);
+  };
   try {
-    permissionMode = (await loadConfig(root)).permissions.mode;
+    permissionMode = (await loadConfig(root, { onLegacyKeys })).permissions.mode;
   } catch (error) {
     const reason = (error as Error).message;
     configWarning =
@@ -127,7 +135,7 @@ export async function initCommand(options: InitOptions = {}): Promise<number> {
     },
   );
   if (exitCode !== 0) console.error(`setup session exited with code ${exitCode}`);
-  const isGateVerified = await verifyGate(root);
+  const isGateVerified = await verifyGate(root, onLegacyKeys);
   if (!isGateVerified && exitCode === 0) return 1;
   return exitCode;
 }
