@@ -603,10 +603,10 @@ describe("handoff commit messages, as git reads them", () => {
     async () => {
       const sandbox = await makeSandbox();
       await initProject(sandbox);
-      const ticketsDir = path.join(sandbox.project, ".jfdi", "tickets");
-      await fs.mkdir(ticketsDir, { recursive: true });
+      const ticketsDirectory = path.join(sandbox.project, ".jfdi", "tickets");
+      await fs.mkdir(ticketsDirectory, { recursive: true });
       await fs.writeFile(
-        path.join(ticketsDir, "marmalade-export.md"),
+        path.join(ticketsDirectory, "marmalade-export.md"),
         "# Marmalade export\n\nExport preserves in the marmalade interchange format.\n",
       );
 

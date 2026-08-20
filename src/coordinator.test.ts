@@ -361,7 +361,7 @@ describe("Coordinator", () => {
       ALPHA_TEXT,
     );
     expect(await fs.readFile(reportPath, "utf8")).toBe(corruptContent);
-    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticketId}.md`), "utf8");
+    const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${ticketId}.md`), "utf8");
     expect(note).toContain(reportPath);
     expect(note).toContain("JSON");
     expect(note).toContain("fix or restore");
@@ -424,7 +424,7 @@ describe("Coordinator", () => {
     const board = await readBoard();
     expect(findColumn(board, "Ready to Merge")?.cards).toHaveLength(0);
     expect(findColumn(board, "Blocked")?.cards.map((card) => card.text)).toEqual([ALPHA_TEXT]);
-    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticketId}.md`), "utf8");
+    const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${ticketId}.md`), "utf8");
     expect(note).toContain(reportPath);
     expect(note).toContain("decisions");
     expect(note).toContain("fix or restore");
@@ -473,7 +473,7 @@ describe("Coordinator", () => {
 
     // QA's phase record names the approval queue; the report stays on disk.
     const alphaId = ticketIdFromCard("Add feature alpha");
-    const note = await fs.readFile(path.join(fixture.ticketsDir, `${alphaId}.md`), "utf8");
+    const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${alphaId}.md`), "utf8");
     expect(note).toContain("queued for approval before integration");
     expect(note).toContain("built alpha");
   });
@@ -595,7 +595,7 @@ describe("Coordinator", () => {
     pipelineCoordinator.stop();
 
     const alphaId = ticketIdFromCard(ALPHA_TEXT);
-    const ticket = await resolveTicket(ALPHA_TEXT, fixture.ticketsDir);
+    const ticket = await resolveTicket(ALPHA_TEXT, fixture.ticketsDirectory);
     const report = await loadReport(fixture.stateDir, alphaId);
     if (!report || isCorruptReport(report))
       throw new Error("pipeline should save a valid report before integration");
@@ -642,7 +642,7 @@ describe("Coordinator", () => {
     pipelineCoordinator.stop();
 
     const alphaId = ticketIdFromCard(ALPHA_TEXT);
-    const ticket = await resolveTicket(ALPHA_TEXT, fixture.ticketsDir);
+    const ticket = await resolveTicket(ALPHA_TEXT, fixture.ticketsDirectory);
     const report = await loadReport(fixture.stateDir, alphaId);
     if (!report || isCorruptReport(report))
       throw new Error("pipeline should save a valid report before integration");
@@ -942,7 +942,7 @@ describe("Coordinator", () => {
   });
 
   it("materializes earlier-round observations when the run blocks", async () => {
-    fixture.config.pipeline.max_rounds = 1;
+    fixture.config.pipeline.maxRounds = 1;
     const context = fixture.context(async (prompt, options) => {
       const stage = sessionKindOf(prompt);
       if (stage === "implementation") {
@@ -1021,13 +1021,13 @@ describe("Coordinator", () => {
     ]);
   });
 
-  it("takes the stranded in-progress card before a waiting one, and counts it against max_concurrent", async () => {
+  it("takes the stranded in-progress card before a waiting one, and counts it against maxConcurrent", async () => {
     // Both columns want the single slot. The in-progress card holds partial
     // work already paid for, so it goes first; the waiting card gets the slot
     // it frees, not a second one alongside it.
     await fs.writeFile(path.join(fixture.jfdiDir, "board.md"), STRANDED_AND_WAITING_BOARD);
     const context = fixture.context(autoHandler());
-    fixture.config.max_concurrent = 1;
+    fixture.config.maxConcurrent = 1;
     fixture.config.integration.mode = "on-approval";
     const dispatched: string[] = [];
     context.log.on((event) => {
@@ -1056,7 +1056,7 @@ describe("Coordinator", () => {
     ]);
   });
 
-  it("respects max_concurrent", async () => {
+  it("respects maxConcurrent", async () => {
     let peak = 0;
     let current = 0;
     const context = fixture.context(async (prompt, options) => {
@@ -1076,7 +1076,7 @@ describe("Coordinator", () => {
       }
       return { ok: true, text: "" };
     });
-    fixture.config.max_concurrent = 1;
+    fixture.config.maxConcurrent = 1;
     fixture.config.integration.mode = "auto";
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
     await startCoordinator(coordinator);
@@ -1199,7 +1199,7 @@ describe("Coordinator under a broken provider", () => {
       if (event.type === "harness_resumed") pauseEvents.push(event.type);
     });
     fixture.config.integration.mode = "on-approval";
-    fixture.config.max_concurrent = 2;
+    fixture.config.maxConcurrent = 2;
 
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
     await startCoordinator(coordinator);
@@ -1257,7 +1257,7 @@ function boardWithColumns(columns: Array<[string, string[]]>): string {
 
 async function writeNote(id: string, frontmatter: string): Promise<void> {
   await fs.writeFile(
-    path.join(fixture.ticketsDir, `${id}.md`),
+    path.join(fixture.ticketsDirectory, `${id}.md`),
     `---\n${frontmatter}\n---\n\n# ${id}\n\nSome work to do.\n`,
   );
 }
@@ -1274,7 +1274,7 @@ function recordEvents(context: ReturnType<Fixture["context"]>): JfdiEvent[] {
 }
 
 async function noteComments(id: string): Promise<string[]> {
-  const content = await fs.readFile(path.join(fixture.ticketsDir, `${id}.md`), "utf8");
+  const content = await fs.readFile(path.join(fixture.ticketsDirectory, `${id}.md`), "utf8");
   return parseTicketNote(content).comments.map((comment) => comment.body);
 }
 
@@ -1462,7 +1462,7 @@ describe("Coordinator — blocked-by gating", () => {
     expect(await noteComments("b")).toHaveLength(1);
     expect(context.harness.calls).toHaveLength(0);
 
-    const aNotePath = path.join(fixture.ticketsDir, "a.md");
+    const aNotePath = path.join(fixture.ticketsDirectory, "a.md");
     const aNote = await fs.readFile(aNotePath, "utf8");
     await fs.writeFile(aNotePath, aNote.replace('blocked-by:\n  - "[[b]]"\n', ""));
     await moveCard(boardPath(), "- [ ] a [[a]]", "Blocked", "Ready");

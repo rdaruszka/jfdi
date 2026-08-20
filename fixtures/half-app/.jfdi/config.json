@@ -9,16 +9,16 @@
       "readyToMerge": "Ready to Merge"
     }
   },
-  "ticketsDir": ".jfdi/tickets",
+  "ticketsDirectory": ".jfdi/tickets",
   "gate": [
-    { "name": "deps", "cmd": "pnpm install --prefer-offline" },
-    { "name": "build", "cmd": "pnpm build" },
-    { "name": "test", "cmd": "pnpm test" },
-    { "name": "lint", "cmd": "pnpm lint" }
+    { "name": "deps", "command": "pnpm install --prefer-offline" },
+    { "name": "build", "command": "pnpm build" },
+    { "name": "test", "command": "pnpm test" },
+    { "name": "lint", "command": "pnpm lint" }
   ],
-  "pipeline": { "max_rounds": 3 },
-  "integration": { "target_branch": "main", "mode": "on-approval" },
-  "max_concurrent": 2,
+  "pipeline": { "maxRounds": 3 },
+  "integration": { "targetBranch": "main", "mode": "on-approval" },
+  "maxConcurrent": 2,
   "stages": {
     "implementation": { "harness": "claude", "model": "claude-opus-4-8", "effort": "high" },
     "code-review": { "harness": "codex", "model": "gpt-5.6-sol", "effort": "high" },

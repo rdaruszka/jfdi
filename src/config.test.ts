@@ -18,30 +18,79 @@ describe("parseConfig", () => {
         path: ".jfdi/board.md",
         columns: { begin: "Ready", inProgress: "In Progress", done: "Done" },
       },
-      ticketsDir: ".jfdi/tickets",
+      ticketsDirectory: ".jfdi/tickets",
       gate: [
-        { name: "build", cmd: "npm run build" },
-        { name: "test", cmd: "npm test" },
+        { name: "build", command: "npm run build" },
+        { name: "test", command: "npm test" },
       ],
-      pipeline: { max_rounds: 3 },
+      pipeline: { maxRounds: 3 },
       integration: {
-        target_branch: "develop",
+        targetBranch: "develop",
         mode: "auto",
-        remote: { fetch_before: true, push_after: true },
+        remote: { fetchBefore: true, pushAfter: true },
       },
       permissions: { mode: "bypass" },
-      max_concurrent: 4,
+      maxConcurrent: 4,
       stages: STAGES,
     });
     expect(config.integration).toEqual({
-      target_branch: "develop",
+      targetBranch: "develop",
       mode: "auto",
-      remote: { fetch_before: true, push_after: true },
+      remote: { fetchBefore: true, pushAfter: true },
     });
     expect(config.permissions).toEqual({ mode: "bypass" });
     expect(config.gate).toHaveLength(2);
-    expect(config.max_concurrent).toBe(4);
+    expect(config.maxConcurrent).toBe(4);
     expect(config.board.columns.blocked).toBe("Blocked");
+  });
+
+  it("parses every legacy key identically to its canonical spelling", () => {
+    const canonical = parseConfig({
+      ticketsDirectory: ".workflow/tickets",
+      gate: [{ name: "test", command: "pnpm test" }],
+      pipeline: { maxRounds: 5 },
+      integration: {
+        targetBranch: "develop",
+        remote: { fetchBefore: true, pushAfter: true },
+      },
+      maxConcurrent: 4,
+      stages: STAGES,
+    });
+    const legacy = parseConfig({
+      ticketsDir: ".workflow/tickets",
+      gate: [{ name: "test", cmd: "pnpm test" }],
+      pipeline: { max_rounds: 5 },
+      integration: {
+        target_branch: "develop",
+        remote: { fetch_before: true, push_after: true },
+      },
+      max_concurrent: 4,
+      stages: STAGES,
+    });
+
+    expect(legacy).toEqual(canonical);
+  });
+
+  it("accepts matching canonical and legacy spellings", () => {
+    expect(
+      parseConfig({
+        gate: [{ name: "test", command: "pnpm test", cmd: "pnpm test" }],
+        stages: STAGES,
+      }).gate,
+    ).toEqual([{ name: "test", command: "pnpm test" }]);
+  });
+
+  it("rejects a gate entry whose command spellings disagree, naming both values", () => {
+    expect(() =>
+      parseConfig({
+        gate: [{ name: "test", command: "pnpm test", cmd: "npm test" }],
+        stages: STAGES,
+      }),
+    ).toThrowError(
+      new ConfigError(
+        'gate[0] has conflicting "command" and legacy "cmd" values: "pnpm test" and "npm test"',
+      ),
+    );
   });
 
   it("rejects a bad integration mode", () => {
@@ -52,21 +101,21 @@ describe("parseConfig", () => {
 
   it("defaults and validates remote integration flags", () => {
     expect(parseConfig({ stages: STAGES }).integration.remote).toEqual({
-      fetch_before: false,
-      push_after: false,
+      fetchBefore: false,
+      pushAfter: false,
     });
     expect(
       parseConfig({
-        integration: { remote: { fetch_before: true, push_after: true } },
+        integration: { remote: { fetchBefore: true, pushAfter: true } },
         stages: STAGES,
       }).integration.remote,
-    ).toEqual({ fetch_before: true, push_after: true });
+    ).toEqual({ fetchBefore: true, pushAfter: true });
     expect(() => parseConfig({ integration: { remote: "origin" }, stages: STAGES })).toThrowError(
       new ConfigError("integration.remote must be an object"),
     );
     expect(() =>
-      parseConfig({ integration: { remote: { fetch_before: "yes" } }, stages: STAGES }),
-    ).toThrowError(new ConfigError("integration.remote.fetch_before must be a boolean"));
+      parseConfig({ integration: { remote: { fetchBefore: "yes" } }, stages: STAGES }),
+    ).toThrowError(new ConfigError("integration.remote.fetchBefore must be a boolean"));
   });
 
   it("defaults, accepts, and validates the global permission mode", () => {
@@ -86,8 +135,8 @@ describe("parseConfig", () => {
     expect(() => parseConfig({ gate: [{ name: "x" }], stages: STAGES })).toThrow(ConfigError);
   });
 
-  it("rejects non-integer max_concurrent", () => {
-    expect(() => parseConfig({ max_concurrent: 0, stages: STAGES })).toThrow(ConfigError);
+  it("rejects non-integer maxConcurrent", () => {
+    expect(() => parseConfig({ maxConcurrent: 0, stages: STAGES })).toThrow(ConfigError);
   });
 
   it("rejects the removed harnessArgs setting", () => {
@@ -206,9 +255,9 @@ describe("loadConfig", () => {
     await fs.mkdir(path.join(dir, ".jfdi"), { recursive: true });
     await fs.writeFile(
       path.join(dir, ".jfdi/config.json"),
-      JSON.stringify({ max_concurrent: 7, stages: STAGES }),
+      JSON.stringify({ maxConcurrent: 7, stages: STAGES }),
     );
-    expect((await loadConfig(dir)).max_concurrent).toBe(7);
+    expect((await loadConfig(dir)).maxConcurrent).toBe(7);
   });
 
   it("rejects a config.json that predates per-stage selection", async () => {

@@ -310,7 +310,7 @@ describe("jfdi merge closes out its own card", () => {
         ["Blocked", []],
         ["Done", []],
       ]),
-      { gate: [{ name: "check", cmd: "exit 1" }] },
+      { gate: [{ name: "check", command: "exit 1" }] },
     );
     await makeTicketBranch(sandbox, "fails-the-gate");
 

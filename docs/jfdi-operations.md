@@ -11,11 +11,11 @@ The workflow watches a Kanban board (`.jfdi/board.md`). When a card reaches
 the begin column, the coordinator dispatches a **run**: an isolated git
 worktree on its own branch, and a pipeline of fresh agent sessions —
 **Implementation → mechanical gate → Code Review → QA** — with feedback
-rounds (cap: `pipeline.max_rounds`, default 3). When both reviews sign off,
+rounds (cap: `pipeline.maxRounds`, default 3). When both reviews sign off,
 **Integration** merges the branch into the target branch: globally
 serialized, one merge at a time, landing a merge commit after re-running the
 gate on the merged tree. Several runs proceed concurrently
-(`max_concurrent`), but integration never does.
+(`maxConcurrent`), but integration never does.
 
 ## What each session sees — and doesn't
 
@@ -107,12 +107,58 @@ human asks otherwise.
 
 ## The files you configure
 
+`config.json` keys are exactly the camelCase keys shown below. Adapt the
+values to the project, but preserve this structure and the kebab-case stage
+identifiers. In particular, every gate entry has exactly `name` and `command`:
+
+```json
+{
+  "board": {
+    "path": ".jfdi/board.md",
+    "columns": {
+      "begin": "Ready",
+      "inProgress": "In Progress",
+      "done": "Done",
+      "blocked": "Blocked",
+      "readyToMerge": "Ready to Merge",
+      "inbox": "Inbox"
+    }
+  },
+  "ticketsDirectory": ".jfdi/tickets",
+  "gate": [
+    { "name": "build", "command": "pnpm build" },
+    { "name": "test", "command": "pnpm test" },
+    { "name": "lint", "command": "pnpm lint" }
+  ],
+  "pipeline": { "maxRounds": 3 },
+  "integration": {
+    "targetBranch": "main",
+    "mode": "on-approval",
+    "remote": { "fetchBefore": false, "pushAfter": false }
+  },
+  "permissions": { "mode": "auto" },
+  "maxConcurrent": 2,
+  "stages": {
+    "implementation": { "harness": "claude", "model": "claude-opus-4-8", "effort": "high" },
+    "code-review": { "harness": "codex", "model": "gpt-5.6-sol", "effort": "high" },
+    "qa": { "harness": "claude", "model": "claude-opus-4-8", "effort": "high" },
+    "integration": { "harness": "claude", "model": "claude-opus-4-8", "effort": "medium" },
+    "commit-message": { "harness": "claude", "model": "claude-sonnet-5" }
+  }
+}
+```
+
+Older projects may contain the legacy spellings `cmd`, `ticketsDir`,
+`max_rounds`, `target_branch`, `fetch_before`, `push_after`, and
+`max_concurrent`. They remain readable, but whenever setup touches
+`config.json`, normalize every legacy spelling to its canonical key above.
+
 - **`.jfdi/config.json`** — the gate; board path and column names;
-  `ticketsDir`; `pipeline.max_rounds`; `integration.target_branch` (never
+  `ticketsDirectory`; `pipeline.maxRounds`; `integration.targetBranch` (never
   assume `main`), `integration.mode` (`on-approval` holds merges for a human,
   `auto` lands them), `integration.remote` (opt-in fetch-before/push-after);
   `permissions.mode` (`auto` = sandboxed autonomous, default; `bypass` =
-  opt-in full access); `max_concurrent`; per-stage `stages` entries
+  opt-in full access); `maxConcurrent`; per-stage `stages` entries
   (harness, model, effort per stage plus the scribe).
   Setup does not require this file to be valid: when it cannot load, the setup
   command warns, runs its session with sandboxed `auto` permissions, and puts

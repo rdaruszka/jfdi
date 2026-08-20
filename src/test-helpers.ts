@@ -173,7 +173,7 @@ export interface Fixture {
   jfdiDir: string;
   /** Stand-in for ~/.jfdi/projects/<key>/ — outside the repo, like the real one. */
   stateDir: string;
-  ticketsDir: string;
+  ticketsDirectory: string;
   config: JfdiConfig;
   context: (
     handler: FakeHandler,
@@ -214,8 +214,8 @@ export async function makeFixture(configOverrides: Partial<JfdiConfig> = {}): Pr
   await git(repo, "commit", "-m", "initial");
 
   const jfdiDir = path.join(repo, ".jfdi");
-  const ticketsDir = path.join(jfdiDir, "tickets");
-  await fs.mkdir(ticketsDir, { recursive: true });
+  const ticketsDirectory = path.join(jfdiDir, "tickets");
+  await fs.mkdir(ticketsDirectory, { recursive: true });
   const stateDir = path.join(root, "state");
   const config: JfdiConfig = { ...defaultConfig(), gate: [], ...configOverrides };
 
@@ -224,7 +224,7 @@ export async function makeFixture(configOverrides: Partial<JfdiConfig> = {}): Pr
     repo,
     jfdiDir,
     stateDir,
-    ticketsDir,
+    ticketsDirectory,
     config,
     context: (handler, options = {}) => {
       const harness = new FakeHarness(handler);

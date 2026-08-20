@@ -52,7 +52,7 @@ const fs = require("node:fs");
 if (process.env.GATE_AFTER_SESSION) {
   const configPath = require("node:path").join(process.cwd(), ".jfdi", "config.json");
   const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  config.gate = [{ name: "after-session", cmd: process.env.GATE_AFTER_SESSION }];
+  config.gate = [{ name: "after-session", command: process.env.GATE_AFTER_SESSION }];
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + "\\n");
 }
 fs.writeFileSync(process.env.TRACE_PATH, JSON.stringify({
@@ -244,7 +244,7 @@ describe("interactive provider selection", () => {
       sandbox.project,
       `${JSON.stringify({
         ...defaultConfig(),
-        gate: [{ name: "build", command: "pnpm build" }],
+        gate: [{ name: "build" }],
       })}\n`,
     );
 
@@ -258,13 +258,13 @@ describe("interactive provider selection", () => {
     expect(failure).toMatchObject({
       code: 1,
       stderr: expect.stringContaining(
-        'Warning: failed to load .jfdi/config.json: "gate[0].cmd must be a non-empty string"',
+        'Warning: failed to load .jfdi/config.json: "gate[0].command must be a non-empty string"',
       ),
     });
     const trace = await readTrace(sandbox.tracePath);
     expect(trace.args.slice(0, 2)).toEqual(["--permission-mode", "auto"]);
     expect(trace.args.at(-1)).toContain(
-      'Warning: failed to load .jfdi/config.json: "gate[0].cmd must be a non-empty string"',
+      'Warning: failed to load .jfdi/config.json: "gate[0].command must be a non-empty string"',
     );
   });
 
@@ -299,9 +299,9 @@ describe("interactive provider selection", () => {
       name: "invalid schema",
       contents: `${JSON.stringify({
         ...defaultConfig(),
-        gate: [{ name: "build", command: "pnpm build" }],
+        gate: [{ name: "build" }],
       })}\n`,
-      errorText: "gate[0].cmd must be a non-empty string",
+      errorText: "gate[0].command must be a non-empty string",
     },
     {
       name: "malformed JSON",

@@ -92,7 +92,7 @@ describe("jfdi run — board card", () => {
       CARD,
     ]);
     expect(await fs.readFile(reportPath, "utf8")).toBe(corruptContent);
-    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticketId}.md`), "utf8");
+    const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${ticketId}.md`), "utf8");
     expect(note).toContain(reportPath);
     expect(note).toContain("fix or restore");
     expect(note).toContain("delete the file");
@@ -229,7 +229,7 @@ kanban-plugin: board
 
 async function writeNote(id: string, frontmatter: string): Promise<void> {
   await fs.writeFile(
-    path.join(fixture.ticketsDir, `${id}.md`),
+    path.join(fixture.ticketsDirectory, `${id}.md`),
     `---\n${frontmatter}\n---\n\n# ${id}\n\nSome work to do.\n`,
   );
 }

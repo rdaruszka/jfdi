@@ -96,7 +96,7 @@ export function ticketBranch(ticketId: string): string {
  * outright — `fatal: failed to read .git/worktrees/<other>/commondir` — and the
  * whole command exits non-zero. `remove`/`prune` delete the same entries a
  * concurrent `add` is reading. None of this is a corner case: the coordinator
- * dispatches up to `max_concurrent` cards from a single scan, so two adds on
+ * dispatches up to `maxConcurrent` cards from a single scan, so two adds on
  * one repo is the ordinary path, and the loser's run died with a git error
  * nothing in the pipeline could interpret.
  */

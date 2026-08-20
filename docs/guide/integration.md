@@ -6,14 +6,14 @@ review in parallel, but exactly one integration runs at a time, pulled from a
 merge-ready queue in completion order. Nothing but Integration ever touches the
 target branch.
 
-The target branch is configuration (`integration.target_branch`), never assumed
+The target branch is configuration (`integration.targetBranch`), never assumed
 to be `main`.
 
 ## The integration steps
 
 ```mermaid
 flowchart TD
-    START([merge_start]) --> FETCH{fetch_before and<br/>a remote exists?}
+    START([merge_start]) --> FETCH{fetchBefore and<br/>a remote exists?}
     FETCH -->|yes| RF[Fetch target branch]
     RF -->|failure after retries| BLOCKED
     RF --> SYNC{Local target vs<br/>fetched ref?}
@@ -38,15 +38,15 @@ flowchart TD
     GATE1 -->|pass| LAND
     GATE1 -->|fail| BLOCKED
     GATE2 -->|fail| BLOCKED
-    LAND --> PUSH{push_after and<br/>a remote exists?}
+    LAND --> PUSH{pushAfter and<br/>a remote exists?}
     PUSH -->|yes| RP[Push target branch]
     PUSH -->|no| DONE([merged — worktree removed,<br/>branch deleted, card → Done ✓])
     RP -->|success| DONE
     RP -->|failure| BLOCKED
 ```
 
-Remote use is opt-in through `integration.remote.fetch_before` and
-`integration.remote.push_after`, both `false` by default. JFDI resolves the remote
+Remote use is opt-in through `integration.remote.fetchBefore` and
+`integration.remote.pushAfter`, both `false` by default. JFDI resolves the remote
 from the target branch's configured upstream, falling back to `origin`. If the
 repository has no configured git remotes, even enabled flags retain local-only
 behavior.
@@ -54,10 +54,10 @@ behavior.
 In detail:
 
 1. **Optional remote fetch.** Before inspecting or merging the ticket branch,
-   Integration fetches only the target branch when `fetch_before` is enabled.
+   Integration fetches only the target branch when `fetchBefore` is enabled.
    A local target strictly behind its fetched remote-tracking ref is
    fast-forwarded; one strictly ahead (the fetched ref is an ancestor of the
-   local target) needs no sync and proceeds untouched — `push_after`, when
+   local target) needs no sync and proceeds untouched — `pushAfter`, when
    enabled, advances the remote after landing. Only if the two have truly
    diverged — each holds commits the other lacks — does JFDI block, naming
    both refs; it never resolves or overwrites divergent history.
@@ -96,7 +96,7 @@ In detail:
    that merge commit rather than as commits of their own — the same shape a
    hand-resolved `git merge` produces.
 8. **Optional remote push.** After the landing commit moves the local target,
-   Integration pushes only that target branch when `push_after` is enabled. A
+   Integration pushes only that target branch when `pushAfter` is enabled. A
    rejected push blocks but does not roll back the already-landed local merge.
 9. **Cleanup.** On success the worktree is removed and the `jfdi/<id>` branch
    deleted; the card moves to Done, checked off, and a merge entry closes the

@@ -122,7 +122,7 @@ describe("half-app end-to-end (fake harness)", () => {
     // suite below covers the fixture's actual gate.
     const config = {
       ...(await loadConfig(fixture.repo)),
-      gate: [{ name: "smoke", cmd: "test -f src/commands/list.ts" }],
+      gate: [{ name: "smoke", command: "test -f src/commands/list.ts" }],
     };
 
     const harness = new FakeHarness(async (prompt, options) => {

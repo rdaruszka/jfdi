@@ -10,21 +10,21 @@
       "inbox": "Agent"
     }
   },
-  "ticketsDir": ".jfdi/tickets",
+  "ticketsDirectory": ".jfdi/tickets",
   "gate": [
-    { "name": "build", "cmd": "pnpm build" },
-    { "name": "typecheck", "cmd": "pnpm exec tsc -p tsconfig.json --noEmit" },
-    { "name": "test", "cmd": "pnpm test" },
-    { "name": "lint", "cmd": "pnpm lint" }
+    { "name": "build", "command": "pnpm build" },
+    { "name": "typecheck", "command": "pnpm exec tsc -p tsconfig.json --noEmit" },
+    { "name": "test", "command": "pnpm test" },
+    { "name": "lint", "command": "pnpm lint" }
   ],
-  "pipeline": { "max_rounds": 3 },
+  "pipeline": { "maxRounds": 3 },
   "integration": {
-    "target_branch": "main",
+    "targetBranch": "main",
     "mode": "auto",
-    "remote": { "fetch_before": true, "push_after": true }
+    "remote": { "fetchBefore": true, "pushAfter": true }
   },
   "permissions": { "mode": "auto" },
-  "max_concurrent": 2,
+  "maxConcurrent": 2,
   "stages": {
     "implementation": { "harness": "codex", "model": "gpt-5.6-sol", "effort": "high" },
     "code-review": { "harness": "claude", "model": "claude-opus-4-8", "effort": "high" },

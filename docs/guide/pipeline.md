@@ -12,7 +12,7 @@ for what happens after it passes.
 ## Overview
 
 Every ticket runs in its own **git worktree** on branch `jfdi/<ticket-id>`, created
-from the integration target branch. Inside that worktree, up to `pipeline.max_rounds`
+from the integration target branch. Inside that worktree, up to `pipeline.maxRounds`
 **rounds** run (default 3). Each round is:
 
 ```mermaid
@@ -358,7 +358,7 @@ per-run and in-memory only: a re-dispatch always starts every stage fresh.
 
 A session can also die for a reason that has nothing to do with the work: a
 usage limit, an expired login, a 5xx. Treating that as feedback would be a
-disaster — the next round spawns into the same wall, `max_rounds` burns in
+disaster — the next round spawns into the same wall, `maxRounds` burns in
 seconds, and the coordinator moves on to drain the rest of the board the same
 way. So it isn't feedback. The harness classifies it
 ([how](../architecture/harness.md#failure-classification)), and the tool stops.

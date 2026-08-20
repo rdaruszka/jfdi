@@ -36,7 +36,7 @@ JFDI is self-hosting from milestone 1: JFDI's own tickets become its first board
 
 ## Architecture (one paragraph)
 
-The **coordinator** watches `board.md` (Obsidian Kanban format), dispatches each ready card into its own **git worktree** on branch `jfdi/<ticket-id>`, and runs a per-ticket pipeline of fresh Claude Code or Codex sessions: **Implementation → mechanical gate → Code Review → QA**, with feedback rounds (cap: `pipeline.max_rounds`, default 3; a gate failure feeds back into the same Implementation session *within* the round, up to 10 fix sessions, before it may consume one). Agents never commit: the pipeline commits each session's handoff itself, with a **scribe** session writing the message. One phase comment per stage and round folds together that message, the stage's decisions, status, and usage; gate-fix commit messages are included in their round's Implementation comment. **Integration** is coordinator-owned and globally serialized — one merge at a time: merge the target branch into the ticket branch, rerun the gate, then land that tested tree on the target as a merge commit (target's prior head first parent, signed-off branch head second). Every transition appends to the project's `events.jsonl` under `~/.jfdi/projects/<project-key>/`; `state.json` is a derived snapshot; the TUI is a pure renderer over that stream.
+The **coordinator** watches `board.md` (Obsidian Kanban format), dispatches each ready card into its own **git worktree** on branch `jfdi/<ticket-id>`, and runs a per-ticket pipeline of fresh Claude Code or Codex sessions: **Implementation → mechanical gate → Code Review → QA**, with feedback rounds (cap: `pipeline.maxRounds`, default 3; a gate failure feeds back into the same Implementation session *within* the round, up to 10 fix sessions, before it may consume one). Agents never commit: the pipeline commits each session's handoff itself, with a **scribe** session writing the message. One phase comment per stage and round folds together that message, the stage's decisions, status, and usage; gate-fix commit messages are included in their round's Implementation comment. **Integration** is coordinator-owned and globally serialized — one merge at a time: merge the target branch into the ticket branch, rerun the gate, then land that tested tree on the target as a merge commit (target's prior head first parent, signed-off branch head second). Every transition appends to the project's `events.jsonl` under `~/.jfdi/projects/<project-key>/`; `state.json` is a derived snapshot; the TUI is a pure renderer over that stream.
 
 ## Layout
 
@@ -88,7 +88,7 @@ These are architectural requirements, not preferences (rationale in [docs/archit
 6. **Pipeline-owned commits and note writes.** No agent commits and no agent edits a ticket note. The pipeline records HEAD before each session, soft-resets anything the session committed, and lands exactly one commit per session that changed the worktree — failure and interruption included, marked WIP. The same rendered message is included verbatim in the stage's phase comment; decisions arrive through the verdict, never through the agent's own edit.
 7. **Wikilink scope.** Card `[[wikilinks]]`, and a ticket's `blocks`/`blocked-by` frontmatter links, resolve only against `.jfdi/tickets/`; one that names no note there is reported, never searched for elsewhere. Beyond its own state directory under `~/.jfdi/projects/`, the tool never reads or writes outside the project folder — except through symlinks the user placed inside `.jfdi/` (board/tickets linked into a vault): following a user-created link is user consent, and writes land on the link's target.
 8. **Decide, log, proceed.** Agent prompts keep escalation a last resort; escalations must carry a recommended answer. Decisions land in the producing stage's phase comment; the board is the question queue (Blocked column + `## Questions`).
-9. **Target branch is configurable** (`integration.target_branch`) — never assume `main`.
+9. **Target branch is configurable** (`integration.targetBranch`) — never assume `main`.
 
 ## Glossary — one name per concept
 
@@ -104,7 +104,7 @@ Use these terms exactly; introduce no synonyms. The list grows only by editing t
 - **stage** — one fresh agent session within a run: Implementation, Code Review, QA.
 - **scribe** — the cheap, read-only, single-shot session that writes one commit message from the staged diff, the ticket, and the completing stage's summary. Pipeline plumbing that uses a session, selected by `stages["commit-message"]`: no verdict, no round, no sign-off — not a stage.
 - **gate** — the mechanical check (`pnpm build && pnpm exec tsc -p tsconfig.json --noEmit && pnpm test && pnpm lint`); all must exit zero. Pipeline-run: agents are told not to run it.
-- **round** — one feedback cycle ending at another agent: fix → gate (with in-round gate-fix sessions, capped at 10) → reviews (cap: `pipeline.max_rounds`). Gate failures alone do not consume a round.
+- **round** — one feedback cycle ending at another agent: fix → gate (with in-round gate-fix sessions, capped at 10) → reviews (cap: `pipeline.maxRounds`). Gate failures alone do not consume a round.
 - **sign-off** — a review stage's approval, bound to a specific commit — the pipeline's handoff commit for the session under review.
 - **integration** — the coordinator-owned merge → gate → land step; globally serialized. Lands one merge commit per ticket; the signed-off commit stays reachable as its second parent.
 - **coordinator** — the long-running process that watches the board and dispatches runs.
@@ -144,6 +144,11 @@ The generic rules with rationale and check questions live in [docs/coding-guidel
 - Booleans are positive predicates (`isReady`, `hasMerged`, `shouldRetry`) — never bare nouns, never negated names.
 - Collections plural, elements singular (`tickets` / `ticket`).
 - One name per concept — see the Glossary. Introducing a synonym is a defect.
+- Casing follows context: config schema keys are camelCase, while identifier
+  values shared with filenames, branches, and the event stream remain
+  kebab-case (for example, `code-review` and `commit-message`). Multiple casing
+  styles therefore coexist only across these distinct contexts, not within one
+  vocabulary.
 
 **Conduct**
 

@@ -340,16 +340,16 @@ describe("CLI surface", () => {
           "board",
           "gate",
           "integration",
-          "max_concurrent",
+          "maxConcurrent",
           "permissions",
           "pipeline",
           "stages",
-          "ticketsDir",
+          "ticketsDirectory",
         ].sort(),
       );
-      expect(config.integration.target_branch).toBe("main");
+      expect(config.integration.targetBranch).toBe("main");
       expect(config.permissions).toEqual({ mode: "auto" });
-      expect(config.pipeline.max_rounds).toBe(3);
+      expect(config.pipeline.maxRounds).toBe(3);
       // The scaffolded mix: a cross-provider review, everything else on Claude.
       expect(config.stages).toEqual({
         implementation: { harness: "claude", model: "claude-opus-4-8", effort: "high" },
@@ -514,7 +514,7 @@ describe("pipeline behavior", () => {
       // only location both providers' sandboxed permission modes let an agent
       // write. A state-directory path here is the regression that blocked
       // every auto-mode run: the sandbox rejects the write, the pipeline sees
-      // invalid-verdict, and the card dies at max_rounds.
+      // invalid-verdict, and the card dies at maxRounds.
       const prompts = (await fs.readFile(sandbox.argvLog, "utf8"))
         .split("\n")
         .filter((line) => line.trim() !== "")
@@ -543,7 +543,7 @@ describe("pipeline behavior", () => {
   );
 
   it(
-    "exhausts max_rounds on a persistent review failure and exits blocked",
+    "exhausts maxRounds on a persistent review failure and exits blocked",
     async () => {
       const sandbox = await makeSandbox();
       await initProject(sandbox);
@@ -591,7 +591,7 @@ describe("pipeline behavior", () => {
       const sandbox = await makeSandbox();
       await initProject(sandbox);
 
-      // Every round's code review fails (blocking the run at max_rounds) and
+      // Every round's code review fails (blocking the run at maxRounds) and
       // carries its own observation in the same verdict. The observation
       // channel's contract says every proposal reaches a human via the inbox,
       // so the reviewer's flag must land there despite the failing outcome —
@@ -714,12 +714,12 @@ describe("trust boundaries", () => {
         ["[]", "config root must be an object"],
         ['"hello"', "config root must be an object"],
         [
-          JSON.stringify({ pipeline: { max_rounds: "three" }, stages: STAGES }),
-          "max_rounds must be a positive integer",
+          JSON.stringify({ pipeline: { maxRounds: "three" }, stages: STAGES }),
+          "maxRounds must be a positive integer",
         ],
         [
-          JSON.stringify({ pipeline: { max_rounds: -1 }, stages: STAGES }),
-          "max_rounds must be a positive integer",
+          JSON.stringify({ pipeline: { maxRounds: -1 }, stages: STAGES }),
+          "maxRounds must be a positive integer",
         ],
         // `stages` is required, and the retired global key is a hard stop —
         // the breaking config change, pinned from outside the process.

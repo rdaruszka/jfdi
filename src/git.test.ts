@@ -62,7 +62,7 @@ describe("worktrees", () => {
   });
 
   /**
-   * The coordinator dispatches up to `max_concurrent` cards from one scan, so
+   * The coordinator dispatches up to `maxConcurrent` cards from one scan, so
    * several `createWorktree` calls on one repo start together. `git worktree
    * add` reads every entry already under `.git/worktrees/` while registering
    * its own, so a sibling still writing its entry made the whole command fail

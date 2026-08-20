@@ -61,7 +61,7 @@ blocking means blocked on every path, so the override has to be spelled out.
 
 Coordinator multi-mode: watches the board (file-watch with a 2-second polling
 fallback), dispatches cards from the begin column top-first up to
-`max_concurrent`, runs pipelines concurrently, owns the serialized integration
+`maxConcurrent`, runs pipelines concurrently, owns the serialized integration
 queue, and presents a live full-screen TUI. A begin-column card whose ticket is
 [blocked by another](board-and-tickets.md#blocked-by-gating) not yet done is
 skipped over — left in place, re-checked each scan, and dispatched once its

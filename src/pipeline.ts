@@ -584,7 +584,7 @@ function commonVars(
     TICKET_ID: ticket.id,
     SPEC: ticket.spec,
     BRANCH: worktree.branch,
-    TARGET_BRANCH: context.config.integration.target_branch,
+    TARGET_BRANCH: context.config.integration.targetBranch,
     GATE_COMMANDS: formatGateCommands(context.config.gate),
     VERDICT_PATH: verdictPath,
   };
@@ -619,7 +619,7 @@ function formatFeedbackSection(history: FeedbackItem[], mode: "default" | "ask")
 }
 
 /**
- * A `blocks`/`blocked-by` link naming a note that is not in ticketsDir is
+ * A `blocks`/`blocked-by` link naming a note that is not in ticketsDirectory is
  * reported, never silently dropped: the human wrote a link to a ticket the
  * tool cannot see (a typo, or a note not created yet), and the wikilink-scope
  * invariant means looking for it anywhere else is not an option.
@@ -783,7 +783,7 @@ export async function runQaStage(
   notePath: string,
   options: QaStageOptions = {},
 ): Promise<StageVerdictResult<ReviewVerdict>> {
-  const target = context.config.integration.target_branch;
+  const target = context.config.integration.targetBranch;
   const vars = {
     ...commonVars(context, ticket, worktree, agentVerdictPath(worktree.path, "qa")),
     NOTE_PATH: notePath,
@@ -902,7 +902,7 @@ async function runImplementationStage(
       RESUME_SECTION: formatResumeSection(
         resume,
         worktree.branch,
-        context.config.integration.target_branch,
+        context.config.integration.targetBranch,
       ),
       FEEDBACK_SECTION: formatFeedbackSection(history, ticket.mode),
     });
@@ -1057,7 +1057,7 @@ async function runCodeReviewStage(
   worktree: Worktree,
   input: CodeReviewStageInput,
 ): Promise<{ step: CodeReviewStep; sessionId: string | undefined }> {
-  const target = context.config.integration.target_branch;
+  const target = context.config.integration.targetBranch;
   const vars = {
     ...commonVars(context, ticket, worktree, agentVerdictPath(worktree.path, "code-review")),
     NOTE_PATH: input.notePath,
@@ -1116,7 +1116,7 @@ async function runCodeReviewStage(
     verdict: verdict?.verdict ?? (outcome.ok ? "invalid-verdict" : "session-failed"),
     ...stageUsageFields(context, ticket.id, "code-review", outcome.usage),
   });
-  const judgment = judgeCodeReview(result, input, context.config.pipeline.max_rounds);
+  const judgment = judgeCodeReview(result, input, context.config.pipeline.maxRounds);
   await recordStagePhase(
     input.notePath,
     judgment.handoff,
@@ -1329,7 +1329,7 @@ async function runImplementationGateIteration(
   previousSummary: string | undefined,
 ): Promise<ImplementationIterationResult> {
   const { roundDir, notePath, round, history, resume } = input;
-  const maxRounds = context.config.pipeline.max_rounds;
+  const maxRounds = context.config.pipeline.maxRounds;
   const sessionDir = cycleSessionDir(roundDir, fixSession);
   await ensureDir(sessionDir);
   const implementation = await runImplementationStage(context, ticket, worktree, {
@@ -1564,7 +1564,7 @@ async function runQaPhase(
   input: QaPhaseInput,
 ): Promise<QaPhaseResult> {
   const { notePath, round } = input;
-  const maxRounds = context.config.pipeline.max_rounds;
+  const maxRounds = context.config.pipeline.maxRounds;
   const qa = await runQaStage(context, ticket, worktree, input.roundDir, notePath, {
     gateSummary: input.gateSummary,
     previousSession: input.previousSession,
@@ -1782,9 +1782,9 @@ async function judgeQa(
 }
 
 function startedCommentBody(config: JfdiConfig, branch: string): string {
-  const maxRounds = config.pipeline.max_rounds;
+  const maxRounds = config.pipeline.maxRounds;
   const roundLabel = maxRounds === 1 ? "round" : "rounds";
-  const target = config.integration.target_branch;
+  const target = config.integration.targetBranch;
   const mergePlan =
     config.integration.mode === "auto"
       ? `will merge to \`${target}\``
@@ -1803,11 +1803,11 @@ export async function runPipeline(
   context: PipelineContext,
   ticket: Ticket,
 ): Promise<PipelineOutcome> {
-  const target = context.config.integration.target_branch;
+  const target = context.config.integration.targetBranch;
   await ensureJfdiGitignore(context.jfdiDir);
   const notePath = await ensureTicketNote(
     ticket,
-    path.join(context.repoRoot, context.config.ticketsDir),
+    path.join(context.repoRoot, context.config.ticketsDirectory),
   );
   const runDirs = await nextRunDir(context.stateDir, ticket.id);
 
@@ -1843,7 +1843,7 @@ export async function runPipeline(
   // A fresh tally per run, and the clock the ticket-level elapsed measures from.
   context.usage.start(ticket.id);
   const runStartedMs = nowMs(context);
-  const maxRounds = context.config.pipeline.max_rounds;
+  const maxRounds = context.config.pipeline.maxRounds;
   context.log.emit("dispatch", ticket.id, { title: ticket.cardText, branch: worktree.branch });
   await recordPhase(
     notePath,

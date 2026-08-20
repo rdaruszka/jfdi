@@ -20,8 +20,8 @@ describe("runGate", () => {
     const logPath = path.join(dir, "gate.log");
     const result = await runGate(
       [
-        { name: "one", cmd: "echo first" },
-        { name: "two", cmd: "echo second" },
+        { name: "one", command: "echo first" },
+        { name: "two", command: "echo second" },
       ],
       dir,
       logPath,
@@ -36,8 +36,8 @@ describe("runGate", () => {
   it("stops at the first failure", async () => {
     const result = await runGate(
       [
-        { name: "boom", cmd: "echo oops >&2; exit 3" },
-        { name: "never", cmd: "echo unreachable" },
+        { name: "boom", command: "echo oops >&2; exit 3" },
+        { name: "never", command: "echo unreachable" },
       ],
       dir,
       path.join(dir, "gate.log"),
@@ -51,7 +51,7 @@ describe("runGate", () => {
   it("runs in the given cwd", async () => {
     await fs.writeFile(path.join(dir, "marker.txt"), "here");
     const result = await runGate(
-      [{ name: "ls", cmd: "cat marker.txt" }],
+      [{ name: "ls", command: "cat marker.txt" }],
       dir,
       path.join(dir, "gate.log"),
     );
@@ -71,7 +71,8 @@ describe("runGate", () => {
       [
         {
           name: "large",
-          cmd: "printf HEAD_CAUSE; head -c 30000 /dev/zero | tr '\\0' x; printf TAIL_DETAIL; exit 1",
+          command:
+            "printf HEAD_CAUSE; head -c 30000 /dev/zero | tr '\\0' x; printf TAIL_DETAIL; exit 1",
         },
       ],
       dir,
@@ -91,7 +92,11 @@ describe("runGate", () => {
 describe("formatGateFailure", () => {
   it("names the failing step and includes output", async () => {
     const logPath = path.join(dir, "gate.log");
-    const result = await runGate([{ name: "lint", cmd: "echo bad style; exit 1" }], dir, logPath);
+    const result = await runGate(
+      [{ name: "lint", command: "echo bad style; exit 1" }],
+      dir,
+      logPath,
+    );
     const message = formatGateFailure(result);
     expect(message).toContain('failed at step "lint"');
     expect(message).toContain("bad style");
