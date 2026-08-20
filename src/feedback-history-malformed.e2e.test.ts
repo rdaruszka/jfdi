@@ -46,8 +46,8 @@ const argv = process.argv.slice(2);
 const dashP = argv.indexOf("-p");
 const prompt = (dashP === -1 ? argv[argv.length - 1] : argv[dashP + 1]) || "";
 process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "stub-thread" }) + "\\n");
-const promptDir = process.env.STUB_PROMPT_DIRECTORY;
-fs.mkdirSync(promptDir, { recursive: true });
+const promptDirectory = process.env.STUB_PROMPT_DIRECTORY;
+fs.mkdirSync(promptDirectory, { recursive: true });
 process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "stub" }] } }) + "\\n");
 const match = prompt.match(/(\\/\\S+\\.verdict\\.json)/);
 if (!match) {
@@ -58,8 +58,8 @@ if (!match) {
 const verdictPath = match[1];
 const stage = path.basename(verdictPath).replace(".verdict.json", "");
 let index = 0;
-while (fs.existsSync(path.join(promptDir, stage + "-" + index + ".txt"))) index += 1;
-fs.writeFileSync(path.join(promptDir, stage + "-" + index + ".txt"), prompt);
+while (fs.existsSync(path.join(promptDirectory, stage + "-" + index + ".txt"))) index += 1;
+fs.writeFileSync(path.join(promptDirectory, stage + "-" + index + ".txt"), prompt);
 let verdict;
 if (stage === "implementation") {
   fs.appendFileSync(path.join(process.cwd(), "feature.txt"), process.env.STUB_TAG + "-" + index + "\\n");

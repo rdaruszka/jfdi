@@ -53,8 +53,8 @@ const dashP = argv.indexOf("-p");
 const prompt = (dashP === -1 ? argv[argv.length - 1] : argv[dashP + 1]) || "";
 process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "stub-thread" }) + "\\n");
 process.on("exit", () => process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "done" } }) + "\\n"));
-const promptDir = process.env.STUB_PROMPT_DIRECTORY;
-fs.mkdirSync(promptDir, { recursive: true });
+const promptDirectory = process.env.STUB_PROMPT_DIRECTORY;
+fs.mkdirSync(promptDirectory, { recursive: true });
 process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "stub" }] } }) + "\\n");
 const HANG_MS = 20000;
 function sleepThenExit() {
@@ -71,8 +71,8 @@ if (!match) {
 const verdictPath = match[1];
 const stage = path.basename(verdictPath).replace(".verdict.json", "");
 let index = 0;
-while (fs.existsSync(path.join(promptDir, stage + "-" + index + ".txt"))) index += 1;
-fs.writeFileSync(path.join(promptDir, stage + "-" + index + ".txt"), prompt);
+while (fs.existsSync(path.join(promptDirectory, stage + "-" + index + ".txt"))) index += 1;
+fs.writeFileSync(path.join(promptDirectory, stage + "-" + index + ".txt"), prompt);
 let verdict;
 if (stage === "implementation") {
   const hangFrom = process.env.STUB_HANG_IMPL_FROM_INDEX;

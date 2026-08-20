@@ -53,8 +53,8 @@ const prompt = (dashP === -1 ? argv[argv.length - 1] : argv[dashP + 1]) || "";
 process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "stub-thread" }) + "\\n");
 process.on("exit", () => process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "done" } }) + "\\n"));
 process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "stub" }] } }) + "\\n");
-const promptDir = process.env.STUB_PROMPT_DIRECTORY;
-if (promptDir) fs.mkdirSync(promptDir, { recursive: true });
+const promptDirectory = process.env.STUB_PROMPT_DIRECTORY;
+if (promptDirectory) fs.mkdirSync(promptDirectory, { recursive: true });
 const match = prompt.match(/(\\/\\S+\\.verdict\\.json)/);
 if (!match) {
   // The scribe: no verdict file, its result text becomes the commit subject.
@@ -63,10 +63,10 @@ if (!match) {
 }
 const verdictPath = match[1];
 const stage = path.basename(verdictPath).replace(".verdict.json", "");
-if (promptDir) {
+if (promptDirectory) {
   let index = 0;
-  while (fs.existsSync(path.join(promptDir, stage + "-" + index + ".txt"))) index += 1;
-  fs.writeFileSync(path.join(promptDir, stage + "-" + index + ".txt"), prompt);
+  while (fs.existsSync(path.join(promptDirectory, stage + "-" + index + ".txt"))) index += 1;
+  fs.writeFileSync(path.join(promptDirectory, stage + "-" + index + ".txt"), prompt);
 }
 let verdict;
 if (stage === "implementation") {

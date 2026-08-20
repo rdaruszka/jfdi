@@ -88,14 +88,14 @@ if (match) {
     fs.writeFileSync(featureFile, rounds === 1 ? "built\\n" : "built v" + round + "\\n");
     verdict = { status: "done", summary: "implemented " + process.env.STUB_FILE };
   } else if (stage === "integration") {
-    const gitDir = capture(["rev-parse", "--absolute-git-dir"]);
+    const gitDirectory = capture(["rev-parse", "--absolute-git-dir"]);
     fs.appendFileSync(process.env.STUB_SESSION_LOG, JSON.stringify({
-      isMidMerge: fs.existsSync(gitDir + "/MERGE_HEAD"),
-      isMidRebase: fs.existsSync(gitDir + "/rebase-merge") || fs.existsSync(gitDir + "/rebase-apply"),
+      isMidMerge: fs.existsSync(gitDirectory + "/MERGE_HEAD"),
+      isMidRebase: fs.existsSync(gitDirectory + "/rebase-merge") || fs.existsSync(gitDirectory + "/rebase-apply"),
       conflicted: capture(["diff", "--name-only", "--diff-filter=U"]).split("\\n").filter(Boolean),
       head: capture(["rev-parse", "HEAD"]),
     }) + "\\n");
-    if (fs.existsSync(gitDir + "/MERGE_HEAD")) {
+    if (fs.existsSync(gitDirectory + "/MERGE_HEAD")) {
       fs.writeFileSync(process.cwd() + "/" + process.env.STUB_FILE, "reconciled\\n");
       run(["add", process.env.STUB_FILE]);
       run(["commit", "--no-edit"]);

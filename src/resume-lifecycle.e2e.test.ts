@@ -70,7 +70,7 @@ const resultText = prompt.includes("Write the commit message") && scribedSummary
   : "done";
 process.on("exit", () => process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: resultText } }) + "\\n"));
 const match = prompt.match(/(\\/\\S+\\.verdict\\.json)/);
-const promptDir = process.env.STUB_PROMPT_DIRECTORY;
+const promptDirectory = process.env.STUB_PROMPT_DIRECTORY;
 const RESET_SECONDS_AHEAD = 3600;
 // Provider-down modes: the session dies the way a real one does — a result
 // line the harness classifies, no verdict file, nonzero exit.
@@ -79,8 +79,8 @@ function die(result) {
   process.exit(1);
 }
 // Every spawn announces itself, so a test can prove the tool stopped spawning.
-fs.mkdirSync(promptDir, { recursive: true });
-fs.appendFileSync(path.join(promptDir, "spawns.log"), "spawn\\n");
+fs.mkdirSync(promptDirectory, { recursive: true });
+fs.appendFileSync(path.join(promptDirectory, "spawns.log"), "spawn\\n");
 if (process.env.STUB_MODE === "usage-limit") {
   die("Claude AI usage limit reached|" + (Math.floor(Date.now() / 1000) + RESET_SECONDS_AHEAD));
 }
@@ -88,7 +88,7 @@ if (process.env.STUB_MODE === "needs-human") {
   die("API Error: Invalid API key · Please run /login");
 }
 if (process.env.STUB_MODE === "outage-once") {
-  const marker = path.join(promptDir, "outage-used");
+  const marker = path.join(promptDirectory, "outage-used");
   if (!fs.existsSync(marker)) {
     fs.writeFileSync(marker, "1");
     die("API Error: Connection error.");
@@ -99,13 +99,13 @@ if (match) {
   const verdictPath = match[1];
   const stage = path.basename(verdictPath).replace(".verdict.json", "");
   let index = 0;
-  while (fs.existsSync(path.join(promptDir, stage + "-" + index + ".txt"))) index += 1;
-  fs.writeFileSync(path.join(promptDir, stage + "-" + index + ".txt"), prompt);
+  while (fs.existsSync(path.join(promptDirectory, stage + "-" + index + ".txt"))) index += 1;
+  fs.writeFileSync(path.join(promptDirectory, stage + "-" + index + ".txt"), prompt);
   let verdict;
   if (stage === "implementation") {
     if (index === 0) {
       const status = execFileSync("git", ["status", "--porcelain"], { cwd: process.cwd() }).toString();
-      fs.writeFileSync(path.join(promptDir, "tree-at-first-session.txt"), status);
+      fs.writeFileSync(path.join(promptDirectory, "tree-at-first-session.txt"), status);
     }
     // Unique content per attempt, so every round has something real to commit.
     fs.appendFileSync(path.join(process.cwd(), "feature.txt"), process.env.STUB_TAG + "-" + index + "\\n");
@@ -181,7 +181,7 @@ interface StubOptions {
   stubMode?: string;
   /** Distinguishes one dispatch's commits from another's in the branch log. */
   tag?: string;
-  /** Subdirectory of promptDir this invocation records into. */
+  /** Subdirectory of promptDirectory this invocation records into. */
   promptSubdir?: string;
 }
 
