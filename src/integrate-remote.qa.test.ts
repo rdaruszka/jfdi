@@ -108,10 +108,10 @@ describe("remote integration — QA regression", () => {
     const remote = await addOrigin();
     await git(fixture.repo, "remote", "rename", "origin", "central");
     const context = fixture.context(passingHandler("upstream-push.txt"));
-    context.config.integration.remote.push_after = true;
+    context.config.integration.remote.pushAfter = true;
     const events: JfdiEvent[] = [];
     context.log.on((event) => events.push(event));
-    const ticket = await resolveTicket("Push via upstream", fixture.ticketsDir);
+    const ticket = await resolveTicket("Push via upstream", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
@@ -149,8 +149,8 @@ describe("remote integration — QA regression", () => {
     await git(publisher, "push", "origin", "main");
 
     const context = fixture.context(passingHandler("scoped-fetch.txt"));
-    context.config.integration.remote.fetch_before = true;
-    const ticket = await resolveTicket("Scoped fetch", fixture.ticketsDir);
+    context.config.integration.remote.fetchBefore = true;
+    const ticket = await resolveTicket("Scoped fetch", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
@@ -183,8 +183,8 @@ describe("remote integration — QA regression", () => {
     expect(await isAncestor(fixture.repo, remoteHead, "main")).toBe(true);
 
     const context = fixture.context(passingHandler("ahead-ticket.txt"));
-    context.config.integration.remote.fetch_before = true;
-    const ticket = await resolveTicket("Ahead target", fixture.ticketsDir);
+    context.config.integration.remote.fetchBefore = true;
+    const ticket = await resolveTicket("Ahead target", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
@@ -196,7 +196,7 @@ describe("remote integration — QA regression", () => {
   });
 
   /**
-   * With push_after ALSO on, each landing is pushed, so remote and local stay
+   * With pushAfter ALSO on, each landing is pushed, so remote and local stay
    * in lockstep across several tickets — the both-flags config the ticket's
    * example shows stays green with no drift in either direction.
    */
@@ -204,9 +204,9 @@ describe("remote integration — QA regression", () => {
     const remote = await addOrigin();
     for (const file of ["one.txt", "two.txt", "three.txt"]) {
       const context = fixture.context(passingHandler(file));
-      context.config.integration.remote.fetch_before = true;
-      context.config.integration.remote.push_after = true;
-      const ticket = await resolveTicket(`Ship ${file}`, fixture.ticketsDir);
+      context.config.integration.remote.fetchBefore = true;
+      context.config.integration.remote.pushAfter = true;
+      const ticket = await resolveTicket(`Ship ${file}`, fixture.ticketsDirectory);
       const outcome = await runPipeline(context, ticket);
       if (outcome.status !== "passed") throw new Error(`pipeline should pass for ${file}`);
       expect(await integrateTicket(context, ticket, outcome.worktree)).toEqual({
@@ -233,10 +233,10 @@ describe("remote integration — QA regression", () => {
     await fs.writeFile(hook, "#!/bin/sh\necho 'remote refuses this push' >&2\nexit 1\n");
     await fs.chmod(hook, 0o755);
     const context = fixture.context(passingHandler("blocked-push.txt"));
-    context.config.integration.remote.push_after = true;
+    context.config.integration.remote.pushAfter = true;
     const events: JfdiEvent[] = [];
     context.log.on((event) => events.push(event));
-    const ticket = await resolveTicket("Rejected push recovery", fixture.ticketsDir);
+    const ticket = await resolveTicket("Rejected push recovery", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
     const branch = outcome.worktree.branch;

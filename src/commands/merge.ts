@@ -40,10 +40,10 @@ export async function mergeCommand(ticketId: string, options: MergeOptions = {})
   const context = await buildContext(options.cwd, options.stateDir);
   const detach = attachInlinePrinter(context.log);
   try {
-    const ticketsDir = path.join(context.repoRoot, context.config.ticketsDir);
-    const notePath = path.join(ticketsDir, `${ticketId}.md`);
+    const ticketsDirectory = path.join(context.repoRoot, context.config.ticketsDirectory);
+    const notePath = path.join(ticketsDirectory, `${ticketId}.md`);
     const ticket = (await fileExists(notePath))
-      ? await resolveTicket(`[[${ticketId}]]`, ticketsDir)
+      ? await resolveTicket(`[[${ticketId}]]`, ticketsDirectory)
       : {
           id: ticketId,
           cardText: ticketId,
@@ -54,7 +54,7 @@ export async function mergeCommand(ticketId: string, options: MergeOptions = {})
         };
     const savedReport = await loadReport(context.stateDir, ticketId);
     if (savedReport && isCorruptReport(savedReport)) {
-      const ensuredNotePath = await ensureTicketNote(ticket, ticketsDir);
+      const ensuredNotePath = await ensureTicketNote(ticket, ticketsDirectory);
       const reason = await recordCorruptReport(context, ticketId, ensuredNotePath, savedReport);
       await moveTicketCard(context, ticketId, context.config.board.columns.blocked, false);
       console.error(`Integration blocked: ${reason}`);
@@ -79,7 +79,7 @@ export async function mergeCommand(ticketId: string, options: MergeOptions = {})
     console.log(
       outcome.status === "already-merged"
         ? "Branch was already contained in the target — closed without merging."
-        : `Merged into ${context.config.integration.target_branch}.`,
+        : `Merged into ${context.config.integration.targetBranch}.`,
     );
     return 0;
   } finally {

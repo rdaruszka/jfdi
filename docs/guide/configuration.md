@@ -22,20 +22,20 @@ init fills in for your repo):
       "inbox": "Inbox"
     }
   },
-  "ticketsDir": ".jfdi/tickets",
+  "ticketsDirectory": ".jfdi/tickets",
   "gate": [
-    { "name": "build", "cmd": "pnpm build" },
-    { "name": "test",  "cmd": "pnpm test" },
-    { "name": "lint",  "cmd": "pnpm lint" }
+    { "name": "build", "command": "pnpm build" },
+    { "name": "test",  "command": "pnpm test" },
+    { "name": "lint",  "command": "pnpm lint" }
   ],
-  "pipeline": { "max_rounds": 3 },
+  "pipeline": { "maxRounds": 3 },
   "integration": {
-    "target_branch": "main",
+    "targetBranch": "main",
     "mode": "on-approval",
-    "remote": { "fetch_before": false, "push_after": false }
+    "remote": { "fetchBefore": false, "pushAfter": false }
   },
   "permissions": { "mode": "auto" },
-  "max_concurrent": 2,
+  "maxConcurrent": 2,
   "stages": {
     "implementation": { "harness": "claude", "model": "claude-opus-4-8", "effort": "high" },
     "code-review":    { "harness": "codex",  "model": "gpt-5.6-sol",   "effort": "high" },
@@ -65,7 +65,7 @@ rename in both places or neither. See
 [Board & Tickets](board-and-tickets.md#columns-and-roles) for what each role
 does.
 
-### `ticketsDir`
+### `ticketsDirectory`
 
 | Type | Default |
 |---|---|
@@ -78,7 +78,7 @@ symlinked into a vault.
 
 | Type | Default |
 |---|---|
-| array of `{ "name": string, "cmd": string }` | `[]` |
+| array of `{ "name": string, "command": string }` | `[]` |
 
 The **mechanical gate**: an ordered list of shell commands that must all exit
 zero. Commands run sequentially via `/bin/sh -c` in the ticket's worktree,
@@ -98,7 +98,7 @@ the gate entry invoking the script (for example,
 
 | Field | Type | Default | Constraint |
 |---|---|---|---|
-| `pipeline.max_rounds` | integer | `3` | ≥ 1 |
+| `pipeline.maxRounds` | integer | `3` | ≥ 1 |
 
 The feedback-round cap per run. On exhaustion the card moves to Blocked with the
 round history in the ticket note. Gate failures after Implementation do not
@@ -109,10 +109,10 @@ per round; rounds count trips through the review stages.
 
 | Field | Type | Default | Values |
 |---|---|---|---|
-| `integration.target_branch` | string | `main` | Any local branch. Never assumed — set it if your default branch differs. |
+| `integration.targetBranch` | string | `main` | Any local branch. Never assumed — set it if your default branch differs. |
 | `integration.mode` | string | `on-approval` | `"auto"` or `"on-approval"` |
-| `integration.remote.fetch_before` | boolean | `false` | Fetch the target branch before merging and fast-forward a behind local target. |
-| `integration.remote.push_after` | boolean | `false` | Push the target branch after its landing merge commit is created locally. |
+| `integration.remote.fetchBefore` | boolean | `false` | Fetch the target branch before merging and fast-forward a behind local target. |
+| `integration.remote.pushAfter` | boolean | `false` | Push the target branch after its landing merge commit is created locally. |
 
 `auto` merges a passing pipeline immediately; `on-approval` parks it in Ready to
 Merge for your sign-off. The optional `remote` block is disabled by default. If
@@ -153,7 +153,7 @@ autonomous headless session that can still run builds, tests, and git;
 interactive `jfdi init` keeps `auto`, where the human at the terminal answers
 the classifier.
 
-### `max_concurrent`
+### `maxConcurrent`
 
 | Type | Default | Constraint |
 |---|---|---|

@@ -85,11 +85,11 @@ describe("scaffoldJfdi", () => {
     await scaffoldJfdi(root, jfdiDir);
     await fs.writeFile(path.join(jfdiDir, "sandbox.md"), "my custom contract");
     await fs.writeFile(path.join(jfdiDir, "ticket-format.md"), "my local ticket format");
-    await fs.writeFile(path.join(jfdiDir, "config.json"), '{"max_concurrent": 9}');
+    await fs.writeFile(path.join(jfdiDir, "config.json"), '{"maxConcurrent": 9}');
     await scaffoldJfdi(root, jfdiDir);
     expect(await fs.readFile(path.join(jfdiDir, "sandbox.md"), "utf8")).toBe("my custom contract");
     expect(await fs.readFile(path.join(jfdiDir, "config.json"), "utf8")).toBe(
-      '{"max_concurrent": 9}',
+      '{"maxConcurrent": 9}',
     );
     expect(await fs.readFile(path.join(jfdiDir, "ticket-format.md"), "utf8")).toBe(
       "my local ticket format",

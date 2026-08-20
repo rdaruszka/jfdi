@@ -35,7 +35,7 @@ export async function startCommand(): Promise<number> {
     createElement(App, {
       log: context.log,
       boardName: path.basename(context.config.board.path),
-      targetBranch: context.config.integration.target_branch,
+      targetBranch: context.config.integration.targetBranch,
       onQuit: shutdown,
       onRetry: () => context.pause.retryNow(),
     }),

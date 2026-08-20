@@ -15,7 +15,7 @@ export type EventType =
   | "gate_result"
   | "round_start"
   | "escalation"
-  /** A ticket note's `blocks`/`blocked-by` link names no note in ticketsDir. */
+  /** A ticket note's `blocks`/`blocked-by` link names no note in ticketsDirectory. */
   | "unresolved_link"
   /** A begin-column card is held back: its ticket's blocked-by tickets are not yet done. */
   | "blocked_by"

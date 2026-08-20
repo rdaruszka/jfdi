@@ -54,7 +54,7 @@ interface Sandbox {
   jfdiHome: string;
   binDir: string;
   captureDir: string;
-  ticketsDir: string;
+  ticketsDirectory: string;
   boardPath: string;
 }
 
@@ -89,7 +89,7 @@ async function makeSandbox(): Promise<Sandbox> {
     jfdiHome,
     binDir,
     captureDir,
-    ticketsDir: path.join(project, ".jfdi", "tickets"),
+    ticketsDirectory: path.join(project, ".jfdi", "tickets"),
     boardPath: path.join(project, ".jfdi", "board.md"),
   };
   const init = await execFileAsync(process.execPath, [cliPath, "init", "--bare"], {
@@ -116,7 +116,7 @@ async function writeNote(sandbox: Sandbox, id: string, blockedBy: string[]): Pro
       ? ""
       : `blocked-by:\n${blockedBy.map((target) => `  - "[[${target}]]"`).join("\n")}\n`;
   await fs.writeFile(
-    path.join(sandbox.ticketsDir, `${id}.md`),
+    path.join(sandbox.ticketsDirectory, `${id}.md`),
     `---\n${frontmatter}---\n\n# ${id}\n\nSome work to do.\n`,
   );
 }
@@ -140,7 +140,7 @@ async function columnIds(sandbox: Sandbox, column: string): Promise<string[]> {
 
 /** The bodies of a ticket note's `## Comments` entries, in order. */
 async function noteComments(sandbox: Sandbox, id: string): Promise<string[]> {
-  const content = await fs.readFile(path.join(sandbox.ticketsDir, `${id}.md`), "utf8");
+  const content = await fs.readFile(path.join(sandbox.ticketsDirectory, `${id}.md`), "utf8");
   return parseTicketNote(content).comments.map((comment) => comment.body);
 }
 
@@ -305,7 +305,7 @@ describe("jfdi start — blocked-by cycle refusal (built CLI)", () => {
       // place, leaving the note's existing comment intact. a stays in Blocked
       // (the tool never drags cards out of Blocked), but it is no longer a cycle
       // member — the loop is not re-refused, so no fresh comment lands on either.
-      const aNotePath = path.join(sandbox.ticketsDir, "a.md");
+      const aNotePath = path.join(sandbox.ticketsDirectory, "a.md");
       const aNote = await fs.readFile(aNotePath, "utf8");
       await fs.writeFile(aNotePath, aNote.replace(/blocked-by:\n {2}- "\[\[b\]\]"\n/, ""));
       await delay(RESCAN_WINDOW_MS);

@@ -60,7 +60,7 @@ const DEFAULT_POLL_INTERVAL_MS = 2_000;
 
 /**
  * Multi-ticket mode: watches the board, dispatches cards from the begin column
- * (top first, up to max_concurrent), owns the serialized integration queue,
+ * (top first, up to maxConcurrent), owns the serialized integration queue,
  * and moves cards between columns as tickets progress.
  */
 export class Coordinator {
@@ -246,9 +246,12 @@ export class Coordinator {
       if (this.active.has(id)) continue;
       const report = await loadReport(this.context.stateDir, id);
       if (report && isCorruptReport(report)) {
-        const ticketsDir = path.join(this.context.repoRoot, this.context.config.ticketsDir);
-        const ticket = await resolveTicket(card.text, ticketsDir);
-        const notePath = await ensureTicketNote(ticket, ticketsDir);
+        const ticketsDirectory = path.join(
+          this.context.repoRoot,
+          this.context.config.ticketsDirectory,
+        );
+        const ticket = await resolveTicket(card.text, ticketsDirectory);
+        const notePath = await ensureTicketNote(ticket, ticketsDirectory);
         await recordCorruptReport(this.context, id, notePath, report);
         await moveCardSafe(
           this.context,
@@ -321,7 +324,7 @@ export class Coordinator {
     return isAncestor(
       this.context.repoRoot,
       commitish,
-      this.context.config.integration.target_branch,
+      this.context.config.integration.targetBranch,
     );
   }
 
@@ -357,7 +360,7 @@ export class Coordinator {
   }
 
   /**
-   * Dispatch, top first, respecting max_concurrent. In-progress cards go
+   * Dispatch, top first, respecting maxConcurrent. In-progress cards go
    * first: a card in that column with nothing driving it is work already part
    * done — a coordinator died, or one was stopped mid-run — and continuing it
    * is what the resume machinery is for. Begin-column cards follow.
@@ -372,7 +375,7 @@ export class Coordinator {
       isAlreadyInProgress: false,
     }));
     for (const { card, isAlreadyInProgress } of [...stranded, ...ready]) {
-      if (this.active.size >= this.context.config.max_concurrent) break;
+      if (this.active.size >= this.context.config.maxConcurrent) break;
       const id = ticketIdFromCard(card.text);
       if (this.active.has(id)) continue;
       const job = this.dispatch(card, id, isAlreadyInProgress).finally(() => {
@@ -393,7 +396,7 @@ export class Coordinator {
    */
   private async dispatchableBeginCards(board: Board): Promise<Card[]> {
     const columns = this.context.config.board.columns;
-    const ticketsDir = path.join(this.context.repoRoot, this.context.config.ticketsDir);
+    const ticketsDirectory = path.join(this.context.repoRoot, this.context.config.ticketsDirectory);
     // One shared policy for the whole gate: `unresolvedBlockers` deduplicates
     // links and computes the missing set, so dispatch, the event payload, and
     // the cycle nodes all read the same answer as `jfdi run`.
@@ -409,7 +412,7 @@ export class Coordinator {
     ];
     const nodes: BlockingCardNode[] = [];
     for (const { card, column } of candidates) {
-      const ticket = await resolveTicket(card.text, ticketsDir);
+      const ticket = await resolveTicket(card.text, ticketsDirectory);
       nodes.push({
         card,
         id: ticketIdFromCard(card.text),
@@ -419,7 +422,11 @@ export class Coordinator {
       });
     }
     const beginNodes = nodes.filter((node) => node.column === columns.begin);
-    await this.reportBlockedByCycles(nodes, new Set(beginNodes.map((node) => node.id)), ticketsDir);
+    await this.reportBlockedByCycles(
+      nodes,
+      new Set(beginNodes.map((node) => node.id)),
+      ticketsDirectory,
+    );
 
     const dispatchable: Card[] = [];
     const blockedNow = new Set<string>();
@@ -457,7 +464,7 @@ export class Coordinator {
   private async reportBlockedByCycles(
     nodes: BlockingCardNode[],
     beginIds: Set<string>,
-    ticketsDir: string,
+    ticketsDirectory: string,
   ): Promise<void> {
     const nodesById = new Map(nodes.map((node) => [node.id, node]));
     const live = new Set<string>();
@@ -475,7 +482,7 @@ export class Coordinator {
         cycle,
         blockedByLoop(cycle, blockingNodes),
         nodesById,
-        ticketsDir,
+        ticketsDirectory,
         isNewEpisode,
       );
     }
@@ -488,7 +495,7 @@ export class Coordinator {
     cycle: string[],
     loop: string[],
     nodesById: Map<string, BlockingCardNode>,
-    ticketsDir: string,
+    ticketsDirectory: string,
     isNewEpisode: boolean,
   ): Promise<void> {
     if (isNewEpisode)
@@ -505,7 +512,7 @@ export class Coordinator {
       if (shouldBlock)
         await moveCardSafe(this.context, node.card, node.column, blockedColumn, false);
       if (isNewEpisode || shouldBlock) {
-        const notePath = await ensureTicketNote(node.ticket, ticketsDir);
+        const notePath = await ensureTicketNote(node.ticket, ticketsDirectory);
         await recordTransition(notePath, "coordinator", 0, comment);
       }
     }
@@ -530,11 +537,14 @@ export class Coordinator {
   private async dispatch(card: Card, id: string, isAlreadyInProgress: boolean): Promise<void> {
     const columns = this.context.config.board.columns;
     try {
-      const ticketsDir = path.join(this.context.repoRoot, this.context.config.ticketsDir);
-      const ticket = await resolveTicket(card.text, ticketsDir);
+      const ticketsDirectory = path.join(
+        this.context.repoRoot,
+        this.context.config.ticketsDirectory,
+      );
+      const ticket = await resolveTicket(card.text, ticketsDirectory);
       const savedReport = await loadReport(this.context.stateDir, id);
       if (savedReport && isCorruptReport(savedReport)) {
-        const notePath = await ensureTicketNote(ticket, ticketsDir);
+        const notePath = await ensureTicketNote(ticket, ticketsDirectory);
         await recordCorruptReport(this.context, id, notePath, savedReport);
         const fromColumn = isAlreadyInProgress ? columns.inProgress : columns.begin;
         await moveCardSafe(this.context, card, fromColumn, columns.blocked, false);

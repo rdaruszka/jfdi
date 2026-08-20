@@ -222,7 +222,7 @@ async function runCli(sandbox: Sandbox, args: string[], stub: StubOptions): Prom
 }
 
 /** Scaffold `.jfdi/`, then point integration at the non-main target. */
-async function scaffold(sandbox: Sandbox, gate: Array<{ name: string; cmd: string }> = []) {
+async function scaffold(sandbox: Sandbox, gate: Array<{ name: string; command: string }> = []) {
   const result = await runCli(sandbox, ["init", "--bare"], { file: "unused.txt" });
   expect(result.code, result.output).toBe(0);
   await configure(sandbox, gate);
@@ -230,14 +230,14 @@ async function scaffold(sandbox: Sandbox, gate: Array<{ name: string; cmd: strin
 
 async function configure(
   sandbox: Sandbox,
-  gate: Array<{ name: string; cmd: string }>,
+  gate: Array<{ name: string; command: string }>,
 ): Promise<void> {
   const configPath = path.join(sandbox.project, ".jfdi", "config.json");
   const config = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
   config.integration = {
-    target_branch: TARGET_BRANCH,
+    targetBranch: TARGET_BRANCH,
     mode: "on-approval",
-    remote: { fetch_before: false, push_after: false },
+    remote: { fetchBefore: false, pushAfter: false },
   };
   config.gate = gate;
   await fs.writeFile(configPath, JSON.stringify(config, null, 2));
@@ -387,7 +387,7 @@ describe("the shape integration leaves on the target branch", () => {
       await git(sandbox.project, "commit", "-m", "collide on the target");
       const targetHead = await git(sandbox.project, "rev-parse", TARGET_BRANCH);
       // From here the gate records the working tree it actually ran against.
-      await configure(sandbox, [{ name: "record-worktree", cmd: `ls -1 > ${listingFile}` }]);
+      await configure(sandbox, [{ name: "record-worktree", command: `ls -1 > ${listingFile}` }]);
 
       const merge = await runCli(sandbox, ["merge", ticketId], {
         file: "gamma.txt",

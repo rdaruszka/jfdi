@@ -205,7 +205,7 @@ async function runRemoteOperation(
 
 /**
  * Fetch and, only when strictly behind, fast-forward the local target. A
- * target strictly ahead of the fetched ref needs no sync — push_after, when
+ * target strictly ahead of the fetched ref needs no sync — pushAfter, when
  * enabled, advances the remote. Only true divergence (each ref holds commits
  * the other lacks) blocks.
  */
@@ -286,9 +286,9 @@ async function prepareRemoteIntegration(
 ): Promise<RemotePreparation> {
   const narration = new IntegrationNarration(context, ticket);
   const remoteConfig = context.config.integration.remote;
-  const shouldUseRemote = remoteConfig.fetch_before || remoteConfig.push_after;
+  const shouldUseRemote = remoteConfig.fetchBefore || remoteConfig.pushAfter;
   const remote = shouldUseRemote ? await resolveIntegrationRemote(context.repoRoot, target) : null;
-  if (!remoteConfig.fetch_before || !remote) return { status: "ready", remote, narration };
+  if (!remoteConfig.fetchBefore || !remote) return { status: "ready", remote, narration };
   const failure = await fetchTarget(context, remote, target, narration);
   if (failure) return { status: "failed", reason: failure.reason, narration };
   return { status: "ready", remote, narration };
@@ -330,7 +330,7 @@ async function runIntegrationAgent(
     TICKET_ID: ticket.id,
     SPEC: ticket.spec,
     BRANCH: worktree.branch,
-    TARGET_BRANCH: context.config.integration.target_branch,
+    TARGET_BRANCH: context.config.integration.targetBranch,
     GATE_COMMANDS: formatGateCommands(context.config.gate),
     VERDICT_PATH: agentVerdictPath(worktree.path, stage),
   });
@@ -632,11 +632,11 @@ export async function integrateTicket(
   ticket: Ticket,
   worktree: Worktree,
 ): Promise<IntegrateOutcome> {
-  const target = context.config.integration.target_branch;
+  const target = context.config.integration.targetBranch;
   const runDir = path.join(runsDir(context.stateDir, ticket.id), "integration");
   const notePath = await ensureTicketNote(
     ticket,
-    path.join(context.repoRoot, context.config.ticketsDir),
+    path.join(context.repoRoot, context.config.ticketsDirectory),
   );
   const savedReport = await loadReport(context.stateDir, ticket.id);
   if (savedReport && isCorruptReport(savedReport)) {
@@ -692,7 +692,7 @@ export async function integrateTicket(
     return blocked(context, ticket, notePath, landing.reason, integrationNarration.render());
   }
   if (landing.leftoverNote) leftoverNote = landing.leftoverNote;
-  if (context.config.integration.remote.push_after && remote) {
+  if (context.config.integration.remote.pushAfter && remote) {
     const pushFailure = await pushTarget(context, remote, target, integrationNarration);
     if (pushFailure)
       return blocked(context, ticket, notePath, pushFailure.reason, integrationNarration.render());

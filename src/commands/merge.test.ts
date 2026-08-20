@@ -99,7 +99,7 @@ describe("mergeCommand board bookkeeping", () => {
     );
     expect(await fs.readFile(reportPath, "utf8")).toBe(corruptContent);
     expect(cardsIn(await readColumns(), "Blocked")).toEqual([CARD]);
-    const note = await fs.readFile(path.join(fixture.ticketsDir, `${TICKET_ID}.md`), "utf8");
+    const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${TICKET_ID}.md`), "utf8");
     expect(note).toContain(reportPath);
     expect(note).toContain("fix or restore");
     expect(note).toContain("delete the file");
@@ -132,7 +132,7 @@ describe("mergeCommand board bookkeeping", () => {
     await fs.writeFile(
       path.join(fixture.jfdiDir, "config.json"),
       JSON.stringify({
-        gate: [{ name: "check", cmd: "exit 1" }],
+        gate: [{ name: "check", command: "exit 1" }],
         stages: defaultConfig().stages,
       }),
     );

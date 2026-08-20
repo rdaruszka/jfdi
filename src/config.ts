@@ -15,7 +15,7 @@ export interface ColumnMap {
 
 export interface GateCommand {
   name: string;
-  cmd: string;
+  command: string;
 }
 
 export type IntegrationMode = "auto" | "on-approval";
@@ -23,8 +23,8 @@ export type PermissionMode = "auto" | "bypass";
 export type { HarnessName, SessionKind };
 
 export interface IntegrationRemoteConfig {
-  fetch_before: boolean;
-  push_after: boolean;
+  fetchBefore: boolean;
+  pushAfter: boolean;
 }
 
 /**
@@ -41,16 +41,16 @@ export interface SessionConfig {
 
 export interface JfdiConfig {
   board: { path: string; columns: ColumnMap };
-  ticketsDir: string;
+  ticketsDirectory: string;
   gate: GateCommand[];
-  pipeline: { max_rounds: number };
+  pipeline: { maxRounds: number };
   integration: {
-    target_branch: string;
+    targetBranch: string;
     mode: IntegrationMode;
     remote: IntegrationRemoteConfig;
   };
   permissions: { mode: PermissionMode };
-  max_concurrent: number;
+  maxConcurrent: number;
   /** Required, one entry per stage plus the scribe — there is no global harness. */
   stages: Record<SessionKind, SessionConfig>;
 }
@@ -70,16 +70,16 @@ export function defaultConfig(): JfdiConfig {
         inbox: "Inbox",
       },
     },
-    ticketsDir: `${JFDI_DIR}/tickets`,
+    ticketsDirectory: `${JFDI_DIR}/tickets`,
     gate: [],
-    pipeline: { max_rounds: 3 },
+    pipeline: { maxRounds: 3 },
     integration: {
-      target_branch: "main",
+      targetBranch: "main",
       mode: "on-approval",
-      remote: { fetch_before: false, push_after: false },
+      remote: { fetchBefore: false, pushAfter: false },
     },
     permissions: { mode: "auto" },
-    max_concurrent: 2,
+    maxConcurrent: 2,
     stages: {
       implementation: { harness: "claude", model: "claude-opus-4-8", effort: "high" },
       // Deliberately a different provider from implementation: a reviewer that
@@ -153,6 +153,26 @@ function booleanOrDefault(value: unknown, fallback: boolean, where: string): boo
   return value;
 }
 
+/** Read a canonical key or its silent legacy alias, rejecting only ambiguity. */
+function aliasedValue(
+  entry: Record<string, unknown>,
+  canonicalKey: string,
+  legacyKey: string,
+  where: string,
+): unknown {
+  const canonicalValue = entry[canonicalKey];
+  const legacyValue = entry[legacyKey];
+  if (
+    canonicalValue !== undefined &&
+    legacyValue !== undefined &&
+    !Object.is(canonicalValue, legacyValue)
+  )
+    throw new ConfigError(
+      `${where} has conflicting "${canonicalKey}" and legacy "${legacyKey}" values: ${JSON.stringify(canonicalValue)} and ${JSON.stringify(legacyValue)}`,
+    );
+  return canonicalValue !== undefined ? canonicalValue : legacyValue;
+}
+
 /** Parse the target, integration mode, and optional remote-operation flags. */
 function parseIntegrationConfig(
   raw: unknown,
@@ -166,22 +186,22 @@ function parseIntegrationConfig(
   if (mode !== "auto" && mode !== "on-approval")
     throw new ConfigError(`integration.mode must be "auto" or "on-approval", got "${mode}"`);
   return {
-    target_branch: stringOrDefault(
-      integration.target_branch,
-      defaults.target_branch,
-      "integration.target_branch",
+    targetBranch: stringOrDefault(
+      aliasedValue(integration, "targetBranch", "target_branch", "integration"),
+      defaults.targetBranch,
+      "integration.targetBranch",
     ),
     mode,
     remote: {
-      fetch_before: booleanOrDefault(
-        remote.fetch_before,
-        defaults.remote.fetch_before,
-        "integration.remote.fetch_before",
+      fetchBefore: booleanOrDefault(
+        aliasedValue(remote, "fetchBefore", "fetch_before", "integration.remote"),
+        defaults.remote.fetchBefore,
+        "integration.remote.fetchBefore",
       ),
-      push_after: booleanOrDefault(
-        remote.push_after,
-        defaults.remote.push_after,
-        "integration.remote.push_after",
+      pushAfter: booleanOrDefault(
+        aliasedValue(remote, "pushAfter", "push_after", "integration.remote"),
+        defaults.remote.pushAfter,
+        "integration.remote.pushAfter",
       ),
     },
   };
@@ -283,7 +303,10 @@ export function parseConfig(raw: unknown): JfdiConfig {
       if (!isRecord(rawGateCommand)) throw new ConfigError(`gate[${i}] must be an object`);
       return {
         name: requiredString(rawGateCommand.name, `gate[${i}].name`),
-        cmd: requiredString(rawGateCommand.cmd, `gate[${i}].cmd`),
+        command: requiredString(
+          aliasedValue(rawGateCommand, "command", "cmd", `gate[${i}]`),
+          `gate[${i}].command`,
+        ),
       };
     });
   }
@@ -300,18 +323,26 @@ export function parseConfig(raw: unknown): JfdiConfig {
 
   return {
     board: { path: stringOrDefault(board.path, defaults.board.path, "board.path"), columns },
-    ticketsDir: stringOrDefault(raw.ticketsDir, defaults.ticketsDir, "ticketsDir"),
+    ticketsDirectory: stringOrDefault(
+      aliasedValue(raw, "ticketsDirectory", "ticketsDir", "config"),
+      defaults.ticketsDirectory,
+      "ticketsDirectory",
+    ),
     gate,
     pipeline: {
-      max_rounds: positiveInteger(
-        pipeline.max_rounds,
-        defaults.pipeline.max_rounds,
-        "pipeline.max_rounds",
+      maxRounds: positiveInteger(
+        aliasedValue(pipeline, "maxRounds", "max_rounds", "pipeline"),
+        defaults.pipeline.maxRounds,
+        "pipeline.maxRounds",
       ),
     },
     integration: parseIntegrationConfig(raw.integration, defaults.integration),
     permissions: { mode: permissionMode },
-    max_concurrent: positiveInteger(raw.max_concurrent, defaults.max_concurrent, "max_concurrent"),
+    maxConcurrent: positiveInteger(
+      aliasedValue(raw, "maxConcurrent", "max_concurrent", "config"),
+      defaults.maxConcurrent,
+      "maxConcurrent",
+    ),
     stages: parseStages(raw.stages),
   };
 }

@@ -131,7 +131,7 @@ export async function scaffoldJfdi(
   if (!(await fileExists(configPath))) {
     await atomicWrite(configPath, `${JSON.stringify(config, null, 2)}\n`);
   }
-  await ensureDir(path.join(repoRoot, config.ticketsDir));
+  await ensureDir(path.join(repoRoot, config.ticketsDirectory));
   const columns = config.board.columns;
   await createBoardIfMissing(path.join(repoRoot, config.board.path), [
     columns.begin,

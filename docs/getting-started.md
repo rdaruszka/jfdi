@@ -66,7 +66,7 @@ passes. (Use `jfdi init --bare` to skip the agent and fill things in by hand.)
 
 Two settings worth checking in `.jfdi/config.json` before your first run:
 
-- `integration.target_branch` — defaults to `main`; set it if your default
+- `integration.targetBranch` — defaults to `main`; set it if your default
   branch differs.
 - `integration.mode` — `on-approval` (default) parks finished work in a Ready to
   Merge column for your sign-off; `auto` merges immediately.
@@ -133,7 +133,7 @@ jfdi start
 ```
 
 The coordinator watches the board live, dispatches cards top-first (up to
-`max_concurrent` pipelines in parallel, each in its own git worktree), serializes
+`maxConcurrent` pipelines in parallel, each in its own git worktree), serializes
 merges so the target branch only ever moves one integration at a time, and shows
 everything in a full-screen TUI. Cards move across the board as work progresses;
 finished work waits in Ready to Merge; anything needing you lands in Blocked

@@ -96,7 +96,7 @@ jfdi init [options]   Scaffold .jfdi/ and conversationally tune the setup
 ## Design in one paragraph
 
 The **coordinator** watches the board and dispatches each ready card into its
-own git worktree, up to `max_concurrent` pipelines at once; **integration** is
+own git worktree, up to `maxConcurrent` pipelines at once; **integration** is
 globally serialized so only one merge ever touches the target branch at a time.
 Every transition appends to a per-project `events.jsonl`; state and UIs (the
 TUI today, anything else tomorrow) are pure derivations of that stream. Agent

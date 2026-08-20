@@ -5,7 +5,7 @@ import { EXIT_COMMAND_NOT_EXECUTABLE } from "./util/exit-codes.js";
 
 export interface GateCommandResult {
   name: string;
-  cmd: string;
+  command: string;
   code: number;
   /** Interleaved stdout+stderr excerpt sized for prompt context. */
   output: string;
@@ -32,9 +32,9 @@ function promptExcerpt(output: string): string {
   return `${output.slice(0, headChars)}${TRUNCATION_MARKER}${output.slice(-tailChars)}`;
 }
 
-function runCommand(cmd: string, cwd: string): Promise<{ code: number; output: string }> {
+function runCommand(command: string, cwd: string): Promise<{ code: number; output: string }> {
   return new Promise((resolve) => {
-    const child = spawn("/bin/sh", ["-c", cmd], { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("/bin/sh", ["-c", command], { cwd, stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
     const collect = (chunk: Buffer) => {
       output += chunk.toString();
@@ -59,11 +59,11 @@ export async function runGate(
   onCommand?: (name: string) => void,
 ): Promise<GateResult> {
   const fullResults: GateCommandResult[] = [];
-  for (const { name, cmd } of gate) {
+  for (const { name, command } of gate) {
     onCommand?.(name);
     const started = Date.now();
-    const { code, output } = await runCommand(cmd, cwd);
-    fullResults.push({ name, cmd, code, output, durationMs: Date.now() - started });
+    const { code, output } = await runCommand(command, cwd);
+    fullResults.push({ name, command, code, output, durationMs: Date.now() - started });
     if (code !== 0) break;
   }
   await fs.writeFile(logPath, fullResults.map((result) => result.output).join(""), "utf8");
@@ -94,7 +94,7 @@ export function formatGateFailure(result: GateResult): string {
   const failed = result.results.at(-1);
   if (!failed) return "gate failed with no results";
   return [
-    `Mechanical gate failed at step "${failed.name}" (\`${failed.cmd}\`, exit ${failed.code}).`,
+    `Mechanical gate failed at step "${failed.name}" (\`${failed.command}\`, exit ${failed.code}).`,
     `Full output: \`${result.logPath}\``,
     "",
     "Prompt-sized output excerpt (head and tail):",

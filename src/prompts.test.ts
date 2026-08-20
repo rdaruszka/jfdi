@@ -85,6 +85,17 @@ describe("ensurePrompts / loadPrompt", () => {
     expect(rendered).not.toContain("JFDI");
   });
 
+  it("gives init the exact gate shape and requires canonical config keys", () => {
+    const rendered = renderPrompt(INIT_SYSTEM_PROMPT, {
+      CODING_GUIDELINES,
+      JFDI_OPERATIONS,
+    });
+
+    expect(rendered).toContain('{ "name": "build", "command": "pnpm build" }');
+    expect(rendered).toContain("`config.json` keys are exactly the camelCase keys shown below");
+    expect(rendered).toContain("normalize every legacy spelling to its canonical key");
+  });
+
   it("opens with exploration and forbids writes before plan approval", () => {
     expect(INIT_USER_PROMPT).toContain("Explore the project first");
     expect(INIT_USER_PROMPT).toContain("not just\n   manifests and configs");
@@ -125,7 +136,7 @@ describe("ensurePrompts / loadPrompt", () => {
 
 describe("formatGateCommands", () => {
   it("renders the command list", () => {
-    expect(formatGateCommands([{ name: "test", cmd: "pnpm test" }])).toContain("pnpm test");
+    expect(formatGateCommands([{ name: "test", command: "pnpm test" }])).toContain("pnpm test");
   });
   it("notes an empty gate", () => {
     expect(formatGateCommands([])).toContain("no gate commands");

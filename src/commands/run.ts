@@ -60,12 +60,12 @@ export async function runCommand(ticketRef: string, options: RunOptions = {}): P
 async function refuseCorruptReport(
   context: PipelineContext,
   ticket: Ticket,
-  ticketsDir: string,
+  ticketsDirectory: string,
 ): Promise<boolean> {
   const columns = context.config.board.columns;
   const savedReport = await loadReport(context.stateDir, ticket.id);
   if (!savedReport || !isCorruptReport(savedReport)) return false;
-  const notePath = await ensureTicketNote(ticket, ticketsDir);
+  const notePath = await ensureTicketNote(ticket, ticketsDirectory);
   const message = await recordCorruptReport(context, ticket.id, notePath, savedReport);
   const located = await findTicketCard(context, ticket.id, columns.inbox);
   if (located) {
@@ -82,12 +82,12 @@ export async function runTicketInline(
   ticketRef: string,
   options: RunOptions = {},
 ): Promise<number> {
-  const ticketsDir = path.join(context.repoRoot, context.config.ticketsDir);
-  const ticket = await resolveTicket(ticketRef, ticketsDir);
+  const ticketsDirectory = path.join(context.repoRoot, context.config.ticketsDirectory);
+  const ticket = await resolveTicket(ticketRef, ticketsDirectory);
   console.log(`ticket: ${ticket.id}`);
 
   const columns = context.config.board.columns;
-  if (await refuseCorruptReport(context, ticket, ticketsDir)) return 2;
+  if (await refuseCorruptReport(context, ticket, ticketsDirectory)) return 2;
 
   // Blocking means blocked on every path: a direct run refuses a ticket whose
   // blocked-by tickets are not done, and only --force spells out the override.
@@ -130,7 +130,7 @@ export async function runTicketInline(
     if (outcome.status === "blocked") {
       await settleCard(columns.blocked);
       console.error(`\nBlocked: ${outcome.reason}`);
-      console.error(`See the ticket note in ${context.config.ticketsDir}/ for details.`);
+      console.error(`See the ticket note in ${context.config.ticketsDirectory}/ for details.`);
       return 2;
     }
     if (outcome.status === "failed") {
@@ -147,7 +147,7 @@ export async function runTicketInline(
         return 2;
       }
       await settleCard(columns.done, true);
-      console.log(`\nDone — merged into ${context.config.integration.target_branch}.`);
+      console.log(`\nDone — merged into ${context.config.integration.targetBranch}.`);
       return 0;
     }
 

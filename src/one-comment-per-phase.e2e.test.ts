@@ -104,7 +104,7 @@ interface Sandbox {
   home: string;
   jfdiHome: string;
   binDir: string;
-  ticketsDir: string;
+  ticketsDirectory: string;
 }
 
 const sandboxes: string[] = [];
@@ -138,14 +138,14 @@ async function makeSandbox(options: { flakyGate?: boolean } = {}): Promise<Sandb
     home,
     jfdiHome,
     binDir,
-    ticketsDir: path.join(project, ".jfdi", "tickets"),
+    ticketsDirectory: path.join(project, ".jfdi", "tickets"),
   };
   expect((await runCli(sandbox, ["init", "--bare"])).code).toBe(0);
   // Auto integration so one `run` produces the whole trail, Integration
   // included; a gitignored counter keeps the flaky gate's state out of diffs.
   await patchConfig(sandbox, (config) => {
     config.integration = { ...config.integration, mode: "auto" };
-    if (options.flakyGate) config.gate = [{ name: "flaky", cmd: "flaky-gate" }];
+    if (options.flakyGate) config.gate = [{ name: "flaky", command: "flaky-gate" }];
   });
   if (options.flakyGate) {
     await fs.appendFile(path.join(project, ".jfdi", ".gitignore"), "\n.gate-count\n");
@@ -154,8 +154,8 @@ async function makeSandbox(options: { flakyGate?: boolean } = {}): Promise<Sandb
 }
 
 interface MutableConfig {
-  integration: { target_branch: string; mode: string };
-  gate: Array<{ name: string; cmd: string }>;
+  integration: { targetBranch: string; mode: string };
+  gate: Array<{ name: string; command: string }>;
   [key: string]: unknown;
 }
 
@@ -195,7 +195,7 @@ async function runCli(sandbox: Sandbox, args: string[]): Promise<CliResult> {
 }
 
 function readNote(sandbox: Sandbox, id: string): Promise<string> {
-  return fs.readFile(path.join(sandbox.ticketsDir, `${id}.md`), "utf8");
+  return fs.readFile(path.join(sandbox.ticketsDirectory, `${id}.md`), "utf8");
 }
 
 /** The one ticket the run mints from a boardless card. */

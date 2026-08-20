@@ -122,7 +122,7 @@ A card is a *pointer* to work. Two shapes:
 
 The ticket id is the spine of everything: branch `jfdi/<id>`, worktree
 `.jfdi/worktrees/<id>/`, run state `runs/<id>/` in the state directory, and the
-ticket note `<ticketsDir>/<id>.md`.
+ticket note `<ticketsDirectory>/<id>.md`.
 
 ## Ticket notes
 
@@ -335,7 +335,7 @@ nothing is driving is dispatched through the same
 [resume](pipeline.md#resuming-an-interrupted-run) machinery as any other: the
 worktree is sanitized, the branch's existing commits and the previous run's
 unanswered feedback go into the prompt, and the run carries on. Such cards go
-first (they hold partial work) and count against `max_concurrent`. You do not
+first (they hold partial work) and count against `maxConcurrent`. You do not
 have to drag anything anywhere.
 
 This is checked on every scan, not just at startup, so "in progress with

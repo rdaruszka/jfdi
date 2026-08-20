@@ -326,9 +326,9 @@ describe("jfdi run moves the matching card", () => {
       // card must not be stranded In Progress by a crash.
       const configPath = path.join(sandbox.project, ".jfdi", "config.json");
       const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
-        integration: { target_branch: string };
+        integration: { targetBranch: string };
       };
-      config.integration.target_branch = "no-such-branch";
+      config.integration.targetBranch = "no-such-branch";
       await fs.writeFile(configPath, JSON.stringify(config, null, 2));
 
       const run = await runTicket(sandbox);

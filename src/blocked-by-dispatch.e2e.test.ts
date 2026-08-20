@@ -74,7 +74,7 @@ interface Sandbox {
   jfdiHome: string;
   binDir: string;
   captureDir: string;
-  ticketsDir: string;
+  ticketsDirectory: string;
   boardPath: string;
 }
 
@@ -109,7 +109,7 @@ async function makeSandbox(): Promise<Sandbox> {
     jfdiHome,
     binDir,
     captureDir,
-    ticketsDir: path.join(project, ".jfdi", "tickets"),
+    ticketsDirectory: path.join(project, ".jfdi", "tickets"),
     boardPath: path.join(project, ".jfdi", "board.md"),
   };
   expect((await runCli(sandbox, ["init", "--bare"])).code).toBe(0);
@@ -144,7 +144,7 @@ async function runCli(sandbox: Sandbox, args: string[]): Promise<CliResult> {
 
 async function writeNote(sandbox: Sandbox, id: string, frontmatter: string): Promise<void> {
   await fs.writeFile(
-    path.join(sandbox.ticketsDir, `${id}.md`),
+    path.join(sandbox.ticketsDirectory, `${id}.md`),
     `---\n${frontmatter}\n---\n\n# ${id}\n\nSome work to do.\n`,
   );
 }
@@ -251,7 +251,7 @@ describe("jfdi run — blocked-by gate (built CLI)", () => {
       const sandbox = await makeSandbox();
       // No frontmatter block whatsoever — the pre-blocked-by baseline.
       await fs.writeFile(
-        path.join(sandbox.ticketsDir, "alpha.md"),
+        path.join(sandbox.ticketsDirectory, "alpha.md"),
         "# alpha\n\nSome work to do.\n",
       );
       await fs.writeFile(

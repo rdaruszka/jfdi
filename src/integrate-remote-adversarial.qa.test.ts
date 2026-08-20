@@ -4,7 +4,7 @@
  *   - push is gated behind a *landed* merge: a gate failure at integration must
  *     block with zero push attempts and zero remote retries (acceptance:
  *     "gate failures and merge conflicts retry zero times");
- *   - push_after also fires on the conflict-resolution path, not just clean
+ *   - pushAfter also fires on the conflict-resolution path, not just clean
  *     merges (the other suites only push clean merges);
  *   - fetch-fast-forward and push cooperate inside a single integration, so the
  *     remote ends at a landing commit that already carries the fetched work.
@@ -74,7 +74,7 @@ afterEach(async () => {
 describe("remote integration — adversarial QA", () => {
   /**
    * Push is defined as "after the merge commit lands." A gate failure at
-   * integration lands nothing, so with push_after on there must be no push at
+   * integration lands nothing, so with pushAfter on there must be no push at
    * all — not a rejected push, not a retried one. This pins that a gate failure
    * short-circuits before the remote machinery, keeping "gate failures retry
    * zero times" honest even when a push is configured.
@@ -84,16 +84,16 @@ describe("remote integration — adversarial QA", () => {
     // pipeline's own gate runs pass (the worktree lacks the file), and the
     // failure appears only at integration, after target is merged into branch.
     const gated = await makeFixture({
-      gate: [{ name: "reject-poison", cmd: "test ! -f integration-poison.txt" }],
+      gate: [{ name: "reject-poison", command: "test ! -f integration-poison.txt" }],
     });
     fixture = gated;
     const remote = await addOrigin();
     const remoteHead = await revParse(remote, "refs/heads/main");
     const context = gated.context(passingHandler("clean-feature.txt"));
-    context.config.integration.remote.push_after = true;
+    context.config.integration.remote.pushAfter = true;
     const events: JfdiEvent[] = [];
     context.log.on((event) => events.push(event));
-    const ticket = await resolveTicket("Gate fails at integration", gated.ticketsDir);
+    const ticket = await resolveTicket("Gate fails at integration", gated.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass before integration");
 
@@ -133,10 +133,10 @@ describe("remote integration — adversarial QA", () => {
       }
       return { ok: true, text: "" };
     });
-    context.config.integration.remote.push_after = true;
+    context.config.integration.remote.pushAfter = true;
     const events: JfdiEvent[] = [];
     context.log.on((event) => events.push(event));
-    const ticket = await resolveTicket("Conflict then push", fixture.ticketsDir);
+    const ticket = await resolveTicket("Conflict then push", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
@@ -151,7 +151,7 @@ describe("remote integration — adversarial QA", () => {
       await writeVerdict(prompt, { resolution: "clean", notes: "kept both edits" });
       return { ok: true, text: "" };
     });
-    integrationContext.config.integration.remote.push_after = true;
+    integrationContext.config.integration.remote.pushAfter = true;
     integrationContext.log.on((event) => events.push(event));
 
     const result = await integrateTicket(integrationContext, ticket, outcome.worktree);
@@ -170,7 +170,7 @@ describe("remote integration — adversarial QA", () => {
   });
 
   /**
-   * fetch_before and push_after in one integration: the remote moved (so the
+   * fetchBefore and pushAfter in one integration: the remote moved (so the
    * local target must fast-forward first), then the landed merge is pushed. The
    * remote must end at the landing commit, and that commit must contain both the
    * fetched remote work and the ticket's own work.
@@ -178,9 +178,9 @@ describe("remote integration — adversarial QA", () => {
   it("fast-forwards to fetched work and pushes the landing commit in one integration", async () => {
     const remote = await addOrigin();
     const context = fixture.context(passingHandler("ticket-work.txt"));
-    context.config.integration.remote.fetch_before = true;
-    context.config.integration.remote.push_after = true;
-    const ticket = await resolveTicket("Fetch and push", fixture.ticketsDir);
+    context.config.integration.remote.fetchBefore = true;
+    context.config.integration.remote.pushAfter = true;
+    const ticket = await resolveTicket("Fetch and push", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 

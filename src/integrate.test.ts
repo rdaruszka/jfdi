@@ -106,7 +106,7 @@ async function driveRemoteRetries(events: JfdiEvent[], log: Pick<EventLog, "on">
 describe("integrateTicket", () => {
   it("refuses a corrupt report before integration touches git or the evidence", async () => {
     const context = fixture.context(passingHandler("corrupt.txt"));
-    const ticket = await resolveTicket("Corrupt report", fixture.ticketsDir);
+    const ticket = await resolveTicket("Corrupt report", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
     const targetHead = await revParse(fixture.repo, "main");
@@ -130,7 +130,7 @@ describe("integrateTicket", () => {
 
   it("clean merge → merge commit on the target, cleanup, closing comment", async () => {
     const context = fixture.context(passingHandler("feat.txt"));
-    const ticket = await resolveTicket("Ship feature", fixture.ticketsDir);
+    const ticket = await resolveTicket("Ship feature", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     if (outcome.status !== "passed") return;
@@ -169,7 +169,7 @@ describe("integrateTicket", () => {
     // Worktree removed.
     await expect(fs.access(outcome.worktree.path)).rejects.toThrow();
     // No Report section — the merge closes the comment trail instead.
-    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
+    const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8");
     expect(note).not.toContain("## Report");
     // The trail's closing entry says where the work went, naming the commit it landed as.
     const landed = await revParse(fixture.repo, "main");
@@ -201,7 +201,7 @@ describe("integrateTicket", () => {
    */
   it("lands a merge commit even when the target could fast-forward", async () => {
     const context = fixture.context(passingHandler("solo.txt"));
-    const ticket = await resolveTicket("Only ticket", fixture.ticketsDir);
+    const ticket = await resolveTicket("Only ticket", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
     const signedOff = await revParse(fixture.repo, outcome.worktree.branch);
@@ -220,7 +220,7 @@ describe("integrateTicket", () => {
 
   it("keeps the full git failure output in the blocked reason", async () => {
     const context = fixture.context(passingHandler("feature.txt"));
-    const ticket = await resolveTicket("Blocked merge output", fixture.ticketsDir);
+    const ticket = await resolveTicket("Blocked merge output", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
@@ -254,11 +254,11 @@ describe("integrateTicket", () => {
     const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-gate-listing-"));
     const listingFile = path.join(scratch, "gate-ls.txt");
     const gated = await makeFixture({
-      gate: [{ name: "record-worktree", cmd: `ls -1 > ${listingFile}` }],
+      gate: [{ name: "record-worktree", command: `ls -1 > ${listingFile}` }],
     });
     try {
       const context = gated.context(passingHandler("gamma.txt"));
-      const ticket = await resolveTicket("Dirty at land time", gated.ticketsDir);
+      const ticket = await resolveTicket("Dirty at land time", gated.ticketsDirectory);
       const outcome = await runPipeline(context, ticket);
       if (outcome.status !== "passed") throw new Error("pipeline should pass");
       await commitFile(gated.repo, "gamma.txt", "main version\n", "collide");
@@ -293,7 +293,7 @@ describe("integrateTicket", () => {
       for (const entry of gateSaw) expect(landed).toContain(entry);
       // And the report says the leftovers were swept in, rather than pretending
       // the sessions had left a clean tree.
-      const note = await fs.readFile(path.join(gated.ticketsDir, `${ticket.id}.md`), "utf8");
+      const note = await fs.readFile(path.join(gated.ticketsDirectory, `${ticket.id}.md`), "utf8");
       expect(note).toContain("Uncommitted changes a session left behind were committed");
     } finally {
       await gated.cleanup();
@@ -309,11 +309,11 @@ describe("integrateTicket", () => {
     const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-gate-tree-"));
     const treeFile = path.join(scratch, "tree.txt");
     const gated = await makeFixture({
-      gate: [{ name: "record-tree", cmd: `git rev-parse "HEAD^{tree}" > ${treeFile}` }],
+      gate: [{ name: "record-tree", command: `git rev-parse "HEAD^{tree}" > ${treeFile}` }],
     });
     try {
       const context = gated.context(passingHandler("gated.txt"));
-      const ticket = await resolveTicket("Gate tree", gated.ticketsDir);
+      const ticket = await resolveTicket("Gate tree", gated.ticketsDirectory);
       const outcome = await runPipeline(context, ticket);
       if (outcome.status !== "passed") throw new Error("pipeline should pass");
       await commitFile(gated.repo, "other.txt", "other\n", "unrelated");
@@ -342,7 +342,7 @@ describe("integrateTicket", () => {
       }
       return { ok: true, text: "" };
     });
-    const ticket = await resolveTicket("Conflicting edit", fixture.ticketsDir);
+    const ticket = await resolveTicket("Conflicting edit", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     if (outcome.status !== "passed") return;
@@ -371,7 +371,7 @@ describe("integrateTicket", () => {
     );
     // The resolution lands in the merge commit, over the signed-off parent.
     expect(await git(fixture.repo, "rev-parse", "main^2")).toBe(signedOff);
-    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
+    const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8");
     expect(note).toContain("kept both edits");
   });
 
@@ -386,7 +386,7 @@ describe("integrateTicket", () => {
       }
       return { ok: true, text: "" };
     });
-    const ticket = await resolveTicket("Forged resolution", fixture.ticketsDir);
+    const ticket = await resolveTicket("Forged resolution", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
     if (outcome.status !== "passed") return;
@@ -419,7 +419,10 @@ describe("integrateTicket", () => {
       "merged",
     );
 
-    const content = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
+    const content = await fs.readFile(
+      path.join(fixture.ticketsDirectory, `${ticket.id}.md`),
+      "utf8",
+    );
     expect(content).toContain("Conflict resolution:");
     // The forged lines land quoted — visible to the human, inert to the parser.
     expect(content).toContain("> ## Questions");
@@ -438,7 +441,7 @@ describe("integrateTicket", () => {
 
   it("complicated resolution goes back through QA before landing", async () => {
     const context = fixture.context(passingHandler("feat2.txt"));
-    const ticket = await resolveTicket("Complicated landing", fixture.ticketsDir);
+    const ticket = await resolveTicket("Complicated landing", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
@@ -473,7 +476,7 @@ describe("integrateTicket", () => {
 
   it("complicated resolution with failing re-QA blocks", async () => {
     const context = fixture.context(passingHandler("feat3.txt"));
-    const ticket = await resolveTicket("Bad landing", fixture.ticketsDir);
+    const ticket = await resolveTicket("Bad landing", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
     await commitFile(fixture.repo, "feat3.txt", "collision\n", "collide");
@@ -493,13 +496,13 @@ describe("integrateTicket", () => {
     const result = await integrateTicket(integrationContext, ticket, outcome.worktree);
     expect(result.status).toBe("blocked");
     expect(await isAncestor(fixture.repo, outcome.worktree.branch, "main")).toBe(false);
-    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
+    const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8");
     expect(note).toContain("behavior regressed");
   });
 
   it("aborts a merge a previous integration left unfinished and re-integrates", async () => {
     const context = fixture.context(passingHandler("feat5.txt"));
-    const ticket = await resolveTicket("Stale merge", fixture.ticketsDir);
+    const ticket = await resolveTicket("Stale merge", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
     const signedOff = await revParse(fixture.repo, outcome.worktree.branch);
@@ -539,7 +542,7 @@ describe("integrateTicket", () => {
    */
   it("blocks when the stale merge cannot be aborted, without running the agent", async () => {
     const context = fixture.context(passingHandler("feat9.txt"));
-    const ticket = await resolveTicket("Unabortable merge", fixture.ticketsDir);
+    const ticket = await resolveTicket("Unabortable merge", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
     await commitFile(fixture.repo, "feat9.txt", "main version\n", "collide");
@@ -566,7 +569,7 @@ describe("integrateTicket", () => {
     // Nothing landed, and the worktree still holds the merge for a human.
     expect(await revParse(fixture.repo, "main")).toBe(targetHead);
     expect(await isMergeInProgress(outcome.worktree.path)).toBe(true);
-    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
+    const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8");
     expect(note).toContain("could not abort the merge in progress");
   });
 
@@ -576,7 +579,7 @@ describe("integrateTicket", () => {
    */
   it("blocks with a reason when the worktree is gone", async () => {
     const context = fixture.context(passingHandler("feat8.txt"));
-    const ticket = await resolveTicket("Vanished worktree", fixture.ticketsDir);
+    const ticket = await resolveTicket("Vanished worktree", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
     await commitFile(fixture.repo, "other.txt", "other\n", "unrelated");
@@ -591,7 +594,7 @@ describe("integrateTicket", () => {
     expect(await revParse(fixture.repo, "main")).toBe(targetHead);
     // The block is on the trail too, with the reason and where the card went.
     const note = parseTicketNote(
-      await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8"),
+      await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8"),
     );
     expect(note.comments.at(-1)?.body).toContain(
       "JFDI Integration blocked — moving to Blocked for human review",
@@ -606,7 +609,7 @@ describe("integrateTicket", () => {
    */
   it("holds the conflict resolution when the provider dies, instead of blocking the card", async () => {
     const context = fixture.context(passingHandler("feat6.txt"));
-    const ticket = await resolveTicket("Held integration", fixture.ticketsDir);
+    const ticket = await resolveTicket("Held integration", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
     await commitFile(fixture.repo, "feat6.txt", "main version\n", "collide");
@@ -646,7 +649,7 @@ describe("integrateTicket", () => {
 
   it("detects a branch the human already merged and closes without double-merging", async () => {
     const context = fixture.context(passingHandler("feat4.txt"));
-    const ticket = await resolveTicket("Hand merged", fixture.ticketsDir);
+    const ticket = await resolveTicket("Hand merged", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
@@ -661,7 +664,7 @@ describe("integrateTicket", () => {
 
   it("closes an already-merged branch after the human removed its worktree", async () => {
     const context = fixture.context(passingHandler("human-cleanup.txt"));
-    const ticket = await resolveTicket("Human cleanup", fixture.ticketsDir);
+    const ticket = await resolveTicket("Human cleanup", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
@@ -675,7 +678,7 @@ describe("integrateTicket", () => {
 
   it("checkpoints a dirty worktree after a hand merge before cleaning it up", async () => {
     const context = fixture.context(passingHandler("hand-merged.txt"));
-    const ticket = await resolveTicket("Dirty hand merge", fixture.ticketsDir);
+    const ticket = await resolveTicket("Dirty hand merge", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
@@ -701,7 +704,7 @@ describe("integrateTicket", () => {
    */
   it("preserves an uncommitted edit to a tracked file after a hand merge", async () => {
     const context = fixture.context(passingHandler("edited.txt"));
-    const ticket = await resolveTicket("Dirty tracked edit", fixture.ticketsDir);
+    const ticket = await resolveTicket("Dirty tracked edit", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
@@ -741,7 +744,7 @@ describe("integrateTicket", () => {
     });
     try {
       const context = mixed.context(passingHandler("feat7.txt"));
-      const ticket = await resolveTicket("Conflicted integration", mixed.ticketsDir);
+      const ticket = await resolveTicket("Conflicted integration", mixed.ticketsDirectory);
       const outcome = await runPipeline(context, ticket);
       if (outcome.status !== "passed") throw new Error("pipeline should pass");
       await commitFile(mixed.repo, "feat7.txt", "main version\n", "collide");
@@ -799,7 +802,7 @@ describe("integrateTicket", () => {
     const landed: Array<{ signedOff: string; landing: string }> = [];
     for (const file of ["first.txt", "second.txt", "third.txt"]) {
       const context = fixture.context(passingHandler(file));
-      const ticket = await resolveTicket(`Ship ${file}`, fixture.ticketsDir);
+      const ticket = await resolveTicket(`Ship ${file}`, fixture.ticketsDirectory);
       const outcome = await runPipeline(context, ticket);
       if (outcome.status !== "passed") throw new Error(`pipeline should pass for ${file}`);
       const signedOff = await revParse(fixture.repo, outcome.worktree.branch);
@@ -833,7 +836,7 @@ describe("integrateTicket", () => {
    */
   it("keeps the sign-off reachable and the first-parent line intact through a conflict", async () => {
     const context = fixture.context(passingHandler("clash.txt"));
-    const ticket = await resolveTicket("Conflicted sign-off", fixture.ticketsDir);
+    const ticket = await resolveTicket("Conflicted sign-off", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
     const signedOff = await revParse(fixture.repo, outcome.worktree.branch);
@@ -880,16 +883,16 @@ describe("integrateTicket", () => {
   it("lands on a configured non-main target and leaves other branches alone", async () => {
     const trunk = await makeFixture({
       integration: {
-        target_branch: "trunk",
+        targetBranch: "trunk",
         mode: "auto",
-        remote: { fetch_before: false, push_after: false },
+        remote: { fetchBefore: false, pushAfter: false },
       },
     });
     try {
       await git(trunk.repo, "branch", "trunk");
       const mainHead = await revParse(trunk.repo, "main");
       const context = trunk.context(passingHandler("trunked.txt"));
-      const ticket = await resolveTicket("Trunk ticket", trunk.ticketsDir);
+      const ticket = await resolveTicket("Trunk ticket", trunk.ticketsDirectory);
       const outcome = await runPipeline(context, ticket);
       if (outcome.status !== "passed") throw new Error("pipeline should pass");
       const signedOff = await revParse(trunk.repo, outcome.worktree.branch);
@@ -915,7 +918,7 @@ describe("integrateTicket", () => {
     const context = fixture.context(passingHandler("local-only.txt"));
     const events: JfdiEvent[] = [];
     context.log.on((event) => events.push(event));
-    const ticket = await resolveTicket("Local integration", fixture.ticketsDir);
+    const ticket = await resolveTicket("Local integration", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
@@ -926,10 +929,10 @@ describe("integrateTicket", () => {
 
   it("keeps local-only behavior when remote flags are enabled but no remote exists", async () => {
     const context = fixture.context(passingHandler("no-remote.txt"));
-    context.config.integration.remote = { fetch_before: true, push_after: true };
+    context.config.integration.remote = { fetchBefore: true, pushAfter: true };
     const events: JfdiEvent[] = [];
     context.log.on((event) => events.push(event));
-    const ticket = await resolveTicket("No configured remote", fixture.ticketsDir);
+    const ticket = await resolveTicket("No configured remote", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
@@ -941,10 +944,10 @@ describe("integrateTicket", () => {
     const remote = await addOrigin();
     await git(fixture.repo, "remote", "rename", "origin", "central");
     const context = fixture.context(passingHandler("ticket-change.txt"));
-    context.config.integration.remote.fetch_before = true;
+    context.config.integration.remote.fetchBefore = true;
     const events: JfdiEvent[] = [];
     context.log.on((event) => events.push(event));
-    const ticket = await resolveTicket("Fetch remote work", fixture.ticketsDir);
+    const ticket = await resolveTicket("Fetch remote work", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
@@ -970,15 +973,15 @@ describe("integrateTicket", () => {
         data: expect.objectContaining({ operation: "fetch", remote: "central" }),
       }),
     );
-    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
+    const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8");
     expect(note).toContain("Fast-forwarded local target `main`");
   });
 
   it("proceeds without syncing when the local target is strictly ahead of the fetched ref", async () => {
     const remote = await addOrigin();
     const context = fixture.context(passingHandler("ahead-ticket.txt"));
-    context.config.integration.remote.fetch_before = true;
-    const ticket = await resolveTicket("Ahead local target", fixture.ticketsDir);
+    context.config.integration.remote.fetchBefore = true;
+    const ticket = await resolveTicket("Ahead local target", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
@@ -989,7 +992,7 @@ describe("integrateTicket", () => {
     expect(await isAncestor(fixture.repo, remoteHead, "main")).toBe(true);
 
     expect(await integrateTicket(context, ticket, outcome.worktree)).toEqual({ status: "merged" });
-    // The landing built on the ahead local history; without push_after the
+    // The landing built on the ahead local history; without pushAfter the
     // remote is left untouched.
     expect(await isAncestor(fixture.repo, remoteHead, "main")).toBe(true);
     expect(await revParse(remote, "refs/heads/main")).toBe(remoteHead);
@@ -998,8 +1001,8 @@ describe("integrateTicket", () => {
   it("blocks before merging when the local target and the fetched ref have truly diverged", async () => {
     const remote = await addOrigin();
     const context = fixture.context(passingHandler("unmerged-ticket.txt"));
-    context.config.integration.remote.fetch_before = true;
-    const ticket = await resolveTicket("Reject target divergence", fixture.ticketsDir);
+    context.config.integration.remote.fetchBefore = true;
+    const ticket = await resolveTicket("Reject target divergence", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
@@ -1023,10 +1026,10 @@ describe("integrateTicket", () => {
     const remote = await addOrigin();
     await git(fixture.repo, "branch", "--unset-upstream", "main");
     const context = fixture.context(passingHandler("pushed-ticket.txt"));
-    context.config.integration.remote.push_after = true;
+    context.config.integration.remote.pushAfter = true;
     const events: JfdiEvent[] = [];
     context.log.on((event) => events.push(event));
-    const ticket = await resolveTicket("Push landed target", fixture.ticketsDir);
+    const ticket = await resolveTicket("Push landed target", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
     const ticketBranch = outcome.worktree.branch;
@@ -1048,10 +1051,10 @@ describe("integrateTicket", () => {
     await fs.writeFile(hook, "#!/bin/sh\necho 'push rejected by test remote' >&2\nexit 1\n");
     await fs.chmod(hook, 0o755);
     const context = fixture.context(passingHandler("rejected-push.txt"));
-    context.config.integration.remote.push_after = true;
+    context.config.integration.remote.pushAfter = true;
     const events: JfdiEvent[] = [];
     context.log.on((event) => events.push(event));
-    const ticket = await resolveTicket("Rejected remote push", fixture.ticketsDir);
+    const ticket = await resolveTicket("Rejected remote push", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
     const remoteHead = await revParse(remote, "refs/heads/main");
@@ -1084,7 +1087,7 @@ describe("integrateTicket", () => {
     expect(await fs.readFile(path.join(fixture.repo, "rejected-push.txt"), "utf8")).toBe(
       "feature\n",
     );
-    const note = await fs.readFile(path.join(fixture.ticketsDir, `${ticket.id}.md`), "utf8");
+    const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8");
     expect(note).toContain("retrying in 30 seconds");
     expect(note).toContain("push rejected by test remote");
   });
@@ -1093,10 +1096,10 @@ describe("integrateTicket", () => {
     const missingRemote = path.join(fixture.root, "missing-origin.git");
     await git(fixture.repo, "remote", "add", "origin", missingRemote);
     const context = fixture.context(passingHandler("never-merged.txt"));
-    context.config.integration.remote.fetch_before = true;
+    context.config.integration.remote.fetchBefore = true;
     const events: JfdiEvent[] = [];
     context.log.on((event) => events.push(event));
-    const ticket = await resolveTicket("Failed remote fetch", fixture.ticketsDir);
+    const ticket = await resolveTicket("Failed remote fetch", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
     const targetHead = await revParse(fixture.repo, "main");

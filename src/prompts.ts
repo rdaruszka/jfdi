@@ -587,7 +587,7 @@ export async function loadPrompt(jfdiDir: string, name: PromptName): Promise<str
   return content;
 }
 
-export function formatGateCommands(gate: Array<{ name: string; cmd: string }>): string {
+export function formatGateCommands(gate: Array<{ name: string; command: string }>): string {
   if (gate.length === 0) return "  (no gate commands configured)";
-  return gate.map((g) => `  - ${g.name}: \`${g.cmd}\``).join("\n");
+  return gate.map((g) => `  - ${g.name}: \`${g.command}\``).join("\n");
 }

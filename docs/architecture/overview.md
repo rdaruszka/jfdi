@@ -68,7 +68,7 @@ flowchart TB
   `init` scaffolds mechanically and launches a conversational setup session.
 - **Coordinator** ([src/coordinator.ts](../../src/coordinator.ts)) — the
   long-running loop behind `jfdi start`. Watches the board (fs-watch plus a 2 s
-  mtime poll), dispatches ready cards into pipelines up to `max_concurrent`,
+  mtime poll), dispatches ready cards into pipelines up to `maxConcurrent`,
   owns the single-file integration queue, continues cards an earlier coordinator
   left in the in-progress column, detects hand-merged work, and folds in events
   written by other JFDI processes. It skips a begin-column card whose ticket is
@@ -77,7 +77,7 @@ flowchart TB
 - **Pipeline** ([src/pipeline.ts](../../src/pipeline.ts)) — one ticket's trip:
   worktree setup (serialized per repo — `git worktree add` reads the entries a
   sibling `add` is still writing, so concurrent dispatches would otherwise kill
-  one another's run), resume sanitization, then up to `max_rounds` rounds of
+  one another's run), resume sanitization, then up to `maxRounds` rounds of
   Implementation → gate → Code Review → QA, with session continuation between
   rounds. The gate is pipeline-run and its failures stay inside the round —
   they return to the Implementation session as feedback, up to 10 fix sessions,
@@ -140,7 +140,7 @@ sequenceDiagram
     C->>C: move card → In Progress
     C->>P: dispatch (worktree jfdi/<id>)
     P->>P: resume sanitization (if prior work)
-    loop up to max_rounds
+    loop up to maxRounds
         loop until gate green (≤10 fixes, same round)
             P->>A: Implementation (fresh, then continued)
             P->>A: scribe (commit message)
@@ -161,12 +161,12 @@ sequenceDiagram
             H->>C: jfdi merge / drag card / hand-merge
         end
         C->>I: enqueue (serialized)
-        opt integration.remote.fetch_before
+        opt integration.remote.fetchBefore
             I->>G: fetch target from upstream remote; fast-forward if behind
         end
         I->>I: merge target in → resolve → gate → (re-QA?)
         I->>G: land merge commit
-        opt integration.remote.push_after
+        opt integration.remote.pushAfter
             I->>G: push target branch to upstream remote
         end
         I-->>C: merged

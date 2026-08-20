@@ -83,7 +83,7 @@ interface Sandbox {
   stateDir: string;
   binDir: string;
   captureDir: string;
-  ticketsDir: string;
+  ticketsDirectory: string;
 }
 
 const sandboxes: string[] = [];
@@ -118,7 +118,7 @@ async function makeSandbox(): Promise<Sandbox> {
     stateDir: path.join(jfdiHome, "projects", project.split(path.sep).join("-")),
     binDir,
     captureDir,
-    ticketsDir: path.join(project, ".jfdi", "tickets"),
+    ticketsDirectory: path.join(project, ".jfdi", "tickets"),
   };
   expect((await runCli(sandbox, ["init", "--bare"])).code).toBe(0);
   return sandbox;
@@ -160,7 +160,7 @@ function capturedPrompt(sandbox: Sandbox, stage: string): Promise<string> {
 }
 
 function readNote(sandbox: Sandbox, id: string): Promise<string> {
-  return fs.readFile(path.join(sandbox.ticketsDir, `${id}.md`), "utf8");
+  return fs.readFile(path.join(sandbox.ticketsDirectory, `${id}.md`), "utf8");
 }
 
 /** Which of the planted markers a prompt carries — asserted as a whole set. */
@@ -255,11 +255,11 @@ const SLICE_MARKERS = [
 ];
 
 async function seedProbe(sandbox: Sandbox): Promise<void> {
-  await fs.writeFile(path.join(sandbox.ticketsDir, "resolvable-ticket.md"), "# Resolvable\n");
-  // A note one level up from ticketsDir: the `[[../outside-scope]]` link names
+  await fs.writeFile(path.join(sandbox.ticketsDirectory, "resolvable-ticket.md"), "# Resolvable\n");
+  // A note one level up from ticketsDirectory: the `[[../outside-scope]]` link names
   // a real file, and must still resolve to nothing.
   await fs.writeFile(path.join(sandbox.project, ".jfdi", "outside-scope.md"), "# Outside\n");
-  await fs.writeFile(path.join(sandbox.ticketsDir, `${PROBE_ID}.md`), PROBE_NOTE);
+  await fs.writeFile(path.join(sandbox.ticketsDirectory, `${PROBE_ID}.md`), PROBE_NOTE);
 }
 
 afterEach(async () => {
@@ -357,7 +357,10 @@ describe("a pipeline append to a ticket note", () => {
     async () => {
       const sandbox = await makeSandbox();
       // A bare pre-anatomy note: an H1 and a body, nothing else.
-      await fs.writeFile(path.join(sandbox.ticketsDir, "bare.md"), "# Bare\n\nLEGACY_BODY here.\n");
+      await fs.writeFile(
+        path.join(sandbox.ticketsDirectory, "bare.md"),
+        "# Bare\n\nLEGACY_BODY here.\n",
+      );
 
       const run = await runCli(sandbox, ["run", "[[bare]]"], { decisions: ["ONLY_DECISION made"] });
 
@@ -380,7 +383,7 @@ describe("a pipeline append to a ticket note", () => {
       await fs.mkdir(vault);
       const realNote = path.join(vault, "vault-probe.md");
       await fs.writeFile(realNote, "# Vault ticket\n\nVAULT_BODY.\n");
-      await fs.symlink(realNote, path.join(sandbox.ticketsDir, "vault-probe.md"));
+      await fs.symlink(realNote, path.join(sandbox.ticketsDirectory, "vault-probe.md"));
 
       expect(
         (await runCli(sandbox, ["run", "[[vault-probe]]"], { decisions: ["VAULT_DECISION made"] }))
@@ -389,7 +392,7 @@ describe("a pipeline append to a ticket note", () => {
 
       // Renaming onto the link itself would replace it with a private copy and
       // split the note from the file the human edits in Obsidian.
-      const link = await fs.lstat(path.join(sandbox.ticketsDir, "vault-probe.md"));
+      const link = await fs.lstat(path.join(sandbox.ticketsDirectory, "vault-probe.md"));
       expect(link.isSymbolicLink()).toBe(true);
       expect(await fs.readFile(realNote, "utf8")).toContain("VAULT_DECISION made");
       // No temp file left behind next to the target.
@@ -401,7 +404,7 @@ describe("a pipeline append to a ticket note", () => {
 
 describe("frontmatter links between tickets", () => {
   it(
-    "reports the ones that name no note in ticketsDir, and follows none outside it",
+    "reports the ones that name no note in ticketsDirectory, and follows none outside it",
     async () => {
       const sandbox = await makeSandbox();
       await seedProbe(sandbox);
@@ -410,7 +413,7 @@ describe("frontmatter links between tickets", () => {
       // past it lets the pipeline run and report the links, which is the point.
       expect((await runCli(sandbox, ["run", "--force", `[[${PROBE_ID}]]`])).code).toBe(0);
 
-      // `resolvable-ticket` is in ticketsDir, so it is not reported; the typo
+      // `resolvable-ticket` is in ticketsDirectory, so it is not reported; the typo
       // and the one pointing out of the folder both are — never dropped in
       // silence, and never searched for elsewhere.
       expect(await eventsOfType(sandbox, "unresolved_link")).toEqual([

@@ -82,7 +82,7 @@ process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_err
  */
 const RED_MARKER = "RED_TRANSCRIPT";
 const GREEN_MARKER = "GREEN_TRANSCRIPT";
-const GATE_CMD = `if test -f gate-ok.txt; then echo ${GREEN_MARKER}; else echo ${RED_MARKER} >&2; exit 1; fi`;
+const GATE_COMMAND = `if test -f gate-ok.txt; then echo ${GREEN_MARKER}; else echo ${RED_MARKER} >&2; exit 1; fi`;
 
 interface Sandbox {
   root: string;
@@ -169,9 +169,9 @@ function ticketIdOf(result: CliResult): string {
 async function setGate(sandbox: Sandbox): Promise<void> {
   const configPath = path.join(sandbox.project, ".jfdi", "config.json");
   const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
-    gate: Array<{ name: string; cmd: string }>;
+    gate: Array<{ name: string; command: string }>;
   };
-  config.gate = [{ name: "check", cmd: GATE_CMD }];
+  config.gate = [{ name: "check", command: GATE_COMMAND }];
   await fs.writeFile(configPath, JSON.stringify(config, null, 2));
 }
 

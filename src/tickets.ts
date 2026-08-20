@@ -3,12 +3,12 @@ import { parseTicketNote, type TicketNote, ticketSpec } from "./ticket-note.js";
 import { atomicWrite, fileExists, readIfExists } from "./util/fsx.js";
 import { extractWikilink, ticketIdFromCard } from "./util/ids.js";
 
-/** One `blocks`/`blocked-by` frontmatter link, resolved against ticketsDir. */
+/** One `blocks`/`blocked-by` frontmatter link, resolved against ticketsDirectory. */
 export interface TicketLink {
   kind: "blocks" | "blocked-by";
   /** The wikilink target, e.g. `fix-thing`. */
   target: string;
-  /** The note it resolves to, or null when no such note exists in ticketsDir. */
+  /** The note it resolves to, or null when no such note exists in ticketsDirectory. */
   notePath: string | null;
 }
 
@@ -27,16 +27,16 @@ export interface Ticket {
 }
 
 /**
- * Resolve a card into a Ticket. Wikilinks resolve ONLY against ticketsDir —
+ * Resolve a card into a Ticket. Wikilinks resolve ONLY against ticketsDirectory —
  * the tool never searches beyond that folder. When a note exists, its defined
  * slice (title, description, open questions, logged decisions) is the spec;
  * otherwise the card line itself is the entire spec.
  */
-export async function resolveTicket(cardText: string, ticketsDir: string): Promise<Ticket> {
+export async function resolveTicket(cardText: string, ticketsDirectory: string): Promise<Ticket> {
   const id = ticketIdFromCard(cardText);
   const link = extractWikilink(cardText);
   if (link) {
-    const notePath = path.join(ticketsDir, `${link}.md`);
+    const notePath = path.join(ticketsDirectory, `${link}.md`);
     const content = await readIfExists(notePath);
     if (content !== null) {
       const note = parseTicketNote(content);
@@ -45,7 +45,7 @@ export async function resolveTicket(cardText: string, ticketsDir: string): Promi
         cardText,
         spec: ticketSpec(note),
         notePath,
-        links: await resolveLinks(note, ticketsDir),
+        links: await resolveLinks(note, ticketsDirectory),
         mode: note.mode,
       };
     }
@@ -56,7 +56,7 @@ export async function resolveTicket(cardText: string, ticketsDir: string): Promi
   return { id, cardText, spec: cardText, notePath: null, links: [], mode: "default" };
 }
 
-async function resolveLinks(note: TicketNote, ticketsDir: string): Promise<TicketLink[]> {
+async function resolveLinks(note: TicketNote, ticketsDirectory: string): Promise<TicketLink[]> {
   const links: TicketLink[] = [];
   const groups: Array<[TicketLink["kind"], string[]]> = [
     ["blocks", note.blocks],
@@ -64,7 +64,7 @@ async function resolveLinks(note: TicketNote, ticketsDir: string): Promise<Ticke
   ];
   for (const [kind, targets] of groups) {
     for (const target of targets) {
-      links.push({ kind, target, notePath: await linkedNotePath(target, ticketsDir) });
+      links.push({ kind, target, notePath: await linkedNotePath(target, ticketsDirectory) });
     }
   }
   return links;
@@ -72,19 +72,19 @@ async function resolveLinks(note: TicketNote, ticketsDir: string): Promise<Ticke
 
 /**
  * Where a `blocks`/`blocked-by` target resolves, or null when nothing answers
- * to it. A target that would step out of ticketsDir (`../elsewhere`) resolves
+ * to it. A target that would step out of ticketsDirectory (`../elsewhere`) resolves
  * to nothing at all: the wikilink scope is the folder, so a link outside it
  * names no ticket — and is reported unresolved rather than followed.
  */
-async function linkedNotePath(target: string, ticketsDir: string): Promise<string | null> {
-  const notePath = path.join(ticketsDir, `${target}.md`);
-  if (path.dirname(path.resolve(notePath)) !== path.resolve(ticketsDir)) return null;
+async function linkedNotePath(target: string, ticketsDirectory: string): Promise<string | null> {
+  const notePath = path.join(ticketsDirectory, `${target}.md`);
+  if (path.dirname(path.resolve(notePath)) !== path.resolve(ticketsDirectory)) return null;
   return (await fileExists(notePath)) ? notePath : null;
 }
 
 /** The note path a ticket's run records should be written to, creating the note if needed. */
-export async function ensureTicketNote(ticket: Ticket, ticketsDir: string): Promise<string> {
-  const notePath = ticket.notePath ?? path.join(ticketsDir, `${ticket.id}.md`);
+export async function ensureTicketNote(ticket: Ticket, ticketsDirectory: string): Promise<string> {
+  const notePath = ticket.notePath ?? path.join(ticketsDirectory, `${ticket.id}.md`);
   if (!(await fileExists(notePath))) {
     await atomicWrite(notePath, `# ${ticket.cardText}\n\n${ticket.spec}\n`);
   }
