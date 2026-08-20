@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigError, defaultConfig, loadConfig, parseConfig } from "./config.js";
 
 /** The scaffolded mix, so a case can vary one entry without restating four. */
@@ -244,6 +244,7 @@ describe("loadConfig", () => {
     directory = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-cfg-"));
   });
   afterEach(async () => {
+    vi.restoreAllMocks();
     await fs.rm(directory, { recursive: true, force: true });
   });
 
@@ -258,6 +259,55 @@ describe("loadConfig", () => {
       JSON.stringify({ maxConcurrent: 7, stages: STAGES }),
     );
     expect((await loadConfig(directory)).maxConcurrent).toBe(7);
+  });
+
+  it("prints one actionable notice listing every accepted legacy key", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await fs.mkdir(path.join(directory, ".jfdi"), { recursive: true });
+    await fs.writeFile(
+      path.join(directory, ".jfdi/config.json"),
+      JSON.stringify({
+        ticketsDir: ".workflow/tickets",
+        gate: [{ name: "test", cmd: "pnpm test" }],
+        pipeline: { max_rounds: 5 },
+        integration: {
+          target_branch: "develop",
+          remote: { fetch_before: true, push_after: true },
+        },
+        max_concurrent: 4,
+        stages: STAGES,
+      }),
+    );
+
+    await loadConfig(directory);
+
+    expect(warning).toHaveBeenCalledTimes(1);
+    const notice = String(warning.mock.calls[0]?.[0]);
+    for (const key of [
+      "ticketsDir",
+      "cmd",
+      "max_rounds",
+      "target_branch",
+      "fetch_before",
+      "push_after",
+      "max_concurrent",
+    ]) {
+      expect(notice).toContain(key);
+    }
+    expect(notice).toContain("jfdi update-config");
+  });
+
+  it("prints no notice for canonical config keys", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await fs.mkdir(path.join(directory, ".jfdi"), { recursive: true });
+    await fs.writeFile(
+      path.join(directory, ".jfdi/config.json"),
+      JSON.stringify({ maxConcurrent: 7, stages: STAGES }),
+    );
+
+    await loadConfig(directory);
+
+    expect(warning).not.toHaveBeenCalled();
   });
 
   it("rejects a config.json that predates per-stage selection", async () => {

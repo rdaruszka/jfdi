@@ -10,6 +10,7 @@ Usage:
   jfdi status [--json]  Snapshot of coordinator state
   jfdi logs <ticket>    Dump a ticket's raw session logs
   jfdi merge <ticket>   Approve a Ready-to-Merge ticket (on-approval mode)
+  jfdi update-config    Rewrite legacy config keys to the canonical schema
   jfdi init [options]   Scaffold .jfdi/ and conversationally tune the setup
 
 Init options:
@@ -94,6 +95,10 @@ export async function main(argv: string[]): Promise<number> {
         if (!id) return usageError("jfdi merge <ticket-id>");
         const { mergeCommand } = await import("./commands/merge.js");
         return await mergeCommand(id);
+      }
+      case "update-config": {
+        const { updateConfigCommand } = await import("./commands/update-config.js");
+        return await updateConfigCommand();
       }
       case "init": {
         const { initCommand } = await import("./commands/init.js");

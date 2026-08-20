@@ -230,6 +230,31 @@ explicit error.
 > missing any of the five entries — `commit-message` included — is rejected at
 > load with the block to paste in. Update `.jfdi/config.json` by hand.
 
+## Legacy key spellings
+
+Configs created before the canonical schema may use these spellings:
+
+| Legacy | Canonical |
+|---|---|
+| `ticketsDir` | `ticketsDirectory` |
+| `gate[].cmd` | `gate[].command` |
+| `pipeline.max_rounds` | `pipeline.maxRounds` |
+| `integration.target_branch` | `integration.targetBranch` |
+| `integration.remote.fetch_before` | `integration.remote.fetchBefore` |
+| `integration.remote.push_after` | `integration.remote.pushAfter` |
+| `max_concurrent` | `maxConcurrent` |
+
+JFDI continues to accept these keys. Any command that loads a config containing
+one prints a single notice suggesting `jfdi update-config`; the notice is a
+nudge, not an error.
+
+Run `jfdi update-config` from anywhere inside the repository to rename every
+legacy key mechanically. It works on the raw JSON so keys outside JFDI's schema
+survive, reports each rename, and replaces the file atomically. A second run is
+a successful no-op. Invalid JSON cannot be migrated: the command exits non-zero
+with the file and parse error and leaves the file untouched. This key-only
+migration does not synthesize the required `stages` section described above.
+
 ## Other files under `.jfdi/`
 
 `config.json` is one of several versioned setup files; the rest have their own

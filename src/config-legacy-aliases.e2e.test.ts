@@ -6,13 +6,14 @@
  * `integration.targetBranch`, `integration.remote.fetchBefore`/`pushAfter`,
  * `maxConcurrent`), and every prior spelling (`cmd`, `ticketsDir`, `max_rounds`,
  * `target_branch`, `fetch_before`, `push_after`, `max_concurrent`) must keep
- * working silently as an alias. The acceptance criteria this file exercises
- * against the built CLI, not `parseConfig` in isolation:
+ * working as aliases while producing one migration notice. The acceptance
+ * criteria this file exercises against the built CLI, not `parseConfig` in
+ * isolation:
  *
  *   1. A config written entirely in legacy spellings drives a real run
  *      identically — the gate command reaches execution from `cmd`, the ticket
  *      note lands in the directory named by `ticketsDir`, and the run passes
- *      with no warning about the spellings.
+ *      with one actionable warning about the spellings.
  *   2. A gate entry carrying both `cmd` and `command` with conflicting values
  *      fails the CLI, and the error names the entry and both values.
  *
@@ -208,8 +209,10 @@ describe("legacy config keys drive a real run identically to canonical", () => {
       // rejection or a skipped check), and on-approval parked it ready to merge.
       expect(run.code).toBe(0);
       expect(run.stdout).toContain("Approve with: jfdi merge");
-      // No warning about the legacy spellings — the ticket requires silence.
-      expect(run.stderr).not.toMatch(/legacy|deprecat|cmd|ticketsDir|max_rounds/i);
+      // One read-time notice nudges the user toward the mechanical migration.
+      expect(run.stderr.match(/jfdi update-config/g)).toHaveLength(1);
+      expect(run.stderr).toContain("ticketsDir");
+      expect(run.stderr).toContain("cmd");
 
       const ticketId = ticketIdOf(run);
 

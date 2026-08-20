@@ -123,8 +123,146 @@ export class ConfigError extends Error {
   }
 }
 
+export interface LegacyConfigKeyRename {
+  legacyKey: string;
+  legacyPath: string;
+  canonicalPath: string;
+}
+
+export interface ConfigKeyMigration {
+  raw: unknown;
+  renames: LegacyConfigKeyRename[];
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function keyPath(where: string, key: string): string {
+  return where === "config" ? key : `${where}.${key}`;
+}
+
+/** Rename one accepted legacy key without changing any other property. */
+function renameLegacyKey(
+  entry: Record<string, unknown>,
+  canonicalKey: string,
+  legacyKey: string,
+  where: string,
+): { entry: Record<string, unknown>; renames: LegacyConfigKeyRename[] } {
+  if (!Object.hasOwn(entry, legacyKey)) return { entry, renames: [] };
+  const canonicalValue = entry[canonicalKey];
+  const legacyValue = entry[legacyKey];
+  if (Object.hasOwn(entry, canonicalKey) && !Object.is(canonicalValue, legacyValue)) {
+    throw new ConfigError(
+      `${where} has conflicting "${canonicalKey}" and legacy "${legacyKey}" values: ${JSON.stringify(canonicalValue)} and ${JSON.stringify(legacyValue)}`,
+    );
+  }
+  const migrated = { ...entry };
+  if (!Object.hasOwn(entry, canonicalKey)) migrated[canonicalKey] = legacyValue;
+  delete migrated[legacyKey];
+  return {
+    entry: migrated,
+    renames: [
+      {
+        legacyKey,
+        legacyPath: keyPath(where, legacyKey),
+        canonicalPath: keyPath(where, canonicalKey),
+      },
+    ],
+  };
+}
+
+function continueKeyMigration(
+  migration: { entry: Record<string, unknown>; renames: LegacyConfigKeyRename[] },
+  canonicalKey: string,
+  legacyKey: string,
+  where: string,
+): { entry: Record<string, unknown>; renames: LegacyConfigKeyRename[] } {
+  const next = renameLegacyKey(migration.entry, canonicalKey, legacyKey, where);
+  return { entry: next.entry, renames: [...migration.renames, ...next.renames] };
+}
+
+/**
+ * Mechanically rename every accepted legacy spelling in raw parsed JSON.
+ * Unknown keys and values are retained; this deliberately does not parse
+ * through JfdiConfig, whose typed shape omits them.
+ */
+export function migrateLegacyConfigKeys(raw: unknown): ConfigKeyMigration {
+  if (!isRecord(raw)) return { raw, renames: [] };
+  let configMigration = renameLegacyKey(raw, "ticketsDirectory", "ticketsDir", "config");
+
+  if (Array.isArray(configMigration.entry.gate)) {
+    const gateMigrations = configMigration.entry.gate.map((entry, index) =>
+      isRecord(entry)
+        ? renameLegacyKey(entry, "command", "cmd", `gate[${index}]`)
+        : { entry, renames: [] },
+    );
+    configMigration = {
+      entry: { ...configMigration.entry, gate: gateMigrations.map(({ entry }) => entry) },
+      renames: [...configMigration.renames, ...gateMigrations.flatMap(({ renames }) => renames)],
+    };
+  }
+
+  if (isRecord(configMigration.entry.pipeline)) {
+    const pipelineMigration = renameLegacyKey(
+      configMigration.entry.pipeline,
+      "maxRounds",
+      "max_rounds",
+      "pipeline",
+    );
+    configMigration = {
+      entry: { ...configMigration.entry, pipeline: pipelineMigration.entry },
+      renames: [...configMigration.renames, ...pipelineMigration.renames],
+    };
+  }
+
+  if (isRecord(configMigration.entry.integration)) {
+    let integrationMigration = renameLegacyKey(
+      configMigration.entry.integration,
+      "targetBranch",
+      "target_branch",
+      "integration",
+    );
+    if (isRecord(integrationMigration.entry.remote)) {
+      let remoteMigration = renameLegacyKey(
+        integrationMigration.entry.remote,
+        "fetchBefore",
+        "fetch_before",
+        "integration.remote",
+      );
+      remoteMigration = continueKeyMigration(
+        remoteMigration,
+        "pushAfter",
+        "push_after",
+        "integration.remote",
+      );
+      integrationMigration = {
+        entry: { ...integrationMigration.entry, remote: remoteMigration.entry },
+        renames: [...integrationMigration.renames, ...remoteMigration.renames],
+      };
+    }
+    configMigration = {
+      entry: { ...configMigration.entry, integration: integrationMigration.entry },
+      renames: [...configMigration.renames, ...integrationMigration.renames],
+    };
+  }
+
+  configMigration = continueKeyMigration(
+    configMigration,
+    "maxConcurrent",
+    "max_concurrent",
+    "config",
+  );
+  return { raw: configMigration.entry, renames: configMigration.renames };
+}
+
+/** Parse config JSON with the path-bearing error shared by load and migration. */
+export function parseConfigJson(content: string, file: string): unknown {
+  try {
+    return JSON.parse(content);
+  } catch (error) {
+    throw new ConfigError(`invalid JSON in ${file}: ${(error as Error).message}`);
+  }
 }
 
 function stringOrDefault(value: unknown, fallback: string, where: string): string {
@@ -153,7 +291,7 @@ function booleanOrDefault(value: unknown, fallback: boolean, where: string): boo
   return value;
 }
 
-/** Read a canonical key or its silent legacy alias, rejecting only ambiguity. */
+/** Read a canonical key or its legacy alias; loadConfig handles the user-facing notice. */
 function aliasedValue(
   entry: Record<string, unknown>,
   canonicalKey: string,
@@ -347,16 +485,32 @@ export function parseConfig(raw: unknown): JfdiConfig {
   };
 }
 
+export type LegacyConfigNotice = (legacyKeys: readonly string[], file: string) => void;
+
+export interface LoadConfigOptions {
+  onLegacyKeys?: LegacyConfigNotice;
+}
+
+export function printLegacyConfigNotice(legacyKeys: readonly string[], file: string): void {
+  console.warn(
+    `Legacy config ${legacyKeys.length === 1 ? "key" : "keys"} ${legacyKeys.join(", ")} found in ${file}; run \`jfdi update-config\` to use the canonical schema.`,
+  );
+}
+
 /** Load config from <projectRoot>/.jfdi/config.json; defaults if the file is absent. */
-export async function loadConfig(projectRoot: string): Promise<JfdiConfig> {
+export async function loadConfig(
+  projectRoot: string,
+  options: LoadConfigOptions = {},
+): Promise<JfdiConfig> {
   const file = path.join(projectRoot, JFDI_DIRECTORY, "config.json");
   const content = await readIfExists(file);
   if (content === null) return defaultConfig();
-  let raw: unknown;
-  try {
-    raw = JSON.parse(content);
-  } catch (error) {
-    throw new ConfigError(`invalid JSON in ${file}: ${(error as Error).message}`);
+  const raw = parseConfigJson(content, file);
+  const config = parseConfig(raw);
+  const { renames } = migrateLegacyConfigKeys(raw);
+  if (renames.length > 0) {
+    const legacyKeys = [...new Set(renames.map((rename) => rename.legacyKey))];
+    (options.onLegacyKeys ?? printLegacyConfigNotice)(legacyKeys, file);
   }
-  return parseConfig(raw);
+  return config;
 }
