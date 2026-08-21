@@ -50,7 +50,7 @@ init fills in for your repo):
     { "name": "test",  "command": "pnpm test" },
     { "name": "lint",  "command": "pnpm lint" }
   ],
-  "pipeline": { "maxRounds": 3 },
+  "pipeline": { "maxRejections": { "code-review": 2, "qa": 1 } },
   "integration": {
     "targetBranch": "main",
     "mode": "on-approval",
@@ -79,7 +79,7 @@ init fills in for your repo):
 | `board.columns.begin` | string | `Ready` | Cards here are dispatched, top first. Never auto-created — the heading must exist on the board. |
 | `board.columns.inProgress` | string | `In Progress` | Where dispatched cards sit while running. |
 | `board.columns.done` | string | `Done` | Merged cards land here, checked off. |
-| `board.columns.blocked` | string | `Blocked` | Escalations, exhausted rounds, and failed integrations, including exhausted remote git retries. Agent-provider failures pause the tool instead. |
+| `board.columns.blocked` | string | `Blocked` | Escalations, exhausted reviewer rejection budgets or gates, and failed integrations, including exhausted remote git retries. Agent-provider failures pause the tool instead. |
 | `board.columns.readyToMerge` | string | `Ready to Merge` | Only used when `integration.mode` is `on-approval`. |
 | `board.columns.inbox` | string | `Inbox` | Agent observation proposals. Never dispatched from. |
 
@@ -105,8 +105,8 @@ symlinked into a vault.
 
 The **mechanical gate**: an ordered list of shell commands that must all exit
 zero. Commands run sequentially via `/bin/sh -c` in the ticket's worktree,
-stopping at the first failure; the failing command's output becomes agent
-feedback for the next round. See [The Pipeline](pipeline.md#the-mechanical-gate)
+stopping at the first failure; the failing command's output returns to the
+session whose handoff made the gate red. See [The Pipeline](pipeline.md#the-mechanical-gate)
 for when it runs.
 
 An empty gate always passes — legal, but it means "done" is whatever the agent
@@ -121,12 +121,17 @@ the gate entry invoking the script (for example,
 
 | Field | Type | Default | Constraint |
 |---|---|---|---|
-| `pipeline.maxRounds` | integer | `3` | ≥ 1 |
+| `pipeline.maxRejections.code-review` | integer | `2` | ≥ 0 |
+| `pipeline.maxRejections.qa` | integer | `1` | ≥ 0 |
 
-The feedback-round cap per run. On exhaustion the card moves to Blocked with the
-round history in the ticket note. Gate failures after Implementation do not
-consume a round — they feed back into the same session, up to 10 fix sessions
-per round; rounds count trips through the review stages.
+Each reviewer has an independent rejection budget. A fail verdict increments
+only that reviewer's count; passing looks are free. A rejection beyond the
+budget moves the card to Blocked with the reviewer, count, budget, and round
+history in the ticket note. The round ceiling shown in comments and commit
+trailers is derived as `1 + code-review + qa` (4 by default), not configured.
+Gate failures do not consume a round: they feed back into the session whose
+handoff made the gate red for up to 3 fix sessions, and a fourth red attempt
+blocks directly.
 
 ### `integration`
 
@@ -277,20 +282,24 @@ Configs created before the canonical schema may use these spellings:
 |---|---|
 | `ticketsDir` | `ticketsDirectory` |
 | `gate[].cmd` | `gate[].command` |
-| `pipeline.max_rounds` | `pipeline.maxRounds` |
+| `pipeline.maxRounds` | removed; configure `pipeline.maxRejections` explicitly |
+| `pipeline.max_rounds` | removed; configure `pipeline.maxRejections` explicitly |
 | `integration.target_branch` | `integration.targetBranch` |
 | `integration.remote.fetch_before` | `integration.remote.fetchBefore` |
 | `integration.remote.push_after` | `integration.remote.pushAfter` |
 | `max_concurrent` | `maxConcurrent` |
 
-JFDI continues to accept these keys. Any command that loads a config containing
-one prints a single notice suggesting `jfdi update-config`; the notice is a
-nudge, not an error.
+JFDI continues to accept the spelling aliases except the two removed round keys.
+A normal command rejects either round key with a message pointing at
+`jfdi update-config`. Other legacy spellings print a single migration notice;
+the notice is a nudge, not an error.
 
 Run `jfdi update-config` from anywhere inside the repository to rename every
-legacy key mechanically. It works on the raw JSON so keys outside JFDI's schema
-survive, reports each rename, and replaces the file atomically. A second run is
-a successful no-op. Invalid JSON cannot be migrated: the command exits non-zero
+legacy key mechanically. It drops either removed round key and reports that
+`pipeline.maxRejections` must be configured explicitly because rounds and
+rejections do not map. It works on the raw JSON so keys outside JFDI's schema
+survive, reports each rename or removal, and replaces the file atomically. A
+second run is a successful no-op. Invalid JSON cannot be migrated: the command exits non-zero
 with the file and parse error and leaves the file untouched. This key-only
 migration does not synthesize the required `stages` section described above.
 

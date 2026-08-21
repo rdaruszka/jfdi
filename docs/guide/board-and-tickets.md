@@ -59,7 +59,7 @@ about (see [Configuration](configuration.md#board)):
 | `begin` | Ready | Cards here are ready for dispatch — the explicit human "go" signal. Order matters: top card first. |
 | `inProgress` | In Progress | Where the coordinator moves a card it has picked up. |
 | `done` | Done | Finished, merged cards land here, checked off. |
-| `blocked` | Blocked | The pipeline hit a hard block, escalated, or exhausted its rounds. The reason is in the ticket note. |
+| `blocked` | Blocked | The pipeline hit a hard block, escalated, or exhausted a reviewer rejection budget or the gate. The reason is in the ticket note. |
 | `readyToMerge` | Ready to Merge | Used in `on-approval` integration mode: passed pipelines wait here for your sign-off. |
 | `inbox` | Inbox | Agent proposals (see [Observations](#the-inbox-observations)). Never dispatched from. |
 
@@ -156,8 +156,8 @@ Users can't see spending in one area without paging through everything.
 
 ### 2026-08-03T09:00:00.000Z — JFDI started
 
-> Run started — 3 rounds max. Working branch `jfdi/filter-by-category`, will
-> queue for approval before merging to `main`.
+> Run started — 4 rounds max. Code Review may reject 2×, QA 1×. Working branch
+> `jfdi/filter-by-category`, will queue for approval before merging to `main`.
 
 ### 2026-08-03T09:30:00.000Z — Implementation round 1 complete
 
@@ -168,7 +168,7 @@ Users can't see spending in one area without paging through everything.
 >
 > JFDI Implementation complete — gate green (build ✓ test ✓ lint ✓), moving to Code Review
 >
-> JFDI-Round: 1/3
+> JFDI-Round: 1/4
 > JFDI-Duration: 4m
 > JFDI-Cost: $0.72
 ```
@@ -196,8 +196,9 @@ is absent.
   user-facing outcomes rather than implementation instructions. Optional
   `## Technical context` is for genuine constraints, not proposed solutions.
 - **`## Questions`** — the escalation queue, written on escalation (question +
-  recommended answer), on exhausted rounds (the round history), or on a blocked
-  integration. Each entry ends with instructions for how to resume. It is
+  recommended answer), when a reviewer exceeds its rejection budget (the round
+  history), or on a blocked integration. Each entry ends with instructions for
+  how to resume. It is
   JFDI-owned and append-only: a ticket-writing agent never creates or edits it.
 - **`## Comments`** — an append-only trail, oldest first, with one entry per
   phase. A clean single-round run has `JFDI started`, one `complete` entry for
@@ -206,8 +207,11 @@ is absent.
   `JFDI-Round`/`JFDI-Duration`/`JFDI-Cost` trailers. A stage that changed the
   worktree also carries its commit message verbatim; gate-fix commit messages
   accumulate inside the same round's Implementation entry. Failed verdicts and
-  interruptions still produce exactly one entry for that stage and round. In
-  on-approval mode the QA status names the approval queue; approval itself does
+  interruptions still produce exactly one entry for that stage and round. A
+  reviewer entry states its running rejection count and budget; when the budget
+  is exceeded, the final entry and blocked event both say, for example,
+  `Code Review rejected 3 times (budget 2)`. In on-approval mode the QA status
+  names the approval queue; approval itself does
   not add a sixth comment. The Integration entry carries the whole-run
   [cost-and-time table](pipeline.md#cost-and-time). So the note tells the whole
   story without `git log`, and `git log` tells it without the note. See
@@ -313,7 +317,7 @@ folder and its own state directory.
 ```mermaid
 flowchart LR
     B[begin] -->|coordinator dispatches| IP[in progress]
-    IP -->|escalation / rounds exhausted / crash| BL[blocked]
+    IP -->|escalation / rejection or gate exhausted / crash| BL[blocked]
     IP -->|pipeline passed, on-approval| RTM[ready to merge]
     IP -->|pipeline passed, auto| D[done ✓]
     RTM -->|jfdi merge / drag to begin / hand-merge detected| D
@@ -340,7 +344,8 @@ have to drag anything anywhere.
 
 This is checked on every scan, not just at startup, so "in progress with
 nothing behind it" heals itself rather than being a boot-time special case. A
-ticket that genuinely cannot be finished still exhausts its rounds and lands in
-**Blocked** the ordinary way. Agent-provider failures are exempt and
+ticket that genuinely cannot be finished still exhausts a reviewer rejection
+budget or the gate and lands in **Blocked** the ordinary way. Agent-provider
+failures are exempt and
 [pause the tool](pipeline.md#when-the-provider-goes-down) instead; an exhausted
 remote git fetch or push is an integration failure and does block its card.

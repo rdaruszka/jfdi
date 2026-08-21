@@ -1003,7 +1003,7 @@ describe("Coordinator", () => {
   });
 
   it("materializes earlier-round observations when the run blocks", async () => {
-    fixture.config.pipeline.maxRounds = 1;
+    fixture.config.pipeline.maxRejections = { "code-review": 0, qa: 0 };
     const context = fixture.context(async (prompt, options) => {
       const stage = sessionKindOf(prompt);
       if (stage === "implementation") {

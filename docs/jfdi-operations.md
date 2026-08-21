@@ -11,7 +11,9 @@ The workflow watches a Kanban board (`.jfdi/board.md`). When a card reaches
 the begin column, the coordinator dispatches a **run**: an isolated git
 worktree on its own branch, and a pipeline of fresh agent sessions —
 **Implementation → mechanical gate → Code Review → QA** — with feedback
-rounds (cap: `pipeline.maxRounds`, default 3). When both reviews sign off,
+rounds bounded by per-reviewer rejection budgets (`pipeline.maxRejections`;
+Code Review 2 and QA 1 by default, for a derived ceiling of 4 rounds). When both
+reviews sign off,
 **Integration** merges the branch into the target branch: globally
 serialized, one merge at a time, landing a merge commit after re-running the
 gate on the merged tree. Several runs proceed concurrently
@@ -50,12 +52,13 @@ zero.** The pipeline runs it — after every implementation session, after QA
 Agents are told not to run it themselves.
 
 A gate failure is cheap by design: it feeds straight back into the session
-whose handoff made it red (up to 10 fix sessions) *without consuming a round*.
+whose handoff made it red (up to 3 fix sessions) *without consuming a round*.
 After Implementation, that means its own session. After QA adds tests, QA gets
 the failed step and output and fixes only paths from its initial handoff; the
 pipeline checks that path scope before preserving both existing sign-offs. A
-wider QA change or a gate still red at the cap consumes the round. A review
-failure costs a round. This asymmetry is the point: **the gate is
+wider QA change consumes the round. A gate still red on its fourth attempt
+blocks directly. A review rejection costs a round and counts only against that
+reviewer's budget; a pass is free. This asymmetry is the point: **the gate is
 the workflow's cheapest reviewer**, and every standard you can encode
 mechanically — lint rule, type check, format check, naming convention, test
 suite — is one that review sessions never spend tokens or rounds on again.
@@ -136,7 +139,7 @@ identifiers. In particular, every gate entry has exactly `name` and `command`:
     { "name": "test", "command": "pnpm test" },
     { "name": "lint", "command": "pnpm lint" }
   ],
-  "pipeline": { "maxRounds": 3 },
+  "pipeline": { "maxRejections": { "code-review": 2, "qa": 1 } },
   "integration": {
     "targetBranch": "main",
     "mode": "on-approval",
@@ -156,12 +159,15 @@ identifiers. In particular, every gate entry has exactly `name` and `command`:
 ```
 
 Older projects may contain the legacy spellings `cmd`, `ticketsDir`,
-`max_rounds`, `target_branch`, `fetch_before`, `push_after`, and
+`target_branch`, `fetch_before`, `push_after`, and
 `max_concurrent`. They remain readable, but whenever setup touches
 `config.json`, normalize every legacy spelling to its canonical key above.
+The removed `pipeline.maxRounds` and `pipeline.max_rounds` keys are not
+readable; `jfdi update-config` removes them without inventing a rejection
+mapping, after which the reviewer budgets can be configured explicitly.
 
 - **`.jfdi/config.json`** — the gate; board path and column names;
-  `ticketsDirectory`; `pipeline.maxRounds`; `integration.targetBranch` (never
+  `ticketsDirectory`; `pipeline.maxRejections`; `integration.targetBranch` (never
   assume `main`), `integration.mode` (`on-approval` holds merges for a human,
   `auto` lands them), `integration.remote` (opt-in fetch-before/push-after);
   `permissions.mode` (`auto` = sandboxed autonomous, default; `bypass` =

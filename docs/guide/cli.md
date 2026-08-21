@@ -59,7 +59,7 @@ blocking means blocked on every path, so the override has to be spelled out.
 |---|---|
 | 0 | Pipeline passed (and merged, in auto mode) |
 | 1 | Error (not a repo, bad config, unexpected failure) |
-| 2 | Blocked — unresolved `blocked-by` tickets (run `--force` to override), escalation, exhausted rounds, or blocked integration; see the ticket note |
+| 2 | Blocked — unresolved `blocked-by` tickets (run `--force` to override), escalation, an exhausted reviewer rejection budget or gate, or blocked integration; see the ticket note |
 
 ## `jfdi start`
 

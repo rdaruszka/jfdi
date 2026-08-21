@@ -2,9 +2,9 @@
  * End-to-end acceptance for the canonical config schema's legacy-key aliases.
  *
  * Derived from the ticket, not the diff. The schema's keys became camelCase
- * (`gate[].command`, `ticketsDirectory`, `pipeline.maxRounds`,
+ * (`gate[].command`, `ticketsDirectory`,
  * `integration.targetBranch`, `integration.remote.fetchBefore`/`pushAfter`,
- * `maxConcurrent`), and every prior spelling (`cmd`, `ticketsDir`, `max_rounds`,
+ * `maxConcurrent`), and every prior spelling (`cmd`, `ticketsDir`,
  * `target_branch`, `fetch_before`, `push_after`, `max_concurrent`) must keep
  * working as aliases while producing one migration notice. The acceptance
  * criteria this file exercises against the built CLI, not `parseConfig` in
@@ -178,12 +178,12 @@ afterEach(async () => {
 
 describe("legacy config keys drive a real run identically to canonical", () => {
   it(
-    "runs the pipeline from an all-legacy config: cmd gate executes and the note lands in ticketsDir",
+    "runs the pipeline from config aliases: cmd gate executes and the note lands in ticketsDir",
     async () => {
       const sandbox = await makeSandbox();
       expect((await runCli(sandbox, ["init", "--bare"])).code).toBe(0);
 
-      // Rewrite the scaffolded (canonical) config entirely in legacy spellings.
+      // Rewrite aliased fields from the scaffolded config in legacy spellings.
       // `stages` is untouched by this ticket, so it is carried over verbatim to
       // keep the config valid; every aliased key uses its legacy name.
       const canonical = await readConfig(sandbox);
@@ -191,7 +191,7 @@ describe("legacy config keys drive a real run identically to canonical", () => {
         board: canonical.board,
         ticketsDir: LEGACY_TICKETS_DIRECTORY,
         gate: [{ name: "check", cmd: GATE_COMMAND }],
-        pipeline: { max_rounds: 3 },
+        pipeline: canonical.pipeline,
         integration: {
           target_branch: "main",
           mode: "on-approval",

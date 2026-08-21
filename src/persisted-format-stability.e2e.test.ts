@@ -34,7 +34,7 @@ const cliPath = path.join(projectRoot, "dist", "index.js");
 /**
  * The agent both stubbed CLIs play. Implementation commits a file so the
  * pipeline has a real commit to review, gate and merge. When `FAIL_CODE_REVIEW`
- * is set it fails Code Review every round, so the run exhausts its rounds and
+ * is set it fails Code Review every round, so the run exhausts that rejection budget and
  * leaves a *populated* history.json (a clean run writes an empty list, which
  * would not exercise the FeedbackItem keys).
  */
@@ -265,7 +265,7 @@ describe("persisted files keep their exact key structure across the naming sweep
   it("writes a populated history.json with the pinned FeedbackItem keys", async () => {
     const sandbox = await makeSandbox();
     expect((await runCli(sandbox, ["init", "--bare"])).code).toBe(0);
-    // Code Review fails every round → rounds exhaust → carried feedback persists.
+    // Code Review fails every round → its rejection budget exhausts → feedback persists.
     const run = await runCli(sandbox, ["run", "Add a greeting"], { FAIL_CODE_REVIEW: "1" });
     const ticketId = ticketIdOf(run.stdout);
 

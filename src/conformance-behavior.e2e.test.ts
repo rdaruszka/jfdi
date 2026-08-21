@@ -350,7 +350,7 @@ describe("CLI surface", () => {
       );
       expect(config.integration.targetBranch).toBe("main");
       expect(config.permissions).toEqual({ mode: "auto" });
-      expect(config.pipeline.maxRounds).toBe(3);
+      expect(config.pipeline.maxRejections).toEqual({ "code-review": 2, qa: 1 });
       // The scaffolded mix: a cross-provider review, everything else on Claude.
       expect(config.stages).toEqual({
         implementation: { harness: "claude", model: "claude-opus-4-8", effort: "high" },
@@ -488,11 +488,11 @@ describe("pipeline behavior", () => {
         "Integration complete",
       ]);
       const note = await readTicketNote(sandbox, ticketId);
-      expect(note).toContain("> Run started — 3 rounds max.");
+      expect(note).toContain("> Run started — 4 rounds max. Code Review may reject 2×, QA 1×.");
       // The commit's message, verbatim, on the note as well.
       expect(note).toContain(`> ${ticketId}: stub-scribed subject`);
       expect(note).toContain("> JFDI Implementation complete — gate green");
-      expect(note).toContain("> JFDI-Round: 1/3");
+      expect(note).toContain("> JFDI-Round: 1/4");
       expect(note).toMatch(
         /> JFDI Code Review PASSED — sign-off on commit `[0-9a-f]{7}`, moving to QA/,
       );
@@ -520,7 +520,7 @@ describe("pipeline behavior", () => {
       // only location both providers' sandboxed permission modes let an agent
       // write. A state-directory path here is the regression that blocked
       // every auto-mode run: the sandbox rejects the write, the pipeline sees
-      // invalid-verdict, and the card dies at maxRounds.
+      // invalid-verdict, and the card blocks.
       const prompts = (await fs.readFile(sandbox.argvLog, "utf8"))
         .split("\n")
         .filter((line) => line.trim() !== "")
@@ -555,7 +555,7 @@ describe("pipeline behavior", () => {
   );
 
   it(
-    "exhausts maxRounds on a persistent review failure and exits blocked",
+    "exhausts the Code Review rejection budget on a persistent failure and exits blocked",
     async () => {
       const sandbox = await makeSandbox();
       await initProject(sandbox);
@@ -577,7 +577,7 @@ describe("pipeline behavior", () => {
       expect(shapes.slice(-2)).toEqual(["blocked", "observation"]);
 
       const blocked = events.find((event) => event.type === "blocked");
-      expect(blocked?.data?.reason).toBe("retries exhausted after 3 rounds");
+      expect(blocked?.data?.reason).toBe("Code Review rejected 3 times (budget 2)");
       const board = await fs.readFile(path.join(sandbox.projectRoot, ".jfdi", "board.md"), "utf8");
       expect(board).toContain(`stray TODO in foo.ts *(from ${ticketIdOf(run)})*`);
 
@@ -592,7 +592,7 @@ describe("pipeline behavior", () => {
       ).toHaveLength(1);
       expect(note).toContain("> JFDI Code Review FAILED — moving to Blocked for human review");
       expect(note).toContain("> needs work");
-      expect(note).toContain("All 3 rounds failed. Round history:");
+      expect(note).toContain("Code Review rejected 3 times (budget 2). Round history:");
     },
     PIPELINE_TIMEOUT_MS,
   );
@@ -603,7 +603,7 @@ describe("pipeline behavior", () => {
       const sandbox = await makeSandbox();
       await initProject(sandbox);
 
-      // Every round's code review fails (blocking the run at maxRounds) and
+      // Every round's Code Review fails (eventually exceeding its budget) and
       // carries its own observation in the same verdict. The observation
       // channel's contract says every proposal reaches a human via the inbox,
       // so the reviewer's flag must land there despite the failing outcome —
@@ -727,11 +727,11 @@ describe("trust boundaries", () => {
         ['"hello"', "config root must be an object"],
         [
           JSON.stringify({ pipeline: { maxRounds: "three" }, stages: STAGES }),
-          "maxRounds must be a positive integer",
+          "run `jfdi update-config`",
         ],
         [
-          JSON.stringify({ pipeline: { maxRounds: -1 }, stages: STAGES }),
-          "maxRounds must be a positive integer",
+          JSON.stringify({ pipeline: { maxRejections: { "code-review": -1 } }, stages: STAGES }),
+          "pipeline.maxRejections.code-review must be a non-negative integer",
         ],
         // `stages` is required, and the retired global key is a hard stop —
         // the breaking config change, pinned from outside the process.
@@ -753,6 +753,15 @@ describe("trust boundaries", () => {
         expect(status.stderr, `config: ${body}`).toContain(expected);
         // A diagnostic, not a leaked stack trace.
         expect(status.stderr).not.toContain("    at ");
+      }
+
+      const removedRoundConfig = JSON.stringify({ pipeline: { maxRounds: 3 }, stages: STAGES });
+      await fs.writeFile(configPath, removedRoundConfig);
+      for (const args of [["run", "Removed round config"], ["start"]]) {
+        const result = await runCli(sandbox, args);
+        expect(result.code, args.join(" ")).toBe(1);
+        expect(result.stderr).toContain("pipeline.maxRounds is no longer supported");
+        expect(result.stderr).toContain("jfdi update-config");
       }
 
       // Everything but `stages` still defaults: the section alone parses clean.

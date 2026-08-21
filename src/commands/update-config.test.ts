@@ -23,13 +23,13 @@ describe("updateConfigCommand", () => {
     await fs.rm(project, { recursive: true, force: true });
   });
 
-  it("migrates every legacy spelling without dropping unknown keys or changing config meaning", async () => {
+  it("migrates legacy spellings and removes maxRounds without inventing a rejection mapping", async () => {
     const output = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const legacyConfig = {
       customTopLevel: { owner: "example" },
       ticketsDir: ".workflow/tickets",
       gate: [{ name: "test", cmd: "pnpm test", customGateField: true }],
-      pipeline: { max_rounds: 5, customPipelineField: "kept" },
+      pipeline: { maxRounds: 5, customPipelineField: "kept" },
       integration: {
         target_branch: "develop",
         mode: "auto",
@@ -40,17 +40,15 @@ describe("updateConfigCommand", () => {
     };
     await fs.mkdir(path.dirname(configPath), { recursive: true });
     await fs.writeFile(configPath, `${JSON.stringify(legacyConfig, null, 2)}\n`);
-    const configBefore = parseConfig(legacyConfig);
-
     expect(await updateConfigCommand(project)).toBe(0);
 
     const migrated = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
-    expect(parseConfig(migrated)).toEqual(configBefore);
+    expect(parseConfig(migrated).pipeline).toEqual(defaultConfig().pipeline);
     expect(migrated).toMatchObject({
       customTopLevel: { owner: "example" },
       ticketsDirectory: ".workflow/tickets",
       gate: [{ name: "test", command: "pnpm test", customGateField: true }],
-      pipeline: { maxRounds: 5, customPipelineField: "kept" },
+      pipeline: { customPipelineField: "kept" },
       integration: {
         targetBranch: "develop",
         mode: "auto",
@@ -62,7 +60,7 @@ describe("updateConfigCommand", () => {
     for (const legacyKey of [
       "ticketsDir",
       "cmd",
-      "max_rounds",
+      "maxRounds",
       "target_branch",
       "fetch_before",
       "push_after",
@@ -74,7 +72,6 @@ describe("updateConfigCommand", () => {
     for (const rename of [
       "ticketsDir → ticketsDirectory",
       "gate[0].cmd → gate[0].command",
-      "pipeline.max_rounds → pipeline.maxRounds",
       "integration.target_branch → integration.targetBranch",
       "integration.remote.fetch_before → integration.remote.fetchBefore",
       "integration.remote.push_after → integration.remote.pushAfter",
@@ -82,6 +79,9 @@ describe("updateConfigCommand", () => {
     ]) {
       expect(reportedRenames).toContain(rename);
     }
+    expect(reportedRenames).toContain(
+      "pipeline.maxRounds removed; configure pipeline.maxRejections (rounds and rejections do not map)",
+    );
   });
 
   it("is idempotent and reports a canonical config as unchanged", async () => {

@@ -17,7 +17,7 @@ export async function updateConfigCommand(cwd: string = process.cwd()): Promise<
 
   const raw = parseConfigJson(content, configPath);
   const migration = migrateLegacyConfigKeys(raw);
-  if (migration.renames.length === 0) {
+  if (migration.renames.length === 0 && migration.removals.length === 0) {
     console.log(`${CONFIG_RELATIVE_PATH} already uses canonical config keys; nothing to update`);
     return 0;
   }
@@ -25,6 +25,11 @@ export async function updateConfigCommand(cwd: string = process.cwd()): Promise<
   await atomicWrite(configPath, `${JSON.stringify(migration.raw, null, 2)}\n`);
   for (const rename of migration.renames) {
     console.log(`${rename.legacyPath} → ${rename.canonicalPath}`);
+  }
+  for (const removal of migration.removals) {
+    console.log(
+      `${removal.legacyPath} removed; configure ${removal.replacementPath} (rounds and rejections do not map)`,
+    );
   }
   return 0;
 }
