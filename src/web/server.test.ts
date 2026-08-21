@@ -1,6 +1,6 @@
 import { createServer } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { defaultConfig } from "../config.js";
+import { ConfigError, defaultConfig } from "../config.js";
 import { EventLog } from "../events.js";
 import type { SettingsSnapshot } from "../settings.js";
 import { startWebFrontEnd, type WebFrontEnd, type WebSettingsSurface } from "./server.js";
@@ -8,11 +8,19 @@ import { startWebFrontEnd, type WebFrontEnd, type WebSettingsSurface } from "./s
 let frontEnd: WebFrontEnd | null = null;
 
 function memorySettings(): WebSettingsSurface {
-  let snapshot: SettingsSnapshot = { config: defaultConfig(), revision: "initial" };
+  let snapshot: SettingsSnapshot = {
+    config: defaultConfig(),
+    editableConfig: defaultConfig(),
+    revision: "initial",
+  };
   return {
     load: () => Promise.resolve(snapshot),
     save: (staged) => {
-      snapshot = { config: staged as SettingsSnapshot["config"], revision: "saved" };
+      snapshot = {
+        config: staged as SettingsSnapshot["config"],
+        editableConfig: staged as SettingsSnapshot["editableConfig"],
+        revision: "saved",
+      };
       return Promise.resolve(snapshot);
     },
   };
@@ -83,6 +91,16 @@ describe("web front end", () => {
     expect(pageMarkup).toContain('id="settings-cancel"');
     expect(pageMarkup).toContain('id="settings-reload"');
     expect(pageMarkup).toContain("switching front ends requires a restart");
+    expect(pageMarkup).not.toContain("<textarea");
+    expect(pageMarkup).toContain('data-config-path="pipeline.maxRounds" type="number"');
+    expect(pageMarkup).toContain(
+      'data-config-path="integration.remote.fetchBefore" type="checkbox"',
+    );
+    expect(pageMarkup).toContain('data-config-path="integration.mode"');
+    expect(pageMarkup).toContain('id="settings-gate-add"');
+    expect(pageMarkup).toContain('settingsChoices = {"integrationModes":["auto","on-approval"]');
+    expect(pageMarkup).toContain('"harnessNames":["claude","codex"]');
+    expect(pageMarkup).toContain("pointAtSettingsField(body.field, body.error)");
     expect(pageMarkup).toContain('id="kanban"');
     expect(pageMarkup).not.toContain("Active (0)");
     expect(pageMarkup).not.toContain(">Events<");
@@ -218,11 +236,17 @@ describe("web front end", () => {
       targetBranch: "main",
       integrationMode: "auto",
       settings: {
-        load: () => Promise.resolve({ config: defaultConfig(), revision: "disk-version" }),
+        load: () =>
+          Promise.resolve({
+            config: defaultConfig(),
+            editableConfig: defaultConfig(),
+            revision: "disk-version",
+          }),
         save: (staged, revision) => {
           saves.push({ staged, revision });
           return Promise.resolve({
             config: staged as SettingsSnapshot["config"],
+            editableConfig: staged as SettingsSnapshot["editableConfig"],
             revision: "saved-version",
           });
         },
@@ -240,6 +264,7 @@ describe("web front end", () => {
     const loaded = await fetch(new URL("settings", frontEnd.url));
     expect(await loaded.json()).toMatchObject({
       config: { maxConcurrent: 2, frontEnd: "terminal" },
+      editableConfig: { maxConcurrent: 2, frontEnd: "terminal" },
       revision: "disk-version",
     });
     expect(saves).toEqual([]);
@@ -258,6 +283,37 @@ describe("web front end", () => {
       "Ready to Merge",
     );
     await reader.cancel();
+  });
+
+  it("returns the offending field with a configuration refusal", async () => {
+    frontEnd = await startWebFrontEnd({
+      log: new EventLog("unused", false),
+      boardName: "board.md",
+      targetBranch: "main",
+      integrationMode: "auto",
+      settings: {
+        load: () =>
+          Promise.resolve({
+            config: defaultConfig(),
+            editableConfig: defaultConfig(),
+            revision: "disk-version",
+          }),
+        save: () =>
+          Promise.reject(new ConfigError("pipeline.maxRounds must be a positive integer")),
+      },
+    });
+
+    const response = await fetch(new URL("settings", frontEnd.url), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ config: defaultConfig(), revision: "disk-version" }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "pipeline.maxRounds must be a positive integer",
+      field: "pipeline.maxRounds",
+    });
   });
 
   it("frees its assigned port when closed", async () => {
