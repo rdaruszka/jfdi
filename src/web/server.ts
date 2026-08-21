@@ -548,6 +548,9 @@ const PAGE = `<!doctype html>
     function cancelSettings() {
       settingsRevision = ""; settingsBaseConfig = null; element("settings-gate").replaceChildren(); element("settings-stages").replaceChildren(); settingsMessage(""); element("settings-panel").hidden = true;
     }
+    function handleSettingsKeydown(event) {
+      if (event.key === "Escape" && !element("settings-panel").hidden) cancelSettings();
+    }
     async function saveSettings(event) {
       event.preventDefault(); clearFieldErrors();
       if (!element("settings-form").reportValidity()) return;
@@ -573,6 +576,7 @@ const PAGE = `<!doctype html>
     element("settings-form").addEventListener("input", (event) => { event.target.setCustomValidity(""); event.target.removeAttribute("aria-invalid"); });
     element("board-return").addEventListener("click", () => { location.hash = ""; });
     window.addEventListener("hashchange", renderRoute);
+    window.addEventListener("keydown", handleSettingsKeydown);
     renderRoute();
     setInterval(() => { if (selectedTicketId !== null) refreshTicketDetail(); }, DETAIL_REFRESH_MS);
     new EventSource("events").onmessage = (message) => render(JSON.parse(message.data));
