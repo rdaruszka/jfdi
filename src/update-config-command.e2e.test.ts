@@ -6,8 +6,9 @@
  * built CLI (`dist/index.js`) in a scratch repo under the OS temp dir. The
  * acceptance criteria exercised here:
  *
- *   1. Running on a config using every legacy spelling produces a canonical
- *      config; keys the schema does not define survive the rewrite.
+ *   1. Running on a config using legacy spellings plus the removed
+ *      `pipeline.maxRounds` produces a canonical config without inventing a
+ *      rejection mapping; keys the schema does not define survive the rewrite.
  *   2. A second run reports there was nothing to change and leaves the file
  *      byte-for-byte identical.
  *   3. No agent session is spawned on any path — a stub `claude`/`codex` on
@@ -133,14 +134,14 @@ afterEach(async () => {
   );
 });
 
-describe("jfdi update-config migrates legacy config keys mechanically", () => {
+describe("jfdi update-config migrates and removes legacy config keys mechanically", () => {
   it("rewrites every legacy spelling to canonical, keeps unknown keys, and spawns no agent", async () => {
     const sandbox = await makeSandbox();
     const legacyConfig = {
       customTop: { owner: "example" },
       ticketsDir: ".legacy-tickets",
       gate: [{ name: "test", cmd: "pnpm test", customGate: true }],
-      pipeline: { max_rounds: 5, customPipe: "kept" },
+      pipeline: { maxRounds: 5, customPipe: "kept" },
       integration: {
         target_branch: "develop",
         mode: "auto",
@@ -157,7 +158,6 @@ describe("jfdi update-config migrates legacy config keys mechanically", () => {
     for (const rename of [
       "ticketsDir → ticketsDirectory",
       "gate[0].cmd → gate[0].command",
-      "pipeline.max_rounds → pipeline.maxRounds",
       "integration.target_branch → integration.targetBranch",
       "integration.remote.fetch_before → integration.remote.fetchBefore",
       "integration.remote.push_after → integration.remote.pushAfter",
@@ -165,6 +165,9 @@ describe("jfdi update-config migrates legacy config keys mechanically", () => {
     ]) {
       expect(result.stdout).toContain(rename);
     }
+    expect(result.stdout).toContain(
+      "pipeline.maxRounds removed; configure pipeline.maxRejections (rounds and rejections do not map)",
+    );
 
     const migrated = JSON.parse(await fs.readFile(sandbox.configPath, "utf8")) as Record<
       string,
@@ -175,7 +178,7 @@ describe("jfdi update-config migrates legacy config keys mechanically", () => {
       customTop: { owner: "example" },
       ticketsDirectory: ".legacy-tickets",
       gate: [{ name: "test", command: "pnpm test", customGate: true }],
-      pipeline: { maxRounds: 5, customPipe: "kept" },
+      pipeline: { customPipe: "kept" },
       integration: {
         targetBranch: "develop",
         mode: "auto",
@@ -187,7 +190,7 @@ describe("jfdi update-config migrates legacy config keys mechanically", () => {
     for (const legacyKey of [
       "ticketsDir",
       "cmd",
-      "max_rounds",
+      "maxRounds",
       "target_branch",
       "fetch_before",
       "push_after",

@@ -276,13 +276,13 @@ describe("a clean auto-mode run's comment trail", () => {
       // The started comment states the run's parameters, with the auto merge
       // sentence — not the on-approval one.
       expect(started?.body).toBe(
-        `Run started — 3 rounds max. Working branch \`jfdi/${ticketId}\`, will merge to \`main\`.`,
+        `Run started — 4 rounds max. Code Review may reject 2×, QA 1×. Working branch \`jfdi/${ticketId}\`, will merge to \`main\`.`,
       );
 
       // Every stage comment — the no-commit Code Review included — carries all
       // three trailers.
       for (const stage of [implementation, codeReview, qa]) {
-        expect(stage?.body).toContain("JFDI-Round: 1/3");
+        expect(stage?.body).toContain("JFDI-Round: 1/4");
         expect(stage?.body).toContain("JFDI-Duration:");
         expect(stage?.body).toContain("JFDI-Cost:");
       }
@@ -349,7 +349,7 @@ describe("a round that needed an in-round gate fix", () => {
       // trail without a second comment.
       expect(implementation?.body).toContain("--- Gate-fix session 1 ---");
       expect(implementation?.body).toContain(
-        "JFDI Implementation complete — gate failed at `flaky`, continuing with gate fix 1 of 10",
+        "JFDI Implementation complete — gate failed at `flaky`, continuing with gate fix 1 of 3",
       );
       expect(implementation?.body).toContain(
         "JFDI Implementation complete — gate green (flaky ✓), moving to Code Review",

@@ -30,7 +30,10 @@
     }
   ],
   "pipeline": {
-    "maxRounds": 3
+    "maxRejections": {
+      "code-review": 2,
+      "qa": 1
+    }
   },
   "integration": {
     "targetBranch": "main",

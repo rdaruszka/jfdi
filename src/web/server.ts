@@ -28,6 +28,7 @@ const HTTP_INTERNAL_SERVER_ERROR = 500;
 const HTTP_SERVICE_UNAVAILABLE = 503;
 
 export interface WebSettingsSurface {
+  frontEndInEffect(): JfdiConfig["frontEnd"];
   load(): Promise<SettingsSnapshot>;
   save(staged: unknown, revision: string): Promise<SettingsSnapshot>;
 }
@@ -264,7 +265,8 @@ const PAGE = `<!doctype html>
         <fieldset>
           <legend>Pipeline and integration</legend>
           <div class="settings-grid">
-            <label class="settings-field">Maximum rounds<input data-config-path="pipeline.maxRounds" type="number" min="1" step="1" required></label>
+            <label class="settings-field">Code Review rejection budget<input data-config-path="pipeline.maxRejections.code-review" type="number" min="0" step="1" required></label>
+            <label class="settings-field">QA rejection budget<input data-config-path="pipeline.maxRejections.qa" type="number" min="0" step="1" required></label>
             <label class="settings-field">Maximum concurrent runs<input data-config-path="maxConcurrent" type="number" min="1" step="1" required></label>
             <label class="settings-field">Target branch<input data-config-path="integration.targetBranch" type="text" required></label>
             <label class="settings-field">Integration mode<select data-config-path="integration.mode"></select></label>
@@ -485,7 +487,8 @@ const PAGE = `<!doctype html>
       setSettingsValue("ticketsDirectory", config.ticketsDirectory);
       for (const name of ["begin", "inProgress", "done", "blocked", "readyToMerge", "inbox"])
         setSettingsValue("board.columns." + name, config.board.columns[name]);
-      setSettingsValue("pipeline.maxRounds", config.pipeline.maxRounds);
+      setSettingsValue("pipeline.maxRejections.code-review", config.pipeline.maxRejections["code-review"]);
+      setSettingsValue("pipeline.maxRejections.qa", config.pipeline.maxRejections.qa);
       setSettingsValue("maxConcurrent", config.maxConcurrent);
       setSettingsValue("integration.targetBranch", config.integration.targetBranch);
       setSettingsValue("integration.mode", config.integration.mode);
@@ -501,7 +504,8 @@ const PAGE = `<!doctype html>
       config.ticketsDirectory = settingsField("ticketsDirectory").value;
       for (const name of ["begin", "inProgress", "done", "blocked", "readyToMerge", "inbox"])
         config.board.columns[name] = settingsField("board.columns." + name).value;
-      config.pipeline.maxRounds = settingsField("pipeline.maxRounds").valueAsNumber;
+      config.pipeline.maxRejections["code-review"] = settingsField("pipeline.maxRejections.code-review").valueAsNumber;
+      config.pipeline.maxRejections.qa = settingsField("pipeline.maxRejections.qa").valueAsNumber;
       config.maxConcurrent = settingsField("maxConcurrent").valueAsNumber;
       config.integration.targetBranch = settingsField("integration.targetBranch").value;
       config.integration.mode = settingsField("integration.mode").value;
@@ -555,7 +559,7 @@ const PAGE = `<!doctype html>
         if (!response.ok) { if (body.field) pointAtSettingsField(body.field, body.error); throw new Error(body.error || "Could not save settings"); }
         settingsRevision = body.revision;
         renderSettings(body.editableConfig);
-        settingsMessage("Saved and applied. Switching front ends still requires a restart.", true);
+        settingsMessage(body.hasPendingFrontEndChange ? "Saved and applied. The new front end takes effect only after restarting jfdi start." : "Saved and applied.", true);
       } catch (error) { settingsMessage(error.message); }
     }
     setSelectOptions(settingsField("integration.mode"), settingsChoices.integrationModes);
@@ -621,7 +625,7 @@ function settingsSaveInput(raw: unknown): { staged: unknown; revision: string } 
 }
 
 function configErrorField(message: string): string | undefined {
-  return /^(board(?:\.columns\.[A-Za-z]+|\.path)?|ticketsDirectory|gate(?:\[\d+\])?(?:\.[A-Za-z]+)?|pipeline(?:\.[A-Za-z]+)?|integration(?:\.[A-Za-z]+)*|permissions(?:\.[A-Za-z]+)?|frontEnd|maxConcurrent|stages(?:\.[A-Za-z-]+)*)/.exec(
+  return /^(board(?:\.columns\.[A-Za-z]+|\.path)?|ticketsDirectory|gate(?:\[\d+\])?(?:\.[A-Za-z]+)?|pipeline(?:\.[A-Za-z-]+)*|integration(?:\.[A-Za-z]+)*|permissions(?:\.[A-Za-z]+)?|frontEnd|maxConcurrent|stages(?:\.[A-Za-z-]+)*)/.exec(
     message,
   )?.[1];
 }
@@ -693,10 +697,14 @@ class RunningWebFrontEnd implements WebFrontEnd {
       }
       if (request.method === "POST") {
         const { staged, revision } = settingsSaveInput(await readSettingsBody(request));
+        const frontEndBeforeSave = this.options.settings.frontEndInEffect();
         const snapshot = await this.options.settings.save(staged, revision);
         this.integrationMode = snapshot.config.integration.mode;
         this.ticketsDirectory = snapshot.config.ticketsDirectory;
-        jsonResponse(response, HTTP_OK, snapshot);
+        jsonResponse(response, HTTP_OK, {
+          ...snapshot,
+          hasPendingFrontEndChange: snapshot.config.frontEnd !== frontEndBeforeSave,
+        });
         this.broadcast();
         return;
       }

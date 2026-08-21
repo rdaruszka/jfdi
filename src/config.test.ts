@@ -2,7 +2,13 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ConfigError, defaultConfig, loadConfig, parseConfig } from "./config.js";
+import {
+  ConfigError,
+  defaultConfig,
+  derivedRoundCeiling,
+  loadConfig,
+  parseConfig,
+} from "./config.js";
 
 /** The scaffolded mix, so a case can vary one entry without restating four. */
 const STAGES = defaultConfig().stages;
@@ -23,7 +29,7 @@ describe("parseConfig", () => {
         { name: "build", command: "npm run build" },
         { name: "test", command: "npm test" },
       ],
-      pipeline: { maxRounds: 3 },
+      pipeline: { maxRejections: { "code-review": 2, qa: 1 } },
       integration: {
         targetBranch: "develop",
         mode: "auto",
@@ -50,7 +56,6 @@ describe("parseConfig", () => {
     const canonical = parseConfig({
       ticketsDirectory: ".workflow/tickets",
       gate: [{ name: "test", command: "pnpm test" }],
-      pipeline: { maxRounds: 5 },
       integration: {
         targetBranch: "develop",
         remote: { fetchBefore: true, pushAfter: true },
@@ -61,7 +66,6 @@ describe("parseConfig", () => {
     const legacy = parseConfig({
       ticketsDir: ".workflow/tickets",
       gate: [{ name: "test", cmd: "pnpm test" }],
-      pipeline: { max_rounds: 5 },
       integration: {
         target_branch: "develop",
         remote: { fetch_before: true, push_after: true },
@@ -71,6 +75,32 @@ describe("parseConfig", () => {
     });
 
     expect(legacy).toEqual(canonical);
+  });
+
+  it("validates reviewer rejection budgets and derives the round ceiling", () => {
+    const config = parseConfig({
+      pipeline: { maxRejections: { "code-review": 3, qa: 0 } },
+      stages: STAGES,
+    });
+    expect(config.pipeline.maxRejections).toEqual({ "code-review": 3, qa: 0 });
+    expect(derivedRoundCeiling(config.pipeline.maxRejections)).toBe(4);
+    expect(() =>
+      parseConfig({
+        pipeline: { maxRejections: { "code-review": -1, qa: 1 } },
+        stages: STAGES,
+      }),
+    ).toThrow("pipeline.maxRejections.code-review must be a non-negative integer");
+    expect(() =>
+      parseConfig({ pipeline: { maxRejections: { security: 1 } }, stages: STAGES }),
+    ).toThrow('pipeline.maxRejections has an unknown reviewer "security"');
+  });
+
+  it("rejects removed round limits with the migration command", () => {
+    for (const pipeline of [{ maxRounds: 3 }, { max_rounds: 3 }]) {
+      expect(() => parseConfig({ pipeline, stages: STAGES })).toThrow(
+        "run `jfdi update-config` to remove it, then configure pipeline.maxRejections",
+      );
+    }
   });
 
   it("accepts matching canonical and legacy spellings", () => {
@@ -280,7 +310,6 @@ describe("loadConfig", () => {
       JSON.stringify({
         ticketsDir: ".workflow/tickets",
         gate: [{ name: "test", cmd: "pnpm test" }],
-        pipeline: { max_rounds: 5 },
         integration: {
           target_branch: "develop",
           remote: { fetch_before: true, push_after: true },
@@ -297,7 +326,6 @@ describe("loadConfig", () => {
     for (const key of [
       "ticketsDir",
       "cmd",
-      "max_rounds",
       "target_branch",
       "fetch_before",
       "push_after",

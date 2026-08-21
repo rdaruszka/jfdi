@@ -24,6 +24,7 @@ function memorySettings(): WebSettingsSurface {
     revision: "initial",
   };
   return {
+    frontEndInEffect: () => "terminal",
     load: () => Promise.resolve(snapshot),
     save: (staged) => {
       snapshot = {
@@ -153,7 +154,10 @@ describe("web front end", () => {
     expect(pageMarkup).toContain('id="settings-reload"');
     expect(pageMarkup).toContain("switching front ends requires a restart");
     expect(pageMarkup).not.toContain("<textarea");
-    expect(pageMarkup).toContain('data-config-path="pipeline.maxRounds" type="number"');
+    expect(pageMarkup).toContain(
+      'data-config-path="pipeline.maxRejections.code-review" type="number"',
+    );
+    expect(pageMarkup).toContain('data-config-path="pipeline.maxRejections.qa" type="number"');
     expect(pageMarkup).toContain(
       'data-config-path="integration.remote.fetchBefore" type="checkbox"',
     );
@@ -162,6 +166,9 @@ describe("web front end", () => {
     expect(pageMarkup).toContain('settingsChoices = {"integrationModes":["auto","on-approval"]');
     expect(pageMarkup).toContain('"harnessNames":["claude","codex"]');
     expect(pageMarkup).toContain("pointAtSettingsField(body.field, body.error)");
+    expect(pageMarkup).toContain(
+      'body.hasPendingFrontEndChange ? "Saved and applied. The new front end takes effect only after restarting jfdi start." : "Saved and applied."',
+    );
     expect(pageMarkup).toContain('id="kanban"');
     expect(pageMarkup).toContain('id="ticket-detail"');
     expect(pageMarkup).toContain('id="board-return"');
@@ -466,6 +473,7 @@ describe("web front end", () => {
       targetBranch: "main",
       integrationMode: "auto",
       settings: {
+        frontEndInEffect: () => "terminal",
         load: () =>
           Promise.resolve({
             config: defaultConfig(),
@@ -515,6 +523,38 @@ describe("web front end", () => {
     await reader.cancel();
   });
 
+  it("reports a pending front-end change against the value in effect before Save", async () => {
+    const startedFrontEnd = await startWebFrontEnd({
+      log: new EventLog("unused", false),
+      projectRoot: "unused",
+      ticketsDirectory: ".jfdi/tickets",
+      boardName: "board.md",
+      targetBranch: "main",
+      integrationMode: "auto",
+      settings: memorySettings(),
+    });
+    frontEnd = startedFrontEnd;
+
+    const save = async (config: SettingsSnapshot["config"], revision: string) => {
+      const response = await fetch(new URL("settings", startedFrontEnd.url), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config, revision }),
+      });
+      expect(response.status).toBe(200);
+      return (await response.json()) as { hasPendingFrontEndChange: boolean; revision: string };
+    };
+
+    const unchanged = await save({ ...defaultConfig(), maxConcurrent: 4 }, "initial");
+    expect(unchanged.hasPendingFrontEndChange).toBe(false);
+
+    const changed = await save({ ...defaultConfig(), frontEnd: "web" }, unchanged.revision);
+    expect(changed.hasPendingFrontEndChange).toBe(true);
+
+    const changedBack = await save({ ...defaultConfig(), frontEnd: "terminal" }, changed.revision);
+    expect(changedBack.hasPendingFrontEndChange).toBe(false);
+  });
+
   it("returns the offending field with a configuration refusal", async () => {
     frontEnd = await startWebFrontEnd({
       log: new EventLog("unused", false),
@@ -524,6 +564,7 @@ describe("web front end", () => {
       targetBranch: "main",
       integrationMode: "auto",
       settings: {
+        frontEndInEffect: () => "terminal",
         load: () =>
           Promise.resolve({
             config: defaultConfig(),
@@ -531,7 +572,9 @@ describe("web front end", () => {
             revision: "disk-version",
           }),
         save: () =>
-          Promise.reject(new ConfigError("pipeline.maxRounds must be a positive integer")),
+          Promise.reject(
+            new ConfigError("pipeline.maxRejections.qa must be a non-negative integer"),
+          ),
       },
     });
 
@@ -543,8 +586,8 @@ describe("web front end", () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
-      error: "pipeline.maxRounds must be a positive integer",
-      field: "pipeline.maxRounds",
+      error: "pipeline.maxRejections.qa must be a non-negative integer",
+      field: "pipeline.maxRejections.qa",
     });
   });
 

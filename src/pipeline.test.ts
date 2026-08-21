@@ -25,6 +25,10 @@ import { resolveTicket } from "./tickets.js";
 
 let fixture: Fixture;
 
+function scriptedReviewVerdict(verdict: string, feedback: string): Record<string, string> {
+  return verdict === "fail" ? { verdict, feedback } : { verdict: "pass" };
+}
+
 beforeEach(async () => {
   fixture = await makeFixture({
     gate: [{ name: "check", command: "test -f impl.txt" }],
@@ -117,7 +121,7 @@ describe("runPipeline", () => {
     context = fixture.context(() => Promise.resolve({ ok: true, text: "" }));
     context.config = {
       ...context.config,
-      pipeline: { maxRounds: 2 },
+      pipeline: { maxRejections: { "code-review": 1, qa: 0 } },
       stages: {
         ...context.config.stages,
         implementation: { harness: "claude", model: "original-implementation" },
@@ -199,7 +203,7 @@ describe("runPipeline", () => {
     context = fixture.context(() => Promise.resolve({ ok: true, text: "" }));
     context.config = {
       ...context.config,
-      pipeline: { maxRounds: 2 },
+      pipeline: { maxRejections: { "code-review": 1, qa: 0 } },
       stages: {
         ...context.config.stages,
         "code-review": { harness: "codex", model: "original-review" },
@@ -320,7 +324,7 @@ describe("runPipeline", () => {
     expect(note.comments).toHaveLength(4);
     for (const comment of note.comments.slice(1)) {
       expect(comment.body).toContain("Decisions:");
-      expect(comment.body).toContain("JFDI-Round: 1/3");
+      expect(comment.body).toContain("JFDI-Round: 1/4");
       expect(comment.body).toContain("JFDI-Duration:");
       expect(comment.body).toContain("JFDI-Cost:");
     }
@@ -345,7 +349,7 @@ describe("runPipeline", () => {
       await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8"),
     );
     expect(note.comments[0]?.body).toBe(
-      `Run started — 3 rounds max. Working branch \`jfdi/${ticket.id}\`, will merge to \`main\`.`,
+      `Run started — 4 rounds max. Code Review may reject 2×, QA 1×. Working branch \`jfdi/${ticket.id}\`, will merge to \`main\`.`,
     );
   });
 
@@ -758,7 +762,7 @@ describe("runPipeline", () => {
     expect(outcome.report.rounds).toBe(1);
     const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8");
     expect(note).toContain(
-      "JFDI Implementation complete — gate failed at `check`, continuing with gate fix 1 of 10",
+      "JFDI Implementation complete — gate failed at `check`, continuing with gate fix 1 of 3",
     );
     expect(
       parseTicketNote(note).comments.filter((comment) => comment.stage === "implementation"),
@@ -784,13 +788,11 @@ describe("runPipeline", () => {
     );
   });
 
-  // Two rounds of eleven sessions each: real git traffic, so a real budget.
-  it("gate fixes exhaust their in-round cap before the failure consumes the round", {
+  it("a fourth red gate attempt blocks directly without consuming a round", {
     timeout: 30_000,
   }, async () => {
     const capped = await makeFixture({
       gate: [{ name: "check", command: "test -f impl.txt" }],
-      pipeline: { maxRounds: 2 },
     });
     try {
       let implementationSessions = 0;
@@ -814,13 +816,38 @@ describe("runPipeline", () => {
       const ticket = await resolveTicket("Never green", capped.ticketsDirectory);
       const outcome = await runPipeline(context, ticket);
       expect(outcome.status).toBe("blocked");
-      // Each round pays for one implementation session plus ten gate fixes,
-      // and only then lets the gate failure consume the round.
-      expect(roundsSeen).toEqual([1, 2]);
-      expect(implementationSessions).toBe(2 * 11);
+      expect(roundsSeen).toEqual([1]);
+      expect(implementationSessions).toBe(4);
+      if (outcome.status === "blocked")
+        expect(outcome.reason).toBe("Mechanical gate failed at `check` after 4 attempts");
+      expect(context.log.snapshot().tickets[ticket.id]?.lastActivity).toBe(
+        "Mechanical gate failed at `check` after 4 attempts",
+      );
     } finally {
       await capped.cleanup();
     }
+  });
+
+  it("continues the same round when the fourth gate attempt turns green", async () => {
+    let implementationSessions = 0;
+    const context = fixture.context(async (prompt, options) => {
+      const stage = sessionKindOf(prompt);
+      if (stage === "implementation") {
+        implementationSessions += 1;
+        if (implementationSessions === 4)
+          await commitFile(options.cwd, "impl.txt", "green\n", "clear the gate");
+        await writeVerdict(prompt, { status: "done" });
+      } else {
+        await writeVerdict(prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "", sessionId: `${stage}-session` };
+    });
+
+    const ticket = await resolveTicket("Green on the fourth swing", fixture.ticketsDirectory);
+    const outcome = await runPipeline(context, ticket);
+    expect(outcome.status).toBe("passed");
+    if (outcome.status === "passed") expect(outcome.report.rounds).toBe(1);
+    expect(implementationSessions).toBe(4);
   });
 
   it("escalation blocks the ticket and writes Questions with a recommendation", async () => {
@@ -846,7 +873,7 @@ describe("runPipeline", () => {
     expect(blockedEvents?.lastActivity).toBe(`escalated: ${question}`);
   });
 
-  it("exhausted rounds block with accumulated history in the note", async () => {
+  it("a third Code Review rejection blocks with reviewer counts in the note and event", async () => {
     let implementationAttempt = 0;
     const context = fixture.context(async (prompt, options) => {
       const stage = sessionKindOf(prompt);
@@ -863,10 +890,106 @@ describe("runPipeline", () => {
     const ticket = await resolveTicket("Never good enough", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("blocked");
-    if (outcome.status === "blocked") expect(outcome.reason).toContain("retries exhausted");
+    if (outcome.status === "blocked")
+      expect(outcome.reason).toBe("Code Review rejected 3 times (budget 2)");
     const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8");
-    expect(note).toContain("retries exhausted");
+    expect(note).toContain("Code Review rejected 3 times (budget 2)");
     expect(note).toContain("still not good enough");
+    const finalReviewComment = parseTicketNote(note)
+      .comments.filter((comment) => comment.stage === "code-review")
+      .at(-1);
+    expect(finalReviewComment?.body).toContain("Code Review rejected 3 times (budget 2)");
+    expect(finalReviewComment?.body).toContain("JFDI-Round: 3/4");
+    expect(context.log.snapshot().tickets[ticket.id]?.lastActivity).toBe(
+      "Code Review rejected 3 times (budget 2)",
+    );
+  });
+
+  it.each([
+    {
+      name: "two Code Review rejections followed by one QA rejection",
+      codeReviewVerdicts: ["fail", "fail", "pass", "pass"],
+      qaVerdicts: ["fail", "pass"],
+    },
+    {
+      name: "a Code Review rejection on both sides of one QA rejection",
+      codeReviewVerdicts: ["fail", "pass", "fail", "pass"],
+      qaVerdicts: ["fail", "pass"],
+    },
+  ])("passes four rounds after $name", async ({ codeReviewVerdicts, qaVerdicts }) => {
+    let implementationCalls = 0;
+    let codeReviewCalls = 0;
+    let qaCalls = 0;
+    const context = fixture.context(async (prompt, options) => {
+      const stage = sessionKindOf(prompt);
+      if (stage === "implementation") {
+        implementationCalls += 1;
+        await commitFile(
+          options.cwd,
+          "impl.txt",
+          `attempt ${implementationCalls}\n`,
+          "address feedback",
+        );
+        await writeVerdict(prompt, { status: "done" });
+      } else if (stage === "code-review") {
+        const verdict = codeReviewVerdicts[codeReviewCalls++];
+        await writeVerdict(
+          prompt,
+          scriptedReviewVerdict(verdict ?? "pass", "Code Review feedback"),
+        );
+      } else if (stage === "qa") {
+        const verdict = qaVerdicts[qaCalls++];
+        await writeVerdict(prompt, scriptedReviewVerdict(verdict ?? "pass", "QA feedback"));
+      }
+      return { ok: true, text: "", sessionId: `${stage}-session` };
+    });
+
+    const ticket = await resolveTicket("Independent rejection budgets", fixture.ticketsDirectory);
+    const outcome = await runPipeline(context, ticket);
+    expect(outcome.status).toBe("passed");
+    if (outcome.status !== "passed") return;
+    expect(outcome.report.rounds).toBe(4);
+    expect(codeReviewCalls).toBe(4);
+    expect(qaCalls).toBe(2);
+    const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8");
+    expect(note).toContain("Run started — 4 rounds max. Code Review may reject 2×, QA 1×.");
+    expect(note).toContain("JFDI-Round: 4/4");
+  });
+
+  it("a second QA rejection blocks with reviewer counts in the note and event", async () => {
+    let implementationCalls = 0;
+    let qaCalls = 0;
+    const context = fixture.context(async (prompt, options) => {
+      const stage = sessionKindOf(prompt);
+      if (stage === "implementation") {
+        implementationCalls += 1;
+        await commitFile(options.cwd, "impl.txt", `${implementationCalls}\n`, "address QA");
+        await writeVerdict(prompt, { status: "done" });
+      } else if (stage === "code-review") {
+        await writeVerdict(prompt, { verdict: "pass" });
+      } else if (stage === "qa") {
+        qaCalls += 1;
+        await writeVerdict(prompt, { verdict: "fail", feedback: `QA rejection ${qaCalls}` });
+      }
+      return { ok: true, text: "", sessionId: `${stage}-session` };
+    });
+
+    const ticket = await resolveTicket("QA rejects twice", fixture.ticketsDirectory);
+    const outcome = await runPipeline(context, ticket);
+    expect(outcome).toMatchObject({
+      status: "blocked",
+      reason: "QA rejected 2 times (budget 1)",
+    });
+    const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8");
+    expect(note).toContain("QA rejected 2 times (budget 1)");
+    const finalQaComment = parseTicketNote(note)
+      .comments.filter((comment) => comment.stage === "qa")
+      .at(-1);
+    expect(finalQaComment?.body).toContain("QA rejected 2 times (budget 1)");
+    expect(finalQaComment?.body).toContain("JFDI-Round: 2/4");
+    expect(context.log.snapshot().tickets[ticket.id]?.lastActivity).toBe(
+      "QA rejected 2 times (budget 1)",
+    );
   });
 
   it("mode: ask lowers the escalation bar in the implementation prompt", async () => {
@@ -912,7 +1035,7 @@ describe("runPipeline", () => {
   });
 
   it("re-dispatch resumes: prior commits summarized, prior feedback carried over", async () => {
-    // Run 1: every round commits, code review never approves → retries exhausted.
+    // Run 1: every round commits until Code Review exceeds its rejection budget.
     // Distinct content per round, so each round has something to actually commit.
     let attempt = 0;
     const failing = fixture.context(async (prompt, options) => {
@@ -1020,7 +1143,7 @@ describe("runPipeline", () => {
   });
 
   it("carries unanswered feedback across a run that ends in an escalation", async () => {
-    // Run 1: code review never approves → retries exhausted, its feedback on disk.
+    // Run 1: Code Review exceeds its rejection budget, leaving feedback on disk.
     let attempt = 0;
     const failing = fixture.context(async (prompt, options) => {
       const stage = sessionKindOf(prompt);
@@ -1605,43 +1728,202 @@ describe("runPipeline", () => {
     expect(implementationSpawns).toEqual([undefined, "impl-1", undefined]);
   });
 
-  it("the gate re-runs mechanically after QA commits tests, and a failure costs the round", async () => {
-    // The gate rejects any committed qa-broken.txt — QA's test commit breaks it.
+  it("continues QA to fix its gate-breaking tests without consuming the round", async () => {
     await fixture.cleanup();
     fixture = await makeFixture({
-      gate: [{ name: "check", command: "test -f impl.txt && test ! -f qa-broken.txt" }],
+      gate: [{ name: "check", command: "test -f impl.txt && ! grep -q BROKEN qa-test.txt" }],
     });
     let qaCalls = 0;
     let implementationCalls = 0;
+    let reviewCalls = 0;
+    const roundsSeen: number[] = [];
+    const handleQa = async (prompt: string, worktreePath: string) => {
+      qaCalls++;
+      if (qaCalls === 1) {
+        await commitFile(worktreePath, "qa-test.txt", "BROKEN\n", "qa tests");
+      } else {
+        expect(prompt).toContain('Mechanical gate failed at step "check"');
+        expect(prompt).toContain("qa-test.txt");
+        await commitFile(worktreePath, "qa-test.txt", "fixed\n", "fix qa tests");
+      }
+      await writeVerdict(prompt, {
+        verdict: "pass",
+        testsAdded: qaCalls === 1 ? "one" : "fixed one",
+      });
+    };
     const context = fixture.context(async (prompt, options) => {
       const stage = sessionKindOf(prompt);
       if (stage === "implementation") {
         implementationCalls++;
-        if (implementationCalls === 1) {
+        await commitFile(options.cwd, "impl.txt", "x\n", "implement");
+        await writeVerdict(prompt, { status: "done" });
+      } else if (stage === "qa") {
+        if (qaCalls > 0) expect(options.continueSessionId).toBe("qa-session");
+        await handleQa(prompt, options.cwd);
+      } else {
+        reviewCalls++;
+        await writeVerdict(prompt, { verdict: "pass" });
+      }
+      return stage === "qa"
+        ? { ok: true, text: "", sessionId: "qa-session" }
+        : { ok: true, text: "" };
+    });
+    context.log.on((event) => {
+      if (event.type === "round_start") roundsSeen.push(Number(event.data?.round));
+    });
+
+    const ticket = await resolveTicket("QA broke the gate", fixture.ticketsDirectory);
+    const outcome = await runPipeline(context, ticket);
+    expect(outcome.status).toBe("passed");
+    if (outcome.status !== "passed") return;
+    expect(outcome.report.rounds).toBe(1);
+    expect(roundsSeen).toEqual([1]);
+    expect(implementationCalls).toBe(1);
+    expect(reviewCalls).toBe(1);
+    expect(qaCalls).toBe(2);
+    const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8");
+    const qaComments = parseTicketNote(note).comments.filter((comment) => comment.stage === "qa");
+    expect(qaComments).toHaveLength(1);
+    expect(qaComments[0]?.body).toContain("--- Gate-fix session 1 ---");
+    expect(qaComments[0]?.body).toContain("gate failed at `check` over QA's tests");
+    expect(qaComments[0]?.body).toContain("green after 1 gate fix");
+    const qaCommits = (
+      await git(outcome.worktree.path, "log", "--format=%H", "main..HEAD", "--", "qa-test.txt")
+    ).split("\n");
+    expect(qaCommits).toHaveLength(2);
+    for (const commit of qaCommits) {
+      const message = await git(outcome.worktree.path, "show", "-s", "--format=%B", commit);
+      expect(qaComments[0]?.body).toContain(message.trimEnd());
+    }
+  });
+
+  it("rejects a QA gate fix that touches a path outside QA's initial handoff", async () => {
+    await fixture.cleanup();
+    fixture = await makeFixture({
+      gate: [{ name: "check", command: "test -f impl.txt && ! grep -q BROKEN qa-test.txt" }],
+    });
+    let implementationCalls = 0;
+    let reviewCalls = 0;
+    let qaCalls = 0;
+    const handleQa = async (prompt: string, worktreePath: string) => {
+      qaCalls++;
+      if (qaCalls === 1) {
+        await commitFile(worktreePath, "qa-test.txt", "BROKEN\n", "qa tests");
+      } else if (qaCalls === 2) {
+        await fs.writeFile(path.join(worktreePath, "qa-test.txt"), "fixed\n");
+        await commitFile(worktreePath, "product-change.txt", "unreviewed\n", "unsafe qa fix");
+      }
+      await writeVerdict(prompt, { verdict: "pass", testsAdded: "one" });
+    };
+    const context = fixture.context(async (prompt, options) => {
+      const stage = sessionKindOf(prompt);
+      if (stage === "implementation") {
+        implementationCalls++;
+        if (implementationCalls === 1)
           await commitFile(options.cwd, "impl.txt", "x\n", "implement");
-        } else {
-          expect(prompt).toContain("gate failed after QA committed its tests");
-          await commitFile(options.cwd, "qa-broken.txt.gone", "fixed\n", "remove broken qa file");
-          await git(options.cwd, "rm", "-q", "qa-broken.txt");
-          await git(options.cwd, "commit", "-qm", "drop broken qa test");
-        }
+        else expect(prompt).toContain("outside QA's initial handoff: product-change.txt");
+        await writeVerdict(prompt, { status: "done" });
+      } else if (stage === "code-review") {
+        reviewCalls++;
+        await writeVerdict(prompt, { verdict: "pass" });
+      } else {
+        await handleQa(prompt, options.cwd);
+      }
+      return stage === "qa"
+        ? { ok: true, text: "", sessionId: "qa-session" }
+        : { ok: true, text: "" };
+    });
+
+    const ticket = await resolveTicket("QA widened its fix", fixture.ticketsDirectory);
+    const outcome = await runPipeline(context, ticket);
+    expect(outcome.status).toBe("passed");
+    if (outcome.status !== "passed") return;
+    expect(outcome.report.rounds).toBe(2);
+    expect(implementationCalls).toBe(2);
+    expect(reviewCalls).toBe(2);
+    expect(qaCalls).toBe(3);
+    const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8");
+    const firstQaComment = parseTicketNote(note).comments.find(
+      (comment) => comment.stage === "qa" && comment.round === 1,
+    );
+    expect(firstQaComment?.body).toContain("outside QA's initial handoff: product-change.txt");
+  });
+
+  it("falls back fresh with the same QA gate-fix brief when the session was forgotten", async () => {
+    await fixture.cleanup();
+    fixture = await makeFixture({
+      gate: [{ name: "check", command: "test -f impl.txt && ! grep -q BROKEN qa-test.txt" }],
+    });
+    let qaCalls = 0;
+    const gateFixPrompts: string[] = [];
+    const context = fixture.context(async (prompt, options) => {
+      const stage = sessionKindOf(prompt);
+      if (stage === "implementation") {
+        await commitFile(options.cwd, "impl.txt", "x\n", "implement");
         await writeVerdict(prompt, { status: "done" });
       } else if (stage === "qa") {
         qaCalls++;
-        if (qaCalls === 1) await commitFile(options.cwd, "qa-broken.txt", "boom\n", "qa tests");
-        await writeVerdict(prompt, { verdict: "pass", testsAdded: "one" });
+        if (qaCalls === 1) {
+          await commitFile(options.cwd, "qa-test.txt", "BROKEN\n", "qa tests");
+          await writeVerdict(prompt, { verdict: "pass" });
+          return { ok: true, text: "", sessionId: "forgotten-qa" };
+        }
+        gateFixPrompts.push(prompt);
+        if (qaCalls === 2) {
+          expect(options.continueSessionId).toBe("forgotten-qa");
+          return { ok: false, text: "session not found" };
+        }
+        expect(options.continueSessionId).toBeUndefined();
+        await commitFile(options.cwd, "qa-test.txt", "fixed\n", "fix qa tests");
+        await writeVerdict(prompt, { verdict: "pass" });
       } else {
         await writeVerdict(prompt, { verdict: "pass" });
       }
       return { ok: true, text: "" };
     });
 
-    const ticket = await resolveTicket("QA broke the gate", fixture.ticketsDirectory);
+    const ticket = await resolveTicket("QA forgot its session", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
-    if (outcome.status === "passed") expect(outcome.report.rounds).toBe(2);
-    expect(implementationCalls).toBe(2);
-    expect(qaCalls).toBe(2);
+    if (outcome.status === "passed") expect(outcome.report.rounds).toBe(1);
+    expect(qaCalls).toBe(3);
+    expect(gateFixPrompts).toHaveLength(2);
+    expect(gateFixPrompts[1]).toBe(gateFixPrompts[0]);
+  });
+
+  it("blocks directly when QA exhausts the shared gate-fix cap", { timeout: 30_000 }, async () => {
+    await fixture.cleanup();
+    fixture = await makeFixture({
+      gate: [{ name: "check", command: "test -f impl.txt && ! grep -q BROKEN qa-test.txt" }],
+    });
+    let qaCalls = 0;
+    const roundsSeen: number[] = [];
+    const context = fixture.context(async (prompt, options) => {
+      const stage = sessionKindOf(prompt);
+      if (stage === "implementation") {
+        await commitFile(options.cwd, "impl.txt", "x\n", "implement");
+        await writeVerdict(prompt, { status: "done" });
+      } else if (stage === "qa") {
+        qaCalls++;
+        await commitFile(options.cwd, "qa-test.txt", `BROKEN ${qaCalls}\n`, "qa tests still red");
+        await writeVerdict(prompt, { verdict: "pass" });
+      } else {
+        await writeVerdict(prompt, { verdict: "pass" });
+      }
+      return stage === "qa"
+        ? { ok: true, text: "", sessionId: "qa-session" }
+        : { ok: true, text: "" };
+    });
+    context.log.on((event) => {
+      if (event.type === "round_start") roundsSeen.push(Number(event.data?.round));
+    });
+
+    const ticket = await resolveTicket("QA never clears the gate", fixture.ticketsDirectory);
+    expect((await runPipeline(context, ticket)).status).toBe("blocked");
+    expect(roundsSeen).toEqual([1]);
+    expect(qaCalls).toBe(4);
+    const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8");
+    expect(note).toContain("gate failed at `check` after 4 attempts");
   });
 
   it("a session that never writes a verdict burns a round with feedback", async () => {
@@ -1987,14 +2269,14 @@ describe("pipeline-owned commits", () => {
 
     const worktree = path.join(fixture.jfdiDirectory, "worktrees", ticket.id);
     const subjects = (await git(worktree, "log", "--format=%s", "main..HEAD")).split("\n");
-    expect(subjects).toHaveLength(3);
+    expect(subjects).toHaveLength(4);
     for (const subject of subjects) expect(subject).toContain(`${ticket.id}: WIP — `);
     const message = await git(worktree, "log", "-1", "--format=%B");
     expect(message).toContain(
       `JFDI Implementation interrupted: The previous implementation session failed: ${failureFirstLine}`,
     );
     expect(message).not.toContain("subprocess cleanup also failed");
-    expect(message).toContain("JFDI-Round: 3/3");
+    expect(message).toContain("JFDI-Round: 4/4");
     const interruptedNote = parseTicketNote(
       await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8"),
     );
@@ -2015,7 +2297,7 @@ describe("pipeline-owned commits", () => {
     });
     expect((await runPipeline(resuming, ticket)).status).toBe("passed");
     expect(resumedPrompt).toContain("Resuming an interrupted attempt");
-    expect(resumedPrompt).toContain("3 commits of partial work");
+    expect(resumedPrompt).toContain("4 commits of partial work");
     expect(resumedPrompt).toContain("WIP");
   });
 
@@ -2062,7 +2344,7 @@ describe("pipeline-owned commits", () => {
     expect(prompt).toContain(
       "JFDI Implementation complete — gate green (check ✓), moving to Code Review",
     );
-    expect(prompt).toContain("JFDI-Round: 1/3");
+    expect(prompt).toContain("JFDI-Round: 1/4");
   });
 
   it("writes the identical text to the commit and to the note, and binds the sign-offs to it", async () => {
@@ -2101,7 +2383,7 @@ describe("pipeline-owned commits", () => {
       "",
       "JFDI Implementation complete — gate green (check ✓), moving to Code Review",
       "",
-      "JFDI-Round: 1/3",
+      "JFDI-Round: 1/4",
       "JFDI-Duration: 1m",
       "JFDI-Cost: $2.00",
     ]);
@@ -2217,7 +2499,7 @@ describe("pipeline-owned commits", () => {
       "code-review 3",
     ]);
     expect(transitions[0]?.body).toBe(
-      `Run started — 3 rounds max. Working branch \`jfdi/${ticket.id}\`, will queue for approval before merging to \`main\`.`,
+      `Run started — 4 rounds max. Code Review may reject 2×, QA 1×. Working branch \`jfdi/${ticket.id}\`, will queue for approval before merging to \`main\`.`,
     );
     // A failed review's comment IS the handback: the exact feedback, and where
     // the run actually went with it.
@@ -2228,7 +2510,7 @@ describe("pipeline-owned commits", () => {
     expect(transitions[6]?.body).toContain(
       "JFDI Code Review FAILED — moving to Blocked for human review",
     );
-    expect(note.questions).toContain("All 3 rounds failed");
+    expect(note.questions).toContain("Code Review rejected 3 times (budget 2)");
     // The pause left no mark on the trail — neither an entry of its own (the
     // list above is exact) nor a mention inside one: infrastructure is not
     // ticket history, and the held round is narrated as the one round it was.

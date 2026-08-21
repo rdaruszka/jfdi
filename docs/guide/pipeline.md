@@ -12,39 +12,54 @@ for what happens after it passes.
 ## Overview
 
 Every ticket runs in its own **git worktree** on branch `jfdi/<ticket-id>`, created
-from the integration target branch. Inside that worktree, up to `pipeline.maxRounds`
-**rounds** run (default 3). Each round is:
+from the integration target branch. `pipeline.maxRejections` gives Code Review
+and QA independent rejection budgets (2 and 1 by default). The explicit loop cap
+is the derived ceiling `1 + Code Review budget + QA budget` (4 rounds by default).
+Each round is:
 
 ```mermaid
 flowchart TD
     IMPL[Implementation session] --> CHK[Pipeline commits<br/>the session's handoff]
     CHK -->|status: done| GATE{Mechanical gate}
     CHK -->|status: escalate| BLOCKED([Card → Blocked])
-    GATE -->|"fail (up to 10 fixes,<br/>same round)"| IMPL
+    GATE -->|"fail (up to 3 fixes,<br/>same round)"| IMPL
+    GATE -->|"fourth failed attempt"| BLOCKED
     GATE -->|pass| CR[Code Review session]
-    CR -->|fail| RETRY([Next round:<br/>feedback → Implementation])
+    CR -->|"reject within budget"| RETRY([Next round:<br/>feedback → Implementation])
+    CR -->|"reject beyond budget"| BLOCKED
     CR -->|pass| QA[QA session]
-    QA --> QACOMMIT[Pipeline commits QA's tests,<br/>if it wrote any]
-    QACOMMIT -->|fail| RETRY
-    QACOMMIT -->|escalate| BLOCKED
-    QACOMMIT -->|pass| GATE2{Gate again,<br/>if QA committed}
-    GATE2 -->|fail| RETRY
+    QA --> QAHANDOFF[Pipeline prepares QA's tests,<br/>if it wrote any]
+    QAHANDOFF -->|"reject within budget"| RETRY
+    QAHANDOFF -->|"reject beyond budget"| BLOCKED
+    QAHANDOFF -->|escalate| BLOCKED
+    QAHANDOFF -->|pass| GATE2{Gate again,<br/>if QA wrote tests}
+    GATE2 -->|"fail (up to 3 fixes,<br/>same round)"| QA
+    GATE2 -->|"fix widens path scope"| RETRY
+    GATE2 -->|"fourth failed attempt"| BLOCKED
     GATE2 -->|pass| PASSED([Pipeline passed →<br/>Integration])
 ```
 
-Three properties are worth internalizing:
+These properties are worth internalizing:
 
 - **A gate failure after Implementation stays inside the round.** The pipeline
   runs the gate — the agent is told not to — and hands a failure straight back
-  to the same Implementation session as feedback, up to 10 fix sessions per
+  to the same Implementation session as feedback, up to 3 fix sessions per
   round. Rounds mean moving on to other agents, not iterating with the machine;
-  only a gate that is still red after those fixes consumes the round.
+  a fourth red attempt blocks directly without consuming a round.
+- **A gate failure over QA's tests also stays inside the round.** The failure
+  returns to QA's own session under the same 3-fix cap. Code Review and QA do
+  not repeat when the gate goes green because the reviewed code did not change.
+  The pipeline enforces that premise: every fix may touch only paths from QA's
+  initial handoff. A wider change consumes the round so both reviews repeat; a
+  gate still red on its fourth attempt blocks directly.
 - **A spec-invalid verdict also stays inside the round.** The pipeline returns
   the concrete parse or field error and the verdict path to that stage's own
   session. The agent gets two correction attempts; a verdict still invalid after
   both blocks the ticket as a malfunction instead of spending a feedback round.
-- **Every agent failure re-enters at Implementation.** There is no partial
-  re-entry: a Code Review fail or a QA fail starts the next round at the top.
+- **Every review rejection within its reviewer's budget re-enters at Implementation.**
+  There is no partial re-entry: a Code Review fail or a QA fail starts the next
+  round at the top. Code Review may reject twice and QA once by default; the next
+  rejection by that reviewer blocks. Passing looks do not spend either budget.
   Both review sign-offs bind to a specific commit, so any code change invalidates
   both and the new commit repeats the gate and both reviews.
 - **Code Review gates QA.** A round where Code Review fails never runs the sandbox —
@@ -68,7 +83,7 @@ edit — see [Prompts & Customization](prompts-and-customization.md).
 |---|---|---|
 | **Implementation** | Does the work, writes unit tests alongside the code. It does not run the gate — the pipeline runs it after the session and returns any failure as feedback. | Yes |
 | **Code Review** | Judges the diff on structure, clarity, conventions, and maintainability — *not* functionality. | No — an attempted escalation is a spec-invalid verdict and enters the two-attempt correction path |
-| **QA** | Exercises the built artifact per the [sandbox contract](prompts-and-customization.md#the-sandbox-contract), validates behavior against the *ticket* (not the diff), and writes what it verified as automated regression tests. | Yes |
+| **QA** | Exercises the built artifact per the [sandbox contract](prompts-and-customization.md#the-sandbox-contract), validates behavior against the *ticket* (not the diff), and writes what it verified as automated regression tests. If those tests make the gate red, its session is continued to fix them in-stage. | Yes |
 
 Integration is the fourth agent, but it is owned by the coordinator, not the ticket
 pipeline — see [Integration & Merging](integration.md).
@@ -89,7 +104,9 @@ collecting context:
 - **QA** gets the ticket note path, the sandbox contract, the gate summary, the
   commit log and diffstat — deliberately **not** the diff. QA derives its checks
   from the ticket, adversarially, so it can catch what the implementation missed
-  rather than confirming what it did.
+  rather than confirming what it did. A post-QA gate failure continues that QA
+  session with the failed step, output, and the fixed list of paths its initial
+  handoff touched. A forgotten session gets one fresh spawn with the same brief.
 
 ### Verdicts
 
@@ -236,8 +253,10 @@ and the `JFDI-Round`/`JFDI-Duration`/`JFDI-Cost` trailers. Review sign-offs name
 the commit they bind to. A failed verdict carries the exact feedback and the
 same trailers; an interrupted session uses an `interrupted` label and keeps its
 WIP handoff. Gate failures add no narration entry: every gate-fix commit message
-is clearly delimited inside that round's one Implementation comment. Later
-rounds append their own stage entries.
+is clearly delimited inside that round's one Implementation or QA comment. A QA
+comment that needed fixes names the red step and fix count; an out-of-scope QA
+fix explains why both reviews must repeat. Later rounds append their own stage
+entries.
 
 For a changed stage, its rendered commit message appears **verbatim** in the
 phase entry — one rendering, two surfaces. The Integration entry keeps the merged
@@ -311,15 +330,17 @@ re-run it; QA runs only the tests it adds.
 A **round** is one trip through the flowchart above. When a step fails, the
 pipeline records a feedback item — `{run, round, source, feedback}` where source is
 `gate`, `code-review`, `qa`, or `implementation` — and starts the next round.
-When rounds are exhausted, the card moves to **Blocked** and the round history is
-written into the ticket note's `## Questions` section with instructions for
-retrying.
+Each review stage has its own rejection budget. A pass costs nothing; a fail
+verdict is a rejection and increments only that reviewer's count. A rejection
+beyond the budget moves the card to **Blocked**, naming the reviewer, count, and
+budget, and writes the round history into the ticket note's `## Questions`
+section with instructions for retrying. The sum of the budgets plus one is the
+derived round ceiling shown in comments and commit trailers.
 
 The post-Implementation gate is one exception: its failure feeds back into the
-same Implementation session *within* the round, and the gate reruns — up to 10
-fix sessions per round. A round is spent when the work moves to other agents (or
-when the gate is still red after those fixes), so a hard-to-green gate cannot
-silently eat the whole round budget one compile error at a time.
+same Implementation session *within* the round, and the gate reruns — up to 3
+fix sessions. A gate still red on the fourth attempt blocks directly, naming the
+failing step and attempt count. No gate outcome consumes a round.
 
 A spec-invalid verdict is the other exception. It returns to the stage that wrote
 it for up to two corrections in the same round. Persistent invalid output blocks
@@ -358,9 +379,9 @@ per-run and in-memory only: a re-dispatch always starts every stage fresh.
 
 A session can also die for a reason that has nothing to do with the work: a
 usage limit, an expired login, a 5xx. Treating that as feedback would be a
-disaster — the next round spawns into the same wall, `maxRounds` burns in
-seconds, and the coordinator moves on to drain the rest of the board the same
-way. So it isn't feedback. The harness classifies it
+disaster — the next round spawns into the same wall, the derived round ceiling
+burns in seconds, and the coordinator moves on to drain the rest of the board
+the same way. So it isn't feedback. The harness classifies it
 ([how](../architecture/harness.md#failure-classification)), and the tool stops.
 
 **The run holds where it stands.** No round is consumed, no feedback is
@@ -426,8 +447,8 @@ guessing" instruction.
 
 ## Resuming an interrupted run
 
-Runs can die mid-pipeline — an escalation, exhausted rounds, a killed session, a
-coordinator crash — leaving partial commits and possibly a dirty or mid-merge
+Runs can die mid-pipeline — an escalation, an exhausted rejection budget or
+gate, a killed session, a coordinator crash — leaving partial commits and possibly a dirty or mid-merge
 worktree. Re-dispatching the card (moving it back to the begin column) reuses the
 branch and resumes deliberately:
 
@@ -464,9 +485,10 @@ A run ends in one of two states:
   that approval is required, while `report.json` preserves the run data used by
   `jfdi merge`; no extra approval comment fragments the trail. See
   [Integration & Merging](integration.md).
-- **Blocked** — an escalation, exhausted rounds, malformed feedback history, or a
-  failed integration. The card moves to **Blocked**, the reason is in the ticket
-  note, and the worktree is kept for inspection. `jfdi run` exits with code 2 in
+- **Blocked** — an escalation, a reviewer rejection beyond its budget, an
+  exhausted gate, malformed feedback history, or a failed integration. The card
+  moves to **Blocked**, the reason is in the ticket note, and the worktree is
+  kept for inspection. `jfdi run` exits with code 2 in
   this case.
 
 Either way, the complete paper trail is on disk: the ticket note holds the
