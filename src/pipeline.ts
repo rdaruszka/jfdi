@@ -829,6 +829,60 @@ export interface QaStageOptions {
   previousSession?: StageSessionMemory | undefined;
   /** Why the branch moved since that session — provenance for the continuation. */
   previousFailure?: FeedbackItem | undefined;
+  /** A red post-QA gate being repaired inside the same QA phase. */
+  gateFix?:
+    | {
+        failure: GateResult;
+        allowedPaths: readonly string[];
+      }
+    | undefined;
+}
+
+function qaGateFixPrompt(
+  ticket: Ticket,
+  worktree: Worktree,
+  failure: GateResult,
+  allowedPaths: readonly string[],
+): string {
+  const paths = allowedPaths.map((allowedPath) => `- \`${allowedPath}\``).join("\n");
+  return [
+    "Your QA session is being continued: the tests you submitted did not clear the pipeline. Fix those tests, then finish the same way as before.",
+    "",
+    `## Ticket: ${ticket.id}`,
+    "",
+    ticket.description,
+    "",
+    "## What happened",
+    "",
+    formatGateFailure(failure),
+    "",
+    "## Scope of this gate fix",
+    "",
+    "Only modify the paths from your initial QA handoff listed below. A change anywhere else is an unreviewed change to the reviewed tree and will force both reviews to repeat.",
+    "",
+    paths,
+    "",
+    "## Rules (unchanged from your original instructions)",
+    "",
+    "- Fix the tests that made the gate red and run the focused tests needed to verify the fix.",
+    "- Do not re-run the full mechanical gate; the pipeline runs it after your session.",
+    "- Do not commit; the pipeline commits what your session leaves.",
+    `- Stay inside this worktree; touch no branch other than \`${worktree.branch}\`.`,
+    "",
+    "Write the required JSON verdict object as your final action to:",
+    agentVerdictPath(worktree.path, "qa"),
+    "",
+    "Schema (same as your previous verdict):",
+    "{",
+    '  "verdict": "pass" | "fail" | "escalate",',
+    '  "feedback": "when failing: what behavior is wrong or missing, with reproduction steps",',
+    '  "testsAdded": "summary of the automated tests you fixed",',
+    '  "decisions": ["judgment call you made", ...],',
+    '  "observations": ["out-of-scope problem you noticed (not grounds for this verdict)", ...],',
+    '  "question": "only when escalating",',
+    '  "recommendation": "only when escalating: your recommended answer"',
+    "}",
+  ].join("\n");
 }
 
 /** Run QA alone (used on a complicated integration merge). */
@@ -846,8 +900,16 @@ export async function runQaStage(
     NOTE_PATH: notePath,
     GATE_RESULT: options.gateSummary ?? "",
   };
-  const continuation = await buildQaContinuation(context, worktree, variables, options);
+  const gateFixPrompt = options.gateFix
+    ? qaGateFixPrompt(ticket, worktree, options.gateFix.failure, options.gateFix.allowedPaths)
+    : null;
+  const continuation = gateFixPrompt
+    ? options.previousSession?.sessionId
+      ? { sessionId: options.previousSession.sessionId, prompt: gateFixPrompt }
+      : null
+    : await buildQaContinuation(context, worktree, variables, options);
   const freshPrompt = async () => {
+    if (gateFixPrompt) return gateFixPrompt;
     const sandbox =
       (await readIfExists(path.join(context.jfdiDirectory, "sandbox.md"))) ??
       "(no sandbox contract found — exercise the artifact as best you can and say so in your feedback)";
@@ -1292,22 +1354,23 @@ function cycleSessionDirectory(roundDirectory: string, fixSession: number): stri
   return fixSession === 0 ? roundDirectory : path.join(roundDirectory, `gate-fix-${fixSession}`);
 }
 
-interface ImplementationPhaseRecord {
+interface StagePhaseRecord {
   handoff: SessionHandoff;
   message: string;
 }
 
-interface MaterializedImplementationRecord {
-  phaseRecord: ImplementationPhaseRecord;
+interface MaterializedPhaseRecord {
+  phaseRecord: StagePhaseRecord;
   commitSha: string | null;
 }
 
-async function recordImplementationPhase(
+async function recordGateFixPhase(
   notePath: string,
-  records: readonly ImplementationPhaseRecord[],
+  records: readonly StagePhaseRecord[],
+  stage: "implementation" | "qa",
 ): Promise<void> {
   const last = records.at(-1);
-  if (!last) throw new Error("cannot record an Implementation phase with no session record");
+  if (!last) throw new Error(`cannot record a ${STAGE_LABELS[stage]} phase with no session record`);
   const body = records
     .map((record, index) =>
       index === 0
@@ -1318,15 +1381,16 @@ async function recordImplementationPhase(
   await recordStagePhase(notePath, last.handoff, body);
 }
 
-async function materializeImplementationRecord(
+async function materializePhaseRecord(
   context: PipelineContext,
   ticket: Ticket,
   input: HandoffCommitInput,
   hasChanges: boolean,
-): Promise<MaterializedImplementationRecord> {
+  detail = "",
+): Promise<MaterializedPhaseRecord> {
   if (!hasChanges)
     return {
-      phaseRecord: { handoff: input.handoff, message: assembleStageComment(input.handoff) },
+      phaseRecord: { handoff: input.handoff, message: assembleStageComment(input.handoff, detail) },
       commitSha: null,
     };
   const committed = await commitPreparedSessionHandoff(context, ticket, input);
@@ -1360,7 +1424,7 @@ function implementationStepContributions(
 interface ImplementationIterationBase {
   contributions: Pick<ImplementationCycleCollected, "decisions" | "observations" | "summary">;
   implementationSession: StageSessionMemory;
-  materialized: MaterializedImplementationRecord;
+  materialized: MaterializedPhaseRecord;
 }
 
 type ImplementationIterationResult =
@@ -1417,12 +1481,7 @@ async function runImplementationGateIteration(
       step: exitStep,
       contributions,
       implementationSession: nextSession,
-      materialized: await materializeImplementationRecord(
-        context,
-        ticket,
-        preparedInput,
-        hasChanges,
-      ),
+      materialized: await materializePhaseRecord(context, ticket, preparedInput, hasChanges),
     };
   if (implementation.step.kind !== "done")
     throw new Error(
@@ -1447,7 +1506,7 @@ async function runImplementationGateIteration(
     feedback: gate.ok ? "" : formatGateFailure(gate),
     contributions,
     implementationSession: nextSession,
-    materialized: await materializeImplementationRecord(
+    materialized: await materializePhaseRecord(
       context,
       ticket,
       { ...preparedInput, handoff },
@@ -1476,7 +1535,7 @@ async function runImplementationGateCycle(
   let summary: string | undefined;
   let implementationSession: StageSessionMemory = input.memory.implementation ?? {};
   let lastHandoffCommit: string | null = null;
-  const phaseRecords: ImplementationPhaseRecord[] = [];
+  const phaseRecords: StagePhaseRecord[] = [];
   // Gate failures this round, oldest first — feedback for the next fix session.
   // Their full transcripts persist independently in the round directory.
   const gateFailures: FeedbackItem[] = [];
@@ -1502,18 +1561,18 @@ async function runImplementationGateCycle(
     phaseRecords.push(iteration.materialized.phaseRecord);
     if (iteration.materialized.commitSha) lastHandoffCommit = iteration.materialized.commitSha;
     if (iteration.kind === "exit") {
-      await recordImplementationPhase(notePath, phaseRecords);
+      await recordGateFixPhase(notePath, phaseRecords, "implementation");
       return { kind: "exit", ...collected(), step: iteration.step };
     }
     if (iteration.gate.ok) {
       // The sign-offs bind to the pipeline's own handoff commit; only a cycle
       // that committed nothing (an unchanged tree) reviews the branch as it stood.
       const headCommit = lastHandoffCommit ?? (await parseRevision(worktree.path, "HEAD"));
-      await recordImplementationPhase(notePath, phaseRecords);
+      await recordGateFixPhase(notePath, phaseRecords, "implementation");
       return { kind: "proceed", ...collected(), gate: iteration.gate, headCommit };
     }
     if (fixSession >= MAX_GATE_FIX_SESSIONS_PER_ROUND) {
-      await recordImplementationPhase(notePath, phaseRecords);
+      await recordGateFixPhase(notePath, phaseRecords, "implementation");
       return {
         kind: "exit",
         ...collected(),
@@ -1617,6 +1676,233 @@ interface QaPhaseResult {
   memory: StageSessionMemory;
 }
 
+function qaSessionDirectory(roundDirectory: string, fixSession: number): string {
+  return fixSession === 0 ? roundDirectory : path.join(roundDirectory, `qa-gate-fix-${fixSession}`);
+}
+
+async function stagedPaths(worktreePath: string): Promise<string[]> {
+  const output = await git(worktreePath, "diff", "--cached", "--name-only", "-z");
+  return output.split("\0").filter((stagedPath) => stagedPath !== "");
+}
+
+function pathsOutsideAllowlist(
+  paths: readonly string[],
+  allowedPaths: ReadonlySet<string>,
+): string[] {
+  return paths.filter((changedPath) => !allowedPaths.has(changedPath));
+}
+
+function failedGateStep(gate: GateResult): string {
+  return gate.results.at(-1)?.name ?? "unknown step";
+}
+
+function qaGateFixRedRouting(gate: GateResult, fixSession: number): string {
+  const failedStep = failedGateStep(gate);
+  const fixLabel = fixSession === 1 ? "gate fix" : "gate fixes";
+  const completedFixes = fixSession === 0 ? "" : ` after ${fixSession} ${fixLabel}`;
+  return `gate failed at \`${failedStep}\` over QA's tests${completedFixes}, continuing with gate fix ${fixSession + 1} of ${MAX_GATE_FIX_SESSIONS_PER_ROUND}`;
+}
+
+function qaGateFixGreenRouting(
+  firstFailure: GateResult,
+  greenGate: GateResult,
+  fixSession: number,
+  destination: string,
+): string {
+  const fixLabel = fixSession === 1 ? "gate fix" : "gate fixes";
+  const checks = greenGate.results.map((result) => `${result.name} ✓`).join(" ");
+  return `gate went red at \`${failedGateStep(firstFailure)}\` over QA's tests, green after ${fixSession} ${fixLabel}${checks === "" ? "" : ` (${checks})`}, ${destination}`;
+}
+
+function qaUnsafeGateFixFeedback(paths: readonly string[]): string {
+  return `QA gate fix touched paths outside QA's initial handoff: ${paths.join(", ")}. This is an unreviewed change to the reviewed tree, so both reviews must repeat.`;
+}
+
+interface QaGateRoutingResult {
+  step: RoundStep;
+  postQaGate: GateResult | null;
+  routingOverride: string | undefined;
+  shouldContinue: boolean;
+  firstGateFailure: GateResult | null;
+  latestGateFailure: GateResult | null;
+}
+
+async function routeQaGate(
+  context: PipelineContext,
+  ticket: Ticket,
+  worktree: Worktree,
+  input: QaPhaseInput,
+  step: RoundStep,
+  fixSession: number,
+  hasChanges: boolean,
+  changedPaths: readonly string[],
+  allowedPaths: readonly string[],
+  firstGateFailure: GateResult | null,
+): Promise<QaGateRoutingResult> {
+  const unchanged = {
+    step,
+    postQaGate: null,
+    routingOverride: undefined,
+    shouldContinue: false,
+    firstGateFailure,
+    latestGateFailure: null,
+  };
+  const outsidePaths = pathsOutsideAllowlist(changedPaths, new Set(allowedPaths));
+  if (fixSession > 0 && step.kind !== "blocked" && outsidePaths.length > 0) {
+    const feedback = qaUnsafeGateFixFeedback(outsidePaths);
+    return {
+      ...unchanged,
+      step: { kind: "retry", source: "gate", feedback },
+      routingOverride: `${feedback} ${retryRouting(input.round, context.config.pipeline.maxRounds)}`,
+    };
+  }
+  if (step.kind !== "passed" || (!hasChanges && fixSession === 0)) return unchanged;
+
+  const postQaGate = await runGateStage(
+    context,
+    ticket,
+    worktree,
+    path.join(input.roundDirectory, `gate-post-qa-${fixSession + 1}.log`),
+  );
+  if (postQaGate.ok) {
+    const destination =
+      context.config.integration.mode === "auto"
+        ? "queued for integration"
+        : "queued for approval before integration";
+    return {
+      ...unchanged,
+      postQaGate,
+      routingOverride: firstGateFailure
+        ? qaGateFixGreenRouting(firstGateFailure, postQaGate, fixSession, destination)
+        : undefined,
+    };
+  }
+
+  const firstFailure = firstGateFailure ?? postQaGate;
+  if (fixSession < MAX_GATE_FIX_SESSIONS_PER_ROUND)
+    return {
+      ...unchanged,
+      postQaGate,
+      routingOverride: qaGateFixRedRouting(postQaGate, fixSession),
+      shouldContinue: true,
+      firstGateFailure: firstFailure,
+      latestGateFailure: postQaGate,
+    };
+  return {
+    ...unchanged,
+    step: {
+      kind: "retry",
+      source: "gate",
+      feedback: `The mechanical gate failed after QA committed its tests.\n\n${formatGateFailure(postQaGate)}`,
+    },
+    postQaGate,
+    firstGateFailure: firstFailure,
+    latestGateFailure: postQaGate,
+  };
+}
+
+interface QaIterationResult extends QaGateRoutingResult {
+  decisions: string[];
+  observations: string[];
+  testsAdded: string;
+  allowedPaths: string[];
+  memory: StageSessionMemory;
+  phaseRecord: StagePhaseRecord;
+}
+
+async function runQaGateIteration(
+  context: PipelineContext,
+  ticket: Ticket,
+  worktree: Worktree,
+  input: QaPhaseInput,
+  fixSession: number,
+  memory: StageSessionMemory,
+  allowedPaths: readonly string[],
+  firstGateFailure: GateResult | null,
+  latestGateFailure: GateResult | null,
+  previousTestsAdded: string,
+): Promise<QaIterationResult> {
+  const sessionDirectory = qaSessionDirectory(input.roundDirectory, fixSession);
+  await ensureDirectory(sessionDirectory);
+  if (fixSession > 0 && !latestGateFailure)
+    throw new Error("cannot start a QA gate-fix session without a gate failure");
+  const qa = await runQaStage(context, ticket, worktree, sessionDirectory, input.notePath, {
+    gateSummary: input.gateSummary,
+    previousSession: fixSession === 0 ? input.previousSession : memory,
+    previousFailure: fixSession === 0 ? input.previousFailure : undefined,
+    ...(fixSession > 0 && latestGateFailure
+      ? { gateFix: { failure: latestGateFailure, allowedPaths } }
+      : {}),
+  });
+  const judgedStep = await judgeQa(context, ticket, input.notePath, qa);
+  const initialHandoff = qaHandoff(
+    judgedStep,
+    qa.verdict,
+    input.round,
+    context.config.pipeline.maxRounds,
+    qa.outcome.usage,
+    input.headCommit,
+    null,
+    context.config.integration.mode,
+  );
+  const handoffInput = {
+    worktree,
+    notePath: input.notePath,
+    roundDirectory: sessionDirectory,
+    handoff: initialHandoff,
+    preSessionHead: qa.outcome.preSessionHead,
+  };
+  const hasChanges = await prepareSessionHandoff(context, ticket, handoffInput);
+  const changedPaths = hasChanges ? await stagedPaths(worktree.path) : [];
+  const nextAllowedPaths = fixSession === 0 ? changedPaths : [...allowedPaths];
+  const routing = await routeQaGate(
+    context,
+    ticket,
+    worktree,
+    input,
+    judgedStep,
+    fixSession,
+    hasChanges,
+    changedPaths,
+    nextAllowedPaths,
+    firstGateFailure,
+  );
+  const testsAdded = qa.verdict?.testsAdded ?? previousTestsAdded;
+  const step = routing.step.kind === "passed" ? { ...routing.step, testsAdded } : routing.step;
+  const handoff = qaHandoff(
+    step,
+    qa.verdict,
+    input.round,
+    context.config.pipeline.maxRounds,
+    qa.outcome.usage,
+    input.headCommit,
+    routing.postQaGate,
+    context.config.integration.mode,
+    routing.routingOverride,
+  );
+  const materialized = await materializePhaseRecord(
+    context,
+    ticket,
+    { ...handoffInput, handoff },
+    hasChanges,
+    qa.verdict?.verdict === "fail" ? (qa.verdict.feedback ?? "") : "",
+  );
+  return {
+    ...routing,
+    step,
+    decisions: qa.verdict?.decisions ?? [],
+    observations: qa.verdict?.observations ?? [],
+    testsAdded,
+    allowedPaths: nextAllowedPaths,
+    memory: {
+      sessionId: qa.outcome.sessionId,
+      lastSeenCommit: materialized.commitSha ?? memory.lastSeenCommit ?? input.headCommit,
+      agent: qa.outcome.agent,
+    },
+    phaseRecord: materialized.phaseRecord,
+  };
+}
+
 /**
  * QA, its verdict, its commit, and the gate over what it committed. QA's tests
  * are code the reviewed gate never saw, so re-running the gate here is the
@@ -1629,76 +1915,43 @@ async function runQaPhase(
   worktree: Worktree,
   input: QaPhaseInput,
 ): Promise<QaPhaseResult> {
-  const { notePath, round } = input;
-  const maxRounds = context.config.pipeline.maxRounds;
-  const qa = await runQaStage(context, ticket, worktree, input.roundDirectory, notePath, {
-    gateSummary: input.gateSummary,
-    previousSession: input.previousSession,
-    previousFailure: input.previousFailure,
-  });
-  let step = await judgeQa(context, ticket, notePath, qa);
-  const initialHandoff = qaHandoff(
-    step,
-    qa.verdict,
-    round,
-    maxRounds,
-    qa.outcome.usage,
-    input.headCommit,
-    null,
-    context.config.integration.mode,
-  );
-  const handoffInput = {
-    worktree,
-    notePath,
-    roundDirectory: input.roundDirectory,
-    handoff: initialHandoff,
-    preSessionHead: qa.outcome.preSessionHead,
-  };
-  const hasChanges = await prepareSessionHandoff(context, ticket, handoffInput);
-  let postQaGate: GateResult | null = null;
-  if (step.kind === "passed" && hasChanges) {
-    postQaGate = await runGateStage(
+  const decisions: string[] = [];
+  const observations: string[] = [];
+  const phaseRecords: StagePhaseRecord[] = [];
+  let memory = input.previousSession ?? {};
+  let allowedPaths: string[] = [];
+  let firstGateFailure: GateResult | null = null;
+  let latestGateFailure: GateResult | null = null;
+  let testsAdded = "";
+
+  // Termination: each pass returns, or fixSession strictly increases toward
+  // the same fixed gate-fix cap used by Implementation.
+  for (let fixSession = 0; ; fixSession++) {
+    const iteration = await runQaGateIteration(
       context,
       ticket,
       worktree,
-      path.join(input.roundDirectory, "gate-post-qa-1.log"),
+      input,
+      fixSession,
+      memory,
+      allowedPaths,
+      firstGateFailure,
+      latestGateFailure,
+      testsAdded,
     );
-    if (!postQaGate.ok)
-      step = {
-        kind: "retry",
-        source: "gate",
-        feedback: `The mechanical gate failed after QA committed its tests.\n\n${formatGateFailure(postQaGate)}`,
-      };
+    decisions.push(...iteration.decisions);
+    observations.push(...iteration.observations);
+    phaseRecords.push(iteration.phaseRecord);
+    memory = iteration.memory;
+    allowedPaths = iteration.allowedPaths;
+    firstGateFailure = iteration.firstGateFailure;
+    latestGateFailure = iteration.latestGateFailure;
+    testsAdded = iteration.testsAdded;
+    if (iteration.shouldContinue) continue;
+
+    await recordGateFixPhase(input.notePath, phaseRecords, "qa");
+    return { step: iteration.step, decisions, observations, memory };
   }
-  const handoff = qaHandoff(
-    step,
-    qa.verdict,
-    round,
-    maxRounds,
-    qa.outcome.usage,
-    input.headCommit,
-    postQaGate,
-    context.config.integration.mode,
-  );
-  const committed = hasChanges
-    ? await commitPreparedSessionHandoff(context, ticket, { ...handoffInput, handoff })
-    : null;
-  const detail = qa.verdict?.verdict === "fail" ? (qa.verdict.feedback ?? "") : "";
-  await recordStagePhase(
-    notePath,
-    handoff,
-    committed?.message ?? assembleStageComment(handoff, detail),
-  );
-  const memory = {
-    sessionId: qa.outcome.sessionId,
-    lastSeenCommit: committed?.sha ?? input.headCommit,
-    agent: qa.outcome.agent,
-  };
-  const collected = {
-    decisions: qa.verdict?.decisions ?? [],
-    observations: qa.verdict?.observations ?? [],
-  };
-  return { step, ...collected, memory };
 }
 
 function firstLine(text: string): string {
@@ -1752,6 +2005,10 @@ function implementationHandoff(
   }
 }
 
+function qaSignedOffRouting(signedOffCommit: string, destination: string): string {
+  return `sign-off on commit \`${shortSha(signedOffCommit)}\`, ${destination}`;
+}
+
 /** The same, for QA — which commits when it wrote acceptance tests, and only then. */
 function qaHandoff(
   step: RoundStep,
@@ -1762,6 +2019,7 @@ function qaHandoff(
   signedOffCommit: string,
   postQaGate: GateResult | null,
   integrationMode: JfdiConfig["integration"]["mode"],
+  routingOverride?: string,
 ): SessionHandoff {
   const base = {
     stage: "qa" as const,
@@ -1775,11 +2033,13 @@ function qaHandoff(
       ? "queued for integration"
       : "queued for approval before integration";
   if (step.kind === "passed") {
-    const gateClause = postQaGate ? `${gateGreenRouting(postQaGate, destination)}` : destination;
+    const gateClause =
+      routingOverride ??
+      (postQaGate ? `${gateGreenRouting(postQaGate, destination)}` : destination);
     return {
       ...base,
       outcome: "PASSED",
-      routing: `sign-off on commit \`${shortSha(signedOffCommit)}\`, ${gateClause}`,
+      routing: qaSignedOffRouting(signedOffCommit, gateClause),
       summary: verdict?.testsAdded ?? "",
       isInterrupted: false,
     };
@@ -1792,11 +2052,17 @@ function qaHandoff(
       summary: step.reason,
       isInterrupted: true,
     };
-  if (verdict?.verdict === "pass" && postQaGate && !postQaGate.ok)
+  if (
+    verdict?.verdict === "pass" &&
+    (routingOverride !== undefined || (postQaGate !== null && !postQaGate.ok))
+  )
     return {
       ...base,
       outcome: "PASSED",
-      routing: `sign-off on commit \`${shortSha(signedOffCommit)}\`, gate failed over the new tests, ${retryRouting(round, maxRounds)}`,
+      routing: qaSignedOffRouting(
+        signedOffCommit,
+        routingOverride ?? `gate failed over the new tests, ${retryRouting(round, maxRounds)}`,
+      ),
       summary: step.feedback,
       isInterrupted: false,
     };
@@ -1863,8 +2129,8 @@ function startedCommentBody(config: JfdiConfig, branch: string): string {
  * The per-ticket pipeline: Implementation → mechanical gate → Code Review → QA,
  * with feedback rounds. Reviews are sequential — Code Review gates QA — and both
  * sign-offs bind to a commit: any fix round re-enters at the gate and repeats both.
- * Round 1 of every stage is a fresh session; later rounds continue the stage's
- * own session so it keeps its context instead of re-deriving it.
+ * Each stage's first session is fresh; later rounds and in-stage gate fixes
+ * continue its own session so it keeps context instead of re-deriving it.
  */
 export async function runPipeline(
   context: PipelineContext,
