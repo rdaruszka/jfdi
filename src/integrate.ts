@@ -13,12 +13,12 @@ import {
   isAncestor,
   isMergeInProgress,
   mergeTargetIntoBranch,
+  parseRevision,
   removeWorktree,
-  revParse,
   type Worktree,
 } from "./git.js";
 import type { PipelineContext, RunReport } from "./pipeline.js";
-import { runHeldSession, runQaStage, runsDir, sessionSelectionFields } from "./pipeline.js";
+import { runHeldSession, runQaStage, runsDirectory, sessionSelectionFields } from "./pipeline.js";
 import { formatGateCommands, loadPrompt, renderPrompt } from "./prompts.js";
 import { isCorruptReport, loadReport, recordCorruptReport } from "./report.js";
 import { appendToSection, quoteAgentText } from "./ticket-note.js";
@@ -26,7 +26,7 @@ import { ensureTicketNote, type Ticket } from "./tickets.js";
 import { BLOCKED_ROUTING, recordPhase, shortSha, statusLine } from "./transitions.js";
 import { renderUsageTable, resolveUsageModel, type UsageRow } from "./usage.js";
 import { todayIsoDate } from "./util/dates.js";
-import { ensureDir, fileExists } from "./util/fsx.js";
+import { ensureDirectory, fileExists } from "./util/fsx.js";
 import {
   agentVerdictPath,
   collectVerdict,
@@ -56,8 +56,8 @@ type RemoteOperation = "fetch" | "push";
 
 interface IntegrationRemote {
   name: string;
-  sourceRef: string;
-  trackingRef: string;
+  sourceReference: string;
+  trackingReference: string;
 }
 
 interface RemoteOperationFailure {
@@ -99,37 +99,37 @@ function waitForRemoteRetry(delayMs: number): Promise<void> {
  * origin and a same-named branch, exactly like the configuration contract.
  */
 async function resolveIntegrationRemote(
-  repo: string,
+  projectRoot: string,
   target: string,
 ): Promise<IntegrationRemote | null> {
-  const remotes = (await git(repo, "remote")).split("\n").filter(Boolean);
+  const remotes = (await git(projectRoot, "remote")).split("\n").filter(Boolean);
   if (remotes.length === 0) return null;
 
   const upstreamFields = (
     await git(
-      repo,
+      projectRoot,
       "for-each-ref",
       "--format=%(upstream:remotename)%00%(upstream:remoteref)%00%(upstream)",
       `refs/heads/${target}`,
     )
   ).split("\0");
-  const [upstreamRemote, upstreamSourceRef, upstreamTrackingRef] = upstreamFields;
+  const [upstreamRemote, upstreamSourceReference, upstreamTrackingReference] = upstreamFields;
   if (
     upstreamRemote &&
-    upstreamSourceRef &&
-    upstreamTrackingRef &&
+    upstreamSourceReference &&
+    upstreamTrackingReference &&
     remotes.includes(upstreamRemote)
   ) {
     return {
       name: upstreamRemote,
-      sourceRef: upstreamSourceRef,
-      trackingRef: upstreamTrackingRef,
+      sourceReference: upstreamSourceReference,
+      trackingReference: upstreamTrackingReference,
     };
   }
   return {
     name: "origin",
-    sourceRef: `refs/heads/${target}`,
-    trackingRef: `refs/remotes/origin/${target}`,
+    sourceReference: `refs/heads/${target}`,
+    trackingReference: `refs/remotes/origin/${target}`,
   };
 }
 
@@ -216,16 +216,21 @@ async function fetchTarget(
   narration: IntegrationNarration,
 ): Promise<RemoteOperationFailure | null> {
   const fetchFailure = await runRemoteOperation(remote, "fetch", narration, async () => {
-    await git(context.repoRoot, "fetch", remote.name, `+${remote.sourceRef}:${remote.trackingRef}`);
+    await git(
+      context.projectRoot,
+      "fetch",
+      remote.name,
+      `+${remote.sourceReference}:${remote.trackingReference}`,
+    );
   });
   if (fetchFailure) return fetchFailure;
 
-  const localCommit = await revParse(context.repoRoot, target);
-  const remoteCommit = await revParse(context.repoRoot, remote.trackingRef);
+  const localCommit = await parseRevision(context.projectRoot, target);
+  const remoteCommit = await parseRevision(context.projectRoot, remote.trackingReference);
   if (localCommit === remoteCommit) return null;
-  if (await isAncestor(context.repoRoot, remote.trackingRef, target)) return null;
-  if (!(await isAncestor(context.repoRoot, target, remote.trackingRef))) {
-    const reason = `local target ref ${target} (${localCommit}) has diverged from fetched ref ${remote.trackingRef} (${remoteCommit}); JFDI will not resolve or overwrite either ref`;
+  if (await isAncestor(context.projectRoot, remote.trackingReference, target)) return null;
+  if (!(await isAncestor(context.projectRoot, target, remote.trackingReference))) {
+    const reason = `local target ref ${target} (${localCommit}) has diverged from fetched ref ${remote.trackingReference} (${remoteCommit}); JFDI will not resolve or overwrite either ref`;
     narration.record({
       operation: "fetch",
       status: "failed",
@@ -237,9 +242,9 @@ async function fetchTarget(
   }
 
   try {
-    await fastForward(context.repoRoot, target, remote.trackingRef);
+    await fastForward(context.projectRoot, target, remote.trackingReference);
   } catch (error) {
-    const reason = `fast-forwarding local target ref ${target} to fetched ref ${remote.trackingRef} failed: ${(error as Error).message}`;
+    const reason = `fast-forwarding local target ref ${target} to fetched ref ${remote.trackingReference} failed: ${(error as Error).message}`;
     narration.record({
       operation: "fast-forward",
       status: "failed",
@@ -253,7 +258,7 @@ async function fetchTarget(
     operation: "fast-forward",
     status: "succeeded",
     remote: remote.name,
-    text: `Fast-forwarded local target \`${target}\` to fetched ref \`${remote.trackingRef}\` (${remoteCommit}).`,
+    text: `Fast-forwarded local target \`${target}\` to fetched ref \`${remote.trackingReference}\` (${remoteCommit}).`,
   });
   return null;
 }
@@ -266,7 +271,12 @@ function pushTarget(
   narration: IntegrationNarration,
 ): Promise<RemoteOperationFailure | null> {
   return runRemoteOperation(remote, "push", narration, async () => {
-    await git(context.repoRoot, "push", remote.name, `refs/heads/${target}:${remote.sourceRef}`);
+    await git(
+      context.projectRoot,
+      "push",
+      remote.name,
+      `refs/heads/${target}:${remote.sourceReference}`,
+    );
   });
 }
 
@@ -287,7 +297,9 @@ async function prepareRemoteIntegration(
   const narration = new IntegrationNarration(context, ticket);
   const remoteConfig = context.config.integration.remote;
   const shouldUseRemote = remoteConfig.fetchBefore || remoteConfig.pushAfter;
-  const remote = shouldUseRemote ? await resolveIntegrationRemote(context.repoRoot, target) : null;
+  const remote = shouldUseRemote
+    ? await resolveIntegrationRemote(context.projectRoot, target)
+    : null;
   if (!remoteConfig.fetchBefore || !remote) return { status: "ready", remote, narration };
   const failure = await fetchTarget(context, remote, target, narration);
   if (failure) return { status: "failed", reason: failure.reason, narration };
@@ -295,16 +307,16 @@ async function prepareRemoteIntegration(
 }
 
 /** Preserve every serialized integration gate run without overwriting an earlier attempt. */
-async function nextIntegrationGateLogPath(runDir: string, step: string): Promise<string> {
+async function nextIntegrationGateLogPath(runDirectory: string, step: string): Promise<string> {
   const prefix = `gate-${step}-`;
-  const attempts = (await fs.readdir(runDir)).flatMap((entry) => {
+  const attempts = (await fs.readdir(runDirectory)).flatMap((entry) => {
     if (!entry.startsWith(prefix) || !entry.endsWith(".log")) return [];
     const attemptText = entry.slice(prefix.length, -".log".length);
     if (!/^\d+$/.test(attemptText)) return [];
     return [Number.parseInt(attemptText, 10)];
   });
   const attempt = Math.max(0, ...attempts) + 1;
-  return path.join(runDir, `${prefix}${attempt}.log`);
+  return path.join(runDirectory, `${prefix}${attempt}.log`);
 }
 
 export type IntegrateOutcome =
@@ -321,14 +333,14 @@ async function runIntegrationAgent(
   context: PipelineContext,
   ticket: Ticket,
   worktree: Worktree,
-  runDir: string,
+  runDirectory: string,
 ): Promise<IntegrationVerdict | null> {
   const stage: StageName = "integration";
-  const verdictPath = path.join(runDir, "integration.verdict.json");
-  const template = await loadPrompt(context.jfdiDir, "integration");
+  const verdictPath = path.join(runDirectory, "integration.verdict.json");
+  const template = await loadPrompt(context.jfdiDirectory, "integration");
   const prompt = renderPrompt(template, {
     TICKET_ID: ticket.id,
-    SPEC: ticket.spec,
+    SPEC: ticket.description,
     BRANCH: worktree.branch,
     TARGET_BRANCH: context.config.integration.targetBranch,
     GATE_COMMANDS: formatGateCommands(context.config.gate),
@@ -343,7 +355,7 @@ async function runIntegrationAgent(
     ticket.id,
     stage,
     prompt,
-    { cwd: worktree.path, logPath: path.join(runDir, "integration.log.jsonl") },
+    { cwd: worktree.path, logPath: path.join(runDirectory, "integration.log.jsonl") },
     (event) => {
       if (event.type === "tool")
         context.log.emit("session_activity", ticket.id, { text: `integration: ${event.name}` });
@@ -379,13 +391,13 @@ async function requalifyAfterMerge(
   ticket: Ticket,
   worktree: Worktree,
   notePath: string,
-  runDir: string,
+  runDirectory: string,
   notes: string,
 ): Promise<ConflictOutcome> {
   context.log.emit("complicated_merge", ticket.id, { notes });
-  const qaDir = path.join(runDir, "requalify");
-  await ensureDir(qaDir);
-  const qa = await runQaStage(context, ticket, worktree, qaDir, notePath, {
+  const qaDirectory = path.join(runDirectory, "requalify");
+  await ensureDirectory(qaDirectory);
+  const qa = await runQaStage(context, ticket, worktree, qaDirectory, notePath, {
     gateSummary:
       "The target branch was just merged in with conflict resolutions; the pipeline re-runs the full mechanical gate after your session — do not run it yourself.",
   });
@@ -396,7 +408,7 @@ async function requalifyAfterMerge(
   const gate = await runGate(
     context.config.gate,
     worktree.path,
-    await nextIntegrationGateLogPath(runDir, "requalify"),
+    await nextIntegrationGateLogPath(runDirectory, "requalify"),
   );
   if (!gate.ok)
     return { status: "blocked", reason: `gate failed after re-QA:\n\n${formatGateFailure(gate)}` };
@@ -413,9 +425,9 @@ async function resolveConflictedMerge(
   ticket: Ticket,
   worktree: Worktree,
   notePath: string,
-  runDir: string,
+  runDirectory: string,
 ): Promise<ConflictOutcome> {
-  const verdict = await runIntegrationAgent(context, ticket, worktree, runDir);
+  const verdict = await runIntegrationAgent(context, ticket, worktree, runDirectory);
   if (await isMergeInProgress(worktree.path))
     return {
       status: "blocked",
@@ -427,7 +439,7 @@ async function resolveConflictedMerge(
   const gate = await runGate(
     context.config.gate,
     worktree.path,
-    await nextIntegrationGateLogPath(runDir, "conflict-resolution"),
+    await nextIntegrationGateLogPath(runDirectory, "conflict-resolution"),
   );
   context.log.emit("gate_result", ticket.id, { ok: gate.ok });
   if (!gate.ok)
@@ -437,7 +449,7 @@ async function resolveConflictedMerge(
     };
 
   if (verdict.resolution !== "complicated") return { status: "resolved", notes };
-  return requalifyAfterMerge(context, ticket, worktree, notePath, runDir, notes);
+  return requalifyAfterMerge(context, ticket, worktree, notePath, runDirectory, notes);
 }
 
 type QualifiedMerge =
@@ -450,7 +462,7 @@ async function mergeAndQualify(
   ticket: Ticket,
   worktree: Worktree,
   notePath: string,
-  runDir: string,
+  runDirectory: string,
   target: string,
 ): Promise<QualifiedMerge> {
   const merge = await mergeTargetIntoBranch(worktree.path, target);
@@ -460,7 +472,13 @@ async function mergeAndQualify(
         status: "failed",
         reason: `merging ${target} into ${worktree.branch} failed: ${merge.output}`,
       };
-    const resolution = await resolveConflictedMerge(context, ticket, worktree, notePath, runDir);
+    const resolution = await resolveConflictedMerge(
+      context,
+      ticket,
+      worktree,
+      notePath,
+      runDirectory,
+    );
     if (resolution.status === "blocked") return { status: "failed", reason: resolution.reason };
     return { status: "qualified", resolutionNote: resolution.notes };
   }
@@ -468,7 +486,7 @@ async function mergeAndQualify(
   const gate = await runGate(
     context.config.gate,
     worktree.path,
-    await nextIntegrationGateLogPath(runDir, "clean-merge"),
+    await nextIntegrationGateLogPath(runDirectory, "clean-merge"),
   );
   context.log.emit("gate_result", ticket.id, { ok: gate.ok });
   if (!gate.ok)
@@ -532,7 +550,7 @@ async function landMerge(
       { firstParent: targetHead, secondParent: signedOffCommit },
       mergeCommitMessage(ticket, worktree.branch, target),
     );
-    await fastForward(context.repoRoot, target, landingCommit);
+    await fastForward(context.projectRoot, target, landingCommit);
     return { status: "landed", landingCommit, leftoverNote };
   } catch (error) {
     return { status: "failed", reason: `merge failed: ${(error as Error).message}` };
@@ -578,7 +596,7 @@ async function resolveAlreadyMergedBranch(
   target: string,
   integrationNarration: IntegrationNarration,
 ): Promise<AlreadyMergedResolution> {
-  if (!(await isAncestor(context.repoRoot, worktree.branch, target)))
+  if (!(await isAncestor(context.projectRoot, worktree.branch, target)))
     return { status: "continue", leftoverNote: "" };
 
   let leftoverNote = "";
@@ -633,17 +651,17 @@ export async function integrateTicket(
   worktree: Worktree,
 ): Promise<IntegrateOutcome> {
   const target = context.config.integration.targetBranch;
-  const runDir = path.join(runsDir(context.stateDir, ticket.id), "integration");
+  const runDirectory = path.join(runsDirectory(context.stateDirectory, ticket.id), "integration");
   const notePath = await ensureTicketNote(
     ticket,
-    path.join(context.repoRoot, context.config.ticketsDirectory),
+    path.join(context.projectRoot, context.config.ticketsDirectory),
   );
-  const savedReport = await loadReport(context.stateDir, ticket.id);
+  const savedReport = await loadReport(context.stateDirectory, ticket.id);
   if (savedReport && isCorruptReport(savedReport)) {
     const reason = await recordCorruptReport(context, ticket.id, notePath, savedReport);
     return { status: "blocked", reason };
   }
-  await ensureDir(runDir);
+  await ensureDirectory(runDirectory);
   const stale = await clearStaleMerge(worktree);
   if (stale.status === "blocked") return blocked(context, ticket, notePath, stale.reason);
   context.log.emit("merge_start", ticket.id, stale.note ? { note: stale.note } : undefined);
@@ -678,10 +696,17 @@ export async function integrateTicket(
   let { leftoverNote } = alreadyMerged;
 
   // Both parents of the landing commit, read before the merge moves either.
-  const signedOffCommit = await revParse(context.repoRoot, worktree.branch);
-  const targetHead = await revParse(context.repoRoot, target);
+  const signedOffCommit = await parseRevision(context.projectRoot, worktree.branch);
+  const targetHead = await parseRevision(context.projectRoot, target);
 
-  const qualified = await mergeAndQualify(context, ticket, worktree, notePath, runDir, target);
+  const qualified = await mergeAndQualify(
+    context,
+    ticket,
+    worktree,
+    notePath,
+    runDirectory,
+    target,
+  );
   if (qualified.status === "failed")
     return blocked(context, ticket, notePath, qualified.reason, integrationNarration.render());
 
@@ -713,7 +738,7 @@ export async function integrateTicket(
   );
   context.usage.finish(ticket.id);
   await cleanup(context, worktree);
-  await deleteBranch(context.repoRoot, worktree.branch);
+  await deleteBranch(context.projectRoot, worktree.branch);
   return { status: "merged" };
 }
 
@@ -779,7 +804,7 @@ async function recordMergedTransition(
 }
 
 async function cleanup(context: PipelineContext, worktree: Worktree): Promise<void> {
-  await removeWorktree(context.repoRoot, worktree.path, { shouldForce: true });
+  await removeWorktree(context.projectRoot, worktree.path, { shouldForce: true });
 }
 
 async function blocked(

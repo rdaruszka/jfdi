@@ -23,8 +23,8 @@ let worktree: Worktree;
 beforeEach(async () => {
   fixture = await makeFixture();
   worktree = await createWorktree(
-    fixture.repo,
-    path.join(fixture.jfdiDir, "worktrees"),
+    fixture.projectRoot,
+    path.join(fixture.jfdiDirectory, "worktrees"),
     "ticket",
     "main",
   );
@@ -75,7 +75,7 @@ describe("prepareResume", () => {
 
   it("aborts a merge the interrupted run left in progress", async () => {
     await commitFile(worktree.path, "shared.txt", "branch version\n", "branch edit");
-    await commitFile(fixture.repo, "shared.txt", "main version\n", "main edit");
+    await commitFile(fixture.projectRoot, "shared.txt", "main version\n", "main edit");
     const merge = await mergeTargetIntoBranch(worktree.path, "main");
     expect(merge.hasConflict).toBe(true);
     expect(await isMergeInProgress(worktree.path)).toBe(true);
@@ -97,10 +97,10 @@ describe("prepareResume", () => {
    */
   it("refuses to resume when the in-progress merge cannot be aborted", async () => {
     await commitFile(worktree.path, "shared.txt", "branch version\n", "branch edit");
-    await commitFile(fixture.repo, "shared.txt", "main version\n", "main edit");
+    await commitFile(fixture.projectRoot, "shared.txt", "main version\n", "main edit");
     expect((await mergeTargetIntoBranch(worktree.path, "main")).hasConflict).toBe(true);
-    const gitDir = await git(worktree.path, "rev-parse", "--absolute-git-dir");
-    await fs.writeFile(path.join(gitDir, "index.lock"), "");
+    const gitDirectory = await git(worktree.path, "rev-parse", "--absolute-git-dir");
+    await fs.writeFile(path.join(gitDirectory, "index.lock"), "");
 
     await expect(prepareResume(worktree.path, "main", "ticket")).rejects.toThrow(
       /could not abort the merge in progress/,
@@ -132,7 +132,7 @@ describe("formatResumeSection", () => {
 
   it("names the recovery steps it took", async () => {
     await commitFile(worktree.path, "shared.txt", "branch version\n", "branch edit");
-    await commitFile(fixture.repo, "shared.txt", "main version\n", "main edit");
+    await commitFile(fixture.projectRoot, "shared.txt", "main version\n", "main edit");
     await mergeTargetIntoBranch(worktree.path, "main");
     await fs.writeFile(path.join(worktree.path, "scratch.txt"), "half-written\n");
 
@@ -152,8 +152,8 @@ describe("feedback history", () => {
   ];
 
   it("round-trips through the run directory", async () => {
-    await saveFeedbackHistory(fixture.stateDir, items);
-    expect(await loadFeedbackHistory(fixture.stateDir)).toEqual(items);
+    await saveFeedbackHistory(fixture.stateDirectory, items);
+    expect(await loadFeedbackHistory(fixture.stateDirectory)).toEqual(items);
   });
 
   it("records feedback dropped by the carry cap and its originating run", async () => {
@@ -169,42 +169,42 @@ describe("feedback history", () => {
       })),
     ];
 
-    await saveFeedbackHistory(fixture.stateDir, cappedItems);
+    await saveFeedbackHistory(fixture.stateDirectory, cappedItems);
 
     const saved = JSON.parse(
-      await fs.readFile(path.join(fixture.stateDir, "history.json"), "utf8"),
+      await fs.readFile(path.join(fixture.stateDirectory, "history.json"), "utf8"),
     );
     expect(saved).toEqual([
       { type: "dropped-feedback", run: 7, droppedItemCount: 2 },
       { type: "dropped-feedback", run: 8, droppedItemCount: 1 },
       ...cappedItems.slice(3),
     ]);
-    expect(await loadFeedbackHistory(fixture.stateDir)).toEqual(cappedItems.slice(3));
+    expect(await loadFeedbackHistory(fixture.stateDirectory)).toEqual(cappedItems.slice(3));
   });
 
   it("reads as empty when absent", async () => {
-    expect(await loadFeedbackHistory(path.join(fixture.stateDir, "never-ran"))).toEqual([]);
+    expect(await loadFeedbackHistory(path.join(fixture.stateDirectory, "never-ran"))).toEqual([]);
   });
 
   it("rejects a mangled file rather than feeding junk to the next run", async () => {
-    const historyFile = path.join(fixture.stateDir, "history.json");
-    await fs.mkdir(fixture.stateDir, { recursive: true });
+    const historyFile = path.join(fixture.stateDirectory, "history.json");
+    await fs.mkdir(fixture.stateDirectory, { recursive: true });
 
     await fs.writeFile(historyFile, "{ truncated");
-    await expect(loadFeedbackHistory(fixture.stateDir)).rejects.toThrow(
+    await expect(loadFeedbackHistory(fixture.stateDirectory)).rejects.toThrow(
       `malformed feedback history at ${historyFile}: JSON parse failed`,
     );
 
     const malformedItem = { run: 1, round: 1, source: "toString" };
     await fs.writeFile(historyFile, JSON.stringify([items[0], malformedItem]));
-    await expect(loadFeedbackHistory(fixture.stateDir)).rejects.toMatchObject({
+    await expect(loadFeedbackHistory(fixture.stateDirectory)).rejects.toMatchObject({
       filePath: historyFile,
       failure: "entry at index 1 is not a feedback item or dropped-feedback marker",
       offendingContent: JSON.stringify(malformedItem, null, 2),
     });
 
     await fs.writeFile(historyFile, JSON.stringify({ round: 1 }));
-    await expect(loadFeedbackHistory(fixture.stateDir)).rejects.toThrow(
+    await expect(loadFeedbackHistory(fixture.stateDirectory)).rejects.toThrow(
       "top-level value is not an array",
     );
   });

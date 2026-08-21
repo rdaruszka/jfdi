@@ -30,8 +30,8 @@ import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 const PIPELINE_TIMEOUT_MS = 120_000;
 
@@ -59,7 +59,7 @@ const match = prompt.match(/(\\/\\S+\\.verdict\\.json)/);
 if (match && !isScribe) {
   const verdictPath = match[1];
   const stage = verdictPath.split("/").pop().replace(".verdict.json", "");
-  const write = (obj) => fs.writeFileSync(verdictPath, JSON.stringify(obj));
+  const write = (object) => fs.writeFileSync(verdictPath, JSON.stringify(object));
   const writeRaw = (raw) => fs.writeFileSync(verdictPath, raw);
   if (stage === "implementation") {
     if (!isCorrection) {
@@ -110,11 +110,11 @@ process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "age
 
 interface Sandbox {
   root: string;
-  project: string;
+  projectRoot: string;
   home: string;
   jfdiHome: string;
-  stateDir: string;
-  binDir: string;
+  stateDirectory: string;
+  executableDirectory: string;
   argvLog: string;
 }
 
@@ -124,31 +124,31 @@ async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-verdict-"));
   const root = await fs.realpath(created);
   sandboxRoots.push(created);
-  const project = path.join(root, "project");
+  const projectRoot = path.join(root, "project");
   const home = path.join(root, "home");
-  const binDir = path.join(root, "bin");
-  await fs.mkdir(project, { recursive: true });
+  const executableDirectory = path.join(root, "bin");
+  await fs.mkdir(projectRoot, { recursive: true });
   await fs.mkdir(home);
-  await fs.mkdir(binDir);
-  await fs.writeFile(path.join(binDir, "claude"), STUB_CLAUDE, { mode: 0o755 });
-  await fs.writeFile(path.join(binDir, "codex"), STUB_CODEX, { mode: 0o755 });
+  await fs.mkdir(executableDirectory);
+  await fs.writeFile(path.join(executableDirectory, "claude"), STUB_CLAUDE, { mode: 0o755 });
+  await fs.writeFile(path.join(executableDirectory, "codex"), STUB_CODEX, { mode: 0o755 });
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
   const jfdiHome = path.join(home, ".jfdi");
   return {
     root,
-    project,
+    projectRoot,
     home,
     jfdiHome,
-    binDir,
+    executableDirectory,
     argvLog: path.join(root, "argv.jsonl"),
-    stateDir: path.join(jfdiHome, "projects", project.split(path.sep).join("-")),
+    stateDirectory: path.join(jfdiHome, "projects", projectRoot.split(path.sep).join("-")),
   };
 }
 
@@ -165,7 +165,7 @@ async function runCli(
 ): Promise<CliResult> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
     STUB_MODE: options.stubMode ?? "review-enum",
@@ -174,7 +174,7 @@ async function runCli(
   };
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: sandbox.project,
+      cwd: sandbox.projectRoot,
       env,
       maxBuffer: 64 * 1024 * 1024,
     });
@@ -197,7 +197,7 @@ interface RecordedEvent {
 }
 
 async function readEvents(sandbox: Sandbox): Promise<RecordedEvent[]> {
-  const raw = await fs.readFile(path.join(sandbox.stateDir, "events.jsonl"), "utf8");
+  const raw = await fs.readFile(path.join(sandbox.stateDirectory, "events.jsonl"), "utf8");
   return raw
     .split("\n")
     .filter(Boolean)
@@ -254,7 +254,7 @@ function expectNoGenericNoVerdictRetry(invocations: Invocation[]): void {
 }
 
 function readTicketNote(sandbox: Sandbox, ticketId: string): Promise<string> {
-  return fs.readFile(path.join(sandbox.project, ".jfdi", "tickets", `${ticketId}.md`), "utf8");
+  return fs.readFile(path.join(sandbox.projectRoot, ".jfdi", "tickets", `${ticketId}.md`), "utf8");
 }
 
 async function initProject(sandbox: Sandbox): Promise<void> {
@@ -263,7 +263,7 @@ async function initProject(sandbox: Sandbox): Promise<void> {
 
 afterEach(async () => {
   await Promise.all(
-    sandboxRoots.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    sandboxRoots.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -284,7 +284,10 @@ describe("spec-invalid verdict correction (built CLI)", () => {
       expect(events.filter((event) => event.type === "round_start")).toHaveLength(1);
       const ticketId = ticketIdOf(run);
       const report = JSON.parse(
-        await fs.readFile(path.join(sandbox.stateDir, "runs", ticketId, "report.json"), "utf8"),
+        await fs.readFile(
+          path.join(sandbox.stateDirectory, "runs", ticketId, "report.json"),
+          "utf8",
+        ),
       );
       expect(report.rounds).toBe(1);
 
@@ -323,7 +326,10 @@ describe("spec-invalid verdict correction (built CLI)", () => {
       expect(events.filter((event) => event.type === "round_start")).toHaveLength(1);
       const ticketId = ticketIdOf(run);
       const report = JSON.parse(
-        await fs.readFile(path.join(sandbox.stateDir, "runs", ticketId, "report.json"), "utf8"),
+        await fs.readFile(
+          path.join(sandbox.stateDirectory, "runs", ticketId, "report.json"),
+          "utf8",
+        ),
       );
       expect(report.rounds).toBe(1);
 
@@ -380,7 +386,7 @@ describe("spec-invalid verdict correction (built CLI)", () => {
       expect(note).not.toContain("run exhausted");
 
       // Nothing reached the target branch.
-      expect(await git(sandbox.project, "log", "--oneline", "main")).not.toContain("implement");
+      expect(await git(sandbox.projectRoot, "log", "--oneline", "main")).not.toContain("implement");
     },
     PIPELINE_TIMEOUT_MS,
   );

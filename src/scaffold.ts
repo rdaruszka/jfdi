@@ -4,7 +4,7 @@ import { createBoardIfMissing } from "./board.js";
 import { defaultConfig, type JfdiConfig } from "./config.js";
 import { ensurePrompts, isPristineDefaultPromptSet } from "./prompts.js";
 import { TICKET_FORMAT } from "./ticket-format.js";
-import { atomicWrite, ensureDir, fileExists } from "./util/fsx.js";
+import { atomicWrite, ensureDirectory, fileExists } from "./util/fsx.js";
 
 /**
  * Worktrees under .jfdi/ must never be committed — a stray `git add -A` would
@@ -27,9 +27,9 @@ tickets
 prompts.backup-*/
 `;
 
-export async function ensureJfdiGitignore(jfdiDir: string): Promise<void> {
-  await ensureDir(jfdiDir);
-  const ignorePath = path.join(jfdiDir, ".gitignore");
+export async function ensureJfdiGitignore(jfdiDirectory: string): Promise<void> {
+  await ensureDirectory(jfdiDirectory);
+  const ignorePath = path.join(jfdiDirectory, ".gitignore");
   if (!(await fileExists(ignorePath))) await atomicWrite(ignorePath, JFDI_GITIGNORE);
 }
 
@@ -111,29 +111,29 @@ exit 0
  * happened, so the caller can tell the human.
  */
 export async function scaffoldJfdi(
-  repoRoot: string,
-  jfdiDir: string,
+  projectRoot: string,
+  jfdiDirectory: string,
   config: JfdiConfig = defaultConfig(),
 ): Promise<{ retiredPromptsPath: string | null }> {
-  await ensureJfdiGitignore(jfdiDir);
-  const promptsPath = path.join(jfdiDir, "prompts");
+  await ensureJfdiGitignore(jfdiDirectory);
+  const promptsPath = path.join(jfdiDirectory, "prompts");
   let retiredPromptsPath: string | null = null;
   // A pristine default set has nothing worth backing up — retiring it would
   // just stack meaningless backups on every rerun. Anything else (an
   // adaptation, a stale file from an earlier era) is retired wholesale.
-  if ((await fileExists(promptsPath)) && !(await isPristineDefaultPromptSet(jfdiDir))) {
+  if ((await fileExists(promptsPath)) && !(await isPristineDefaultPromptSet(jfdiDirectory))) {
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    retiredPromptsPath = path.join(jfdiDir, `prompts.backup-${timestamp}`);
+    retiredPromptsPath = path.join(jfdiDirectory, `prompts.backup-${timestamp}`);
     await fs.rename(promptsPath, retiredPromptsPath);
   }
-  await ensurePrompts(jfdiDir);
-  const configPath = path.join(jfdiDir, "config.json");
+  await ensurePrompts(jfdiDirectory);
+  const configPath = path.join(jfdiDirectory, "config.json");
   if (!(await fileExists(configPath))) {
     await atomicWrite(configPath, `${JSON.stringify(config, null, 2)}\n`);
   }
-  await ensureDir(path.join(repoRoot, config.ticketsDirectory));
+  await ensureDirectory(path.join(projectRoot, config.ticketsDirectory));
   const columns = config.board.columns;
-  await createBoardIfMissing(path.join(repoRoot, config.board.path), [
+  await createBoardIfMissing(path.join(projectRoot, config.board.path), [
     columns.begin,
     columns.inProgress,
     columns.done,
@@ -141,13 +141,13 @@ export async function scaffoldJfdi(
     columns.readyToMerge,
     columns.inbox,
   ]);
-  const sandboxPath = path.join(jfdiDir, "sandbox.md");
+  const sandboxPath = path.join(jfdiDirectory, "sandbox.md");
   if (!(await fileExists(sandboxPath))) await atomicWrite(sandboxPath, SANDBOX_TEMPLATE);
-  const ticketFormatPath = path.join(jfdiDir, "ticket-format.md");
+  const ticketFormatPath = path.join(jfdiDirectory, "ticket-format.md");
   if (!(await fileExists(ticketFormatPath))) await atomicWrite(ticketFormatPath, TICKET_FORMAT);
-  const settingsPath = path.join(jfdiDir, "claude-settings.json");
+  const settingsPath = path.join(jfdiDirectory, "claude-settings.json");
   if (!(await fileExists(settingsPath))) await atomicWrite(settingsPath, CLAUDE_SETTINGS);
-  const formatHookPath = path.join(jfdiDir, "hooks", "format.sh");
+  const formatHookPath = path.join(jfdiDirectory, "hooks", "format.sh");
   if (!(await fileExists(formatHookPath))) {
     await atomicWrite(formatHookPath, FORMAT_HOOK_TEMPLATE);
     await fs.chmod(formatHookPath, EXECUTABLE_FILE_MODE);

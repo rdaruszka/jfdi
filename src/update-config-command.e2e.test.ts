@@ -30,8 +30,8 @@ import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 /**
  * A stub agent that, if ever spawned, writes a sentinel file — so a test can
@@ -55,25 +55,25 @@ interface Sandbox {
   project: string;
   configPath: string;
   sentinel: string;
-  binDir: string;
+  binDirectory: string;
   home: string;
   jfdiHome: string;
 }
 
-const scratchDirs: string[] = [];
+const scratchDirectories: string[] = [];
 
 async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-uc-cmd-"));
   const root = await fs.realpath(created);
-  scratchDirs.push(created);
+  scratchDirectories.push(created);
   const project = path.join(root, "project");
-  const binDir = path.join(root, "bin");
+  const binDirectory = path.join(root, "bin");
   const home = path.join(root, "home");
   await fs.mkdir(project, { recursive: true });
-  await fs.mkdir(binDir);
+  await fs.mkdir(binDirectory);
   await fs.mkdir(home);
   for (const executable of ["claude", "codex"]) {
-    await fs.writeFile(path.join(binDir, executable), SENTINEL_STUB, { mode: 0o755 });
+    await fs.writeFile(path.join(binDirectory, executable), SENTINEL_STUB, { mode: 0o755 });
   }
   await git(project, "init", "-b", "main");
   await git(project, "config", "user.email", "test@jfdi.local");
@@ -86,7 +86,7 @@ async function makeSandbox(): Promise<Sandbox> {
     project,
     configPath: path.join(project, ".jfdi", "config.json"),
     sentinel: path.join(root, "agent-sentinel"),
-    binDir,
+    binDirectory,
     home,
     jfdiHome: path.join(home, ".jfdi"),
   };
@@ -101,7 +101,7 @@ interface CliResult {
 async function runCli(sandbox: Sandbox, args: string[]): Promise<CliResult> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.binDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
     AGENT_SENTINEL: sandbox.sentinel,
@@ -127,7 +127,9 @@ async function noAgentSpawned(sandbox: Sandbox): Promise<boolean> {
 
 afterEach(async () => {
   await Promise.all(
-    scratchDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    scratchDirectories
+      .splice(0)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 

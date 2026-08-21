@@ -110,8 +110,8 @@ export function formatResumeSection(
   return `${parts.join("\n")}\n`;
 }
 
-function historyPath(runDir: string): string {
-  return path.join(runDir, "history.json");
+function historyPath(runDirectory: string): string {
+  return path.join(runDirectory, "history.json");
 }
 
 /**
@@ -149,7 +149,10 @@ export class FeedbackHistoryError extends Error {
  * rounds complete; a run that finishes writes an empty list, because its
  * earlier rounds were addressed. Round verdicts stay on disk either way.
  */
-export async function saveFeedbackHistory(runDir: string, history: FeedbackItem[]): Promise<void> {
+export async function saveFeedbackHistory(
+  runDirectory: string,
+  history: FeedbackItem[],
+): Promise<void> {
   const dropped = history.slice(0, -MAX_CARRIED_FEEDBACK_ITEMS);
   const kept = history.slice(-MAX_CARRIED_FEEDBACK_ITEMS);
   const droppedCountsByRun = new Map<number, number>();
@@ -164,7 +167,7 @@ export async function saveFeedbackHistory(runDir: string, history: FeedbackItem[
     }),
   );
   const entries: FeedbackHistoryEntry[] = [...markers, ...kept];
-  await atomicWrite(historyPath(runDir), `${JSON.stringify(entries, null, 2)}\n`);
+  await atomicWrite(historyPath(runDirectory), `${JSON.stringify(entries, null, 2)}\n`);
 }
 
 /**
@@ -207,8 +210,8 @@ function isDroppedFeedbackMarker(value: unknown): value is DroppedFeedbackMarker
 }
 
 /** Read a previous run's feedback rounds. Missing is empty; malformed blocks the caller. */
-export async function loadFeedbackHistory(runDir: string): Promise<FeedbackItem[]> {
-  const filePath = historyPath(runDir);
+export async function loadFeedbackHistory(runDirectory: string): Promise<FeedbackItem[]> {
+  const filePath = historyPath(runDirectory);
   const content = await readIfExists(filePath);
   if (content === null) return [];
   let parsed: unknown;

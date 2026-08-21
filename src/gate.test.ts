@@ -4,26 +4,26 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { formatGateFailure, runGate } from "./gate.js";
 
-let dir: string;
+let directory: string;
 
 beforeEach(async () => {
-  dir = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-gate-"));
+  directory = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-gate-"));
 });
 
 afterEach(async () => {
-  await fs.rm(dir, { recursive: true, force: true });
+  await fs.rm(directory, { recursive: true, force: true });
 });
 
 describe("runGate", () => {
   it("runs all commands in order and passes", async () => {
     const seen: string[] = [];
-    const logPath = path.join(dir, "gate.log");
+    const logPath = path.join(directory, "gate.log");
     const result = await runGate(
       [
         { name: "one", command: "echo first" },
         { name: "two", command: "echo second" },
       ],
-      dir,
+      directory,
       logPath,
       (name) => seen.push(name),
     );
@@ -39,8 +39,8 @@ describe("runGate", () => {
         { name: "boom", command: "echo oops >&2; exit 3" },
         { name: "never", command: "echo unreachable" },
       ],
-      dir,
-      path.join(dir, "gate.log"),
+      directory,
+      path.join(directory, "gate.log"),
     );
     expect(result.ok).toBe(false);
     expect(result.results).toHaveLength(1);
@@ -49,24 +49,24 @@ describe("runGate", () => {
   });
 
   it("runs in the given cwd", async () => {
-    await fs.writeFile(path.join(dir, "marker.txt"), "here");
+    await fs.writeFile(path.join(directory, "marker.txt"), "here");
     const result = await runGate(
       [{ name: "ls", command: "cat marker.txt" }],
-      dir,
-      path.join(dir, "gate.log"),
+      directory,
+      path.join(directory, "gate.log"),
     );
     expect(result.ok).toBe(true);
     expect(result.results[0]?.output).toContain("here");
   });
 
   it("an empty gate passes", async () => {
-    const logPath = path.join(dir, "gate.log");
-    expect((await runGate([], dir, logPath)).ok).toBe(true);
+    const logPath = path.join(directory, "gate.log");
+    expect((await runGate([], directory, logPath)).ok).toBe(true);
     expect(await fs.readFile(logPath, "utf8")).toBe("");
   });
 
   it("persists full output before creating a head-and-tail prompt excerpt", async () => {
-    const logPath = path.join(dir, "gate.log");
+    const logPath = path.join(directory, "gate.log");
     const result = await runGate(
       [
         {
@@ -75,7 +75,7 @@ describe("runGate", () => {
             "printf HEAD_CAUSE; head -c 30000 /dev/zero | tr '\\0' x; printf TAIL_DETAIL; exit 1",
         },
       ],
-      dir,
+      directory,
       logPath,
     );
 
@@ -91,10 +91,10 @@ describe("runGate", () => {
 
 describe("formatGateFailure", () => {
   it("names the failing step and includes output", async () => {
-    const logPath = path.join(dir, "gate.log");
+    const logPath = path.join(directory, "gate.log");
     const result = await runGate(
       [{ name: "lint", command: "echo bad style; exit 1" }],
-      dir,
+      directory,
       logPath,
     );
     const message = formatGateFailure(result);

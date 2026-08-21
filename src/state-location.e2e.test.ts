@@ -19,8 +19,8 @@ import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 /**
  * The agent both stubbed CLIs play; it never talks to the network. It replays
@@ -64,12 +64,12 @@ process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_err
 
 interface Sandbox {
   root: string;
-  project: string;
+  projectRoot: string;
   /** Stands in for the user's home: `JFDI_HOME` points at `<home>/.jfdi`. */
   home: string;
   jfdiHome: string;
-  stateDir: string;
-  binDir: string;
+  stateDirectory: string;
+  executableDirectory: string;
 }
 
 const sandboxes: string[] = [];
@@ -88,34 +88,34 @@ async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-e2e-"));
   const root = await fs.realpath(created);
   sandboxes.push(created);
-  const project = path.join(root, "project");
+  const projectRoot = path.join(root, "project");
   const home = path.join(root, "home");
-  const binDir = path.join(root, "bin");
-  await fs.mkdir(path.join(project, "sub"), { recursive: true });
+  const executableDirectory = path.join(root, "bin");
+  await fs.mkdir(path.join(projectRoot, "sub"), { recursive: true });
   await fs.mkdir(home);
-  await fs.mkdir(binDir);
+  await fs.mkdir(executableDirectory);
   // Both CLIs the scaffolded config selects, played by the same script:
   // the default mix reviews on Codex and implements on Claude.
   for (const executable of ["claude", "codex"]) {
-    await fs.writeFile(path.join(binDir, executable), STUB_AGENT, { mode: 0o755 });
+    await fs.writeFile(path.join(executableDirectory, executable), STUB_AGENT, { mode: 0o755 });
   }
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await fs.writeFile(path.join(project, "sub", "unit.txt"), "unit\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await fs.writeFile(path.join(projectRoot, "sub", "unit.txt"), "unit\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
   const jfdiHome = path.join(home, ".jfdi");
   return {
     root,
-    project,
+    projectRoot,
     home,
     jfdiHome,
-    stateDir: path.join(jfdiHome, "projects", expectedProjectKey(project)),
-    binDir,
+    stateDirectory: path.join(jfdiHome, "projects", expectedProjectKey(projectRoot)),
+    executableDirectory,
   };
 }
 
@@ -133,14 +133,14 @@ async function runCli(
 ): Promise<CliResult> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
   };
   if (options.useJfdiHomeEnv === false) delete env.JFDI_HOME;
   else env.JFDI_HOME = sandbox.jfdiHome;
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: options.cwd ?? sandbox.project,
+      cwd: options.cwd ?? sandbox.projectRoot,
       env,
     });
     return { code: 0, stdout, stderr };
@@ -156,9 +156,9 @@ function ticketIdOf(result: CliResult): string {
   return match[1];
 }
 
-async function listDir(dir: string): Promise<string[]> {
+async function listDirectory(directory: string): Promise<string[]> {
   try {
-    return await fs.readdir(dir);
+    return await fs.readdir(directory);
   } catch {
     return [];
   }
@@ -174,7 +174,9 @@ async function pathExists(target: string): Promise<boolean> {
 }
 
 afterEach(async () => {
-  await Promise.all(sandboxes.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    sandboxes.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe("run state under ~/.jfdi/projects/<project-key>", () => {
@@ -182,15 +184,17 @@ describe("run state under ~/.jfdi/projects/<project-key>", () => {
     const sandbox = await makeSandbox();
     expect((await runCli(sandbox, ["init", "--bare"])).code).toBe(0);
     // Scaffolding alone must not seed state files inside the project.
-    expect(await listDir(path.join(sandbox.project, ".jfdi"))).not.toContain("events.jsonl");
+    expect(await listDirectory(path.join(sandbox.projectRoot, ".jfdi"))).not.toContain(
+      "events.jsonl",
+    );
 
     const run = await runCli(sandbox, ["run", "Add a greeting"]);
     expect(run.code).toBe(0);
     const ticketId = ticketIdOf(run);
 
     // Everything the run produced lives under the home-directory state dir…
-    const roundDir = path.join(sandbox.stateDir, "runs", ticketId, "run-1", "round-1");
-    expect(await listDir(roundDir)).toEqual(
+    const roundDirectory = path.join(sandbox.stateDirectory, "runs", ticketId, "run-1", "round-1");
+    expect(await listDirectory(roundDirectory)).toEqual(
       expect.arrayContaining([
         "implementation.verdict.json",
         "code-review.verdict.json",
@@ -198,19 +202,19 @@ describe("run state under ~/.jfdi/projects/<project-key>", () => {
         "implementation.log.jsonl",
       ]),
     );
-    expect(await pathExists(path.join(sandbox.stateDir, "events.jsonl"))).toBe(true);
-    expect(await pathExists(path.join(sandbox.stateDir, "state.json"))).toBe(true);
-    expect(await pathExists(path.join(sandbox.stateDir, "runs", ticketId, "report.json"))).toBe(
-      true,
-    );
+    expect(await pathExists(path.join(sandbox.stateDirectory, "events.jsonl"))).toBe(true);
+    expect(await pathExists(path.join(sandbox.stateDirectory, "state.json"))).toBe(true);
+    expect(
+      await pathExists(path.join(sandbox.stateDirectory, "runs", ticketId, "report.json")),
+    ).toBe(true);
 
     // …and nothing put them back inside the project's .jfdi/ — or the worktree's.
-    const projectJfdi = path.join(sandbox.project, ".jfdi");
+    const projectJfdi = path.join(sandbox.projectRoot, ".jfdi");
     for (const stateEntry of ["runs", "events.jsonl", "state.json"]) {
-      expect(await listDir(projectJfdi)).not.toContain(stateEntry);
-      expect(await listDir(path.join(projectJfdi, "worktrees", ticketId, ".jfdi"))).not.toContain(
-        stateEntry,
-      );
+      expect(await listDirectory(projectJfdi)).not.toContain(stateEntry);
+      expect(
+        await listDirectory(path.join(projectJfdi, "worktrees", ticketId, ".jfdi")),
+      ).not.toContain(stateEntry);
     }
 
     // Worktree creation and location are unchanged.
@@ -233,7 +237,7 @@ describe("run state under ~/.jfdi/projects/<project-key>", () => {
     // merge picks up the saved report from the state dir and integrates.
     const merge = await runCli(sandbox, ["merge", ticketId]);
     expect(merge.code).toBe(0);
-    const log = await git(sandbox.project, "log", "--oneline", "main");
+    const log = await git(sandbox.projectRoot, "log", "--oneline", "main");
     expect(log).toContain(`${ticketId}:`);
   }, 120_000);
 
@@ -244,21 +248,23 @@ describe("run state under ~/.jfdi/projects/<project-key>", () => {
     expect(run.code).toBe(0);
 
     // sandbox.stateDir is <home>/.jfdi/projects/<key> — reached without the override.
-    expect(await pathExists(path.join(sandbox.stateDir, "state.json"))).toBe(true);
-    expect(await listDir(path.join(sandbox.project, ".jfdi"))).not.toContain("state.json");
+    expect(await pathExists(path.join(sandbox.stateDirectory, "state.json"))).toBe(true);
+    expect(await listDirectory(path.join(sandbox.projectRoot, ".jfdi"))).not.toContain(
+      "state.json",
+    );
   }, 120_000);
 
   it("keys state on the project root, not the working directory it was invoked from", async () => {
     const sandbox = await makeSandbox();
     expect((await runCli(sandbox, ["init", "--bare"])).code).toBe(0);
-    const subdirectory = path.join(sandbox.project, "sub");
+    const subdirectory = path.join(sandbox.projectRoot, "sub");
     const run = await runCli(sandbox, ["run", "Add a logo"], { cwd: subdirectory });
     expect(run.code).toBe(0);
     const ticketId = ticketIdOf(run);
 
     // One project, one key — no second directory keyed on the subdirectory.
-    expect(await listDir(path.join(sandbox.jfdiHome, "projects"))).toEqual([
-      expectedProjectKey(sandbox.project),
+    expect(await listDirectory(path.join(sandbox.jfdiHome, "projects"))).toEqual([
+      expectedProjectKey(sandbox.projectRoot),
     ]);
     // And a consumer invoked from elsewhere in the tree finds that same state.
     const status = await runCli(sandbox, ["status", "--json"], { cwd: subdirectory });

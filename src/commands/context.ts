@@ -1,33 +1,33 @@
 import * as path from "node:path";
-import { JFDI_DIR, loadConfig } from "../config.js";
+import { JFDI_DIRECTORY, loadConfig } from "../config.js";
 import { EventLog, type JfdiEvent } from "../events.js";
-import { repoRoot } from "../git.js";
+import { projectRoot } from "../git.js";
 import { createSessionHarnesses } from "../harness/index.js";
 import { PauseController } from "../pause.js";
 import type { PipelineContext } from "../pipeline.js";
-import { projectStateDir } from "../state-dir.js";
+import { projectStateDirectory } from "../state-dir.js";
 import { UsageRegistry } from "../usage.js";
 
 export async function buildContext(
   cwd: string = process.cwd(),
-  injectedStateDir?: string,
+  injectedStateDirectory?: string,
 ): Promise<PipelineContext> {
-  let root: string;
+  let resolvedProjectRoot: string;
   try {
-    root = await repoRoot(cwd);
+    resolvedProjectRoot = await projectRoot(cwd);
   } catch {
     throw new Error(
       "not inside a git repository — jfdi operates on the repo in the current directory",
     );
   }
-  const config = await loadConfig(root);
-  const jfdiDir = path.join(root, JFDI_DIR);
-  const stateDir = injectedStateDir ?? projectStateDir(root);
-  const log = new EventLog(stateDir);
+  const config = await loadConfig(resolvedProjectRoot);
+  const jfdiDirectory = path.join(resolvedProjectRoot, JFDI_DIRECTORY);
+  const stateDirectory = injectedStateDirectory ?? projectStateDirectory(resolvedProjectRoot);
+  const log = new EventLog(stateDirectory);
   return {
-    repoRoot: root,
-    jfdiDir,
-    stateDir,
+    projectRoot: resolvedProjectRoot,
+    jfdiDirectory,
+    stateDirectory,
     config,
     harnesses: createSessionHarnesses(config),
     log,

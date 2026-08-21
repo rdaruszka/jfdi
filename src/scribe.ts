@@ -60,13 +60,13 @@ export interface CommitContext {
  * past this size buys nothing but context: the scribe is told it was truncated
  * and writes from the summary and the diffstat-sized head of it.
  */
-const MAX_STAGED_DIFF_CHARS = 40_000;
+const MAX_STAGED_DIFF_CHARACTERS = 40_000;
 
 /** Commits quoted as the house style. Enough to show a pattern, not a history. */
 const HOUSE_STYLE_COMMIT_COUNT = 5;
 
 /** Longest excerpt of a session's own account quoted into the scribe's prompt. */
-const MAX_SUMMARY_CHARS = 4_000;
+const MAX_SUMMARY_CHARACTERS = 4_000;
 
 /**
  * A commit message's own trailing metadata, which the pipeline owns and the
@@ -90,9 +90,9 @@ export async function collectCommitContext(worktreePath: string): Promise<Commit
   );
   return {
     stagedDiff:
-      diff.length <= MAX_STAGED_DIFF_CHARS
+      diff.length <= MAX_STAGED_DIFF_CHARACTERS
         ? diff
-        : `${diff.slice(0, MAX_STAGED_DIFF_CHARS)}\n\n[diff truncated at ${MAX_STAGED_DIFF_CHARS} characters — describe the change from the summary above]`,
+        : `${diff.slice(0, MAX_STAGED_DIFF_CHARACTERS)}\n\n[diff truncated at ${MAX_STAGED_DIFF_CHARACTERS} characters — describe the change from the summary above]`,
     recentLog,
   };
 }
@@ -112,7 +112,7 @@ export function scribeVariables(
     MAX_ROUNDS: String(handoff.maxRounds),
     STATUS_LINE: statusLine(handoff.stage, handoff.outcome, handoff.routing),
     STAGE_SUMMARY:
-      handoff.summary.trim().slice(0, MAX_SUMMARY_CHARS) || "(the session recorded none)",
+      handoff.summary.trim().slice(0, MAX_SUMMARY_CHARACTERS) || "(the session recorded none)",
     STAGED_DIFF: commitContext.stagedDiff,
     RECENT_LOG: commitContext.recentLog,
   };

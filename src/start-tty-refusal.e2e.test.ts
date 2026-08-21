@@ -7,7 +7,7 @@
  * non-zero exit and an actionable message on stderr, and — critically — it must
  * dispatch nothing. There is no headless coordinator fallback. The refusal
  * lands before any board is read or any session spawned, so a stub agent that
- * records every invocation staying silent (`CAPTURE_DIR/ran.log` absent) proves
+ * records every invocation staying silent (`CAPTURE_DIRECTORY/ran.log` absent) proves
  * no dispatch, and the begin-column card sitting untouched proves the board was
  * never mutated.
  *
@@ -24,8 +24,8 @@ import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 const SCENARIO_TIMEOUT_MS = 60_000;
 const REFUSAL_MESSAGE = "jfdi start requires a terminal (TTY); it renders a live TUI";
@@ -33,19 +33,19 @@ const REFUSAL_MESSAGE = "jfdi start requires a terminal (TTY); it renders a live
 /** A stub that records every invocation, so an absent log proves no dispatch. */
 const RECORDING_STUB = `#!/usr/bin/env node
 const fs = require("node:fs");
-fs.mkdirSync(process.env.CAPTURE_DIR, { recursive: true });
-fs.appendFileSync(process.env.CAPTURE_DIR + "/ran.log", "ran\\n");
+fs.mkdirSync(process.env.CAPTURE_DIRECTORY, { recursive: true });
+fs.appendFileSync(process.env.CAPTURE_DIRECTORY + "/ran.log", "ran\\n");
 process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done" }) + "\\n");
 process.exit(0);
 `;
 
 interface Sandbox {
   root: string;
-  project: string;
+  projectRoot: string;
   home: string;
   jfdiHome: string;
-  binDir: string;
-  captureDir: string;
+  executableDirectory: string;
+  captureDirectory: string;
   boardPath: string;
 }
 
@@ -55,34 +55,35 @@ async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-tty-refusal-e2e-"));
   const root = await fs.realpath(created);
   sandboxes.push(created);
-  const project = path.join(root, "project");
+  const projectRoot = path.join(root, "project");
   const home = path.join(root, "home");
-  const binDir = path.join(root, "bin");
-  const captureDir = path.join(root, "capture");
-  for (const dir of [project, home, binDir, captureDir]) await fs.mkdir(dir, { recursive: true });
+  const executableDirectory = path.join(root, "bin");
+  const captureDirectory = path.join(root, "capture");
+  for (const directory of [projectRoot, home, executableDirectory, captureDirectory])
+    await fs.mkdir(directory, { recursive: true });
   for (const executable of ["claude", "codex"]) {
-    await fs.writeFile(path.join(binDir, executable), RECORDING_STUB, { mode: 0o755 });
+    await fs.writeFile(path.join(executableDirectory, executable), RECORDING_STUB, { mode: 0o755 });
   }
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
   const jfdiHome = path.join(home, ".jfdi");
   const sandbox: Sandbox = {
     root,
-    project,
+    projectRoot,
     home,
     jfdiHome,
-    binDir,
-    captureDir,
-    boardPath: path.join(project, ".jfdi", "board.md"),
+    executableDirectory,
+    captureDirectory,
+    boardPath: path.join(projectRoot, ".jfdi", "board.md"),
   };
   const init = await execFileAsync(process.execPath, [cliPath, "init", "--bare"], {
-    cwd: project,
+    cwd: projectRoot,
     env: envFor(sandbox),
   });
   expect(init.stderr).not.toContain("Error");
@@ -92,10 +93,10 @@ async function makeSandbox(): Promise<Sandbox> {
 function envFor(sandbox: Sandbox): NodeJS.ProcessEnv {
   return {
     ...process.env,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
-    CAPTURE_DIR: sandbox.captureDir,
+    CAPTURE_DIRECTORY: sandbox.captureDirectory,
   };
 }
 
@@ -144,7 +145,9 @@ async function fileExists(target: string): Promise<boolean> {
 }
 
 afterEach(async () => {
-  await Promise.all(sandboxes.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    sandboxes.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe("jfdi start — non-TTY refusal (built CLI)", () => {
@@ -154,7 +157,7 @@ describe("jfdi start — non-TTY refusal (built CLI)", () => {
       const sandbox = await makeSandbox();
       await writeReadyBoard(sandbox, "- [ ] Fix the parser");
 
-      const result = await runCli(["start"], { cwd: sandbox.project, env: envFor(sandbox) });
+      const result = await runCli(["start"], { cwd: sandbox.projectRoot, env: envFor(sandbox) });
 
       // Non-zero exit with the actionable message on stderr (not stdout).
       expect(result.code).toBe(1);
@@ -163,7 +166,7 @@ describe("jfdi start — non-TTY refusal (built CLI)", () => {
 
       // Dispatched nothing: no agent session spawned, and the begin-column card
       // is untouched — the coordinator never even read the board.
-      expect(await fileExists(path.join(sandbox.captureDir, "ran.log"))).toBe(false);
+      expect(await fileExists(path.join(sandbox.captureDirectory, "ran.log"))).toBe(false);
       const board = await fs.readFile(sandbox.boardPath, "utf8");
       expect(board).toContain("## Ready\n\n- [ ] Fix the parser");
       expect(board).toContain("## In Progress\n\n##");
@@ -181,11 +184,11 @@ describe("jfdi start — non-TTY refusal (built CLI)", () => {
       // The TTY check must run before `buildContext`, so an environment where
       // context-building would itself fail (no git repo) must still surface the
       // TTY refusal — not a 'not a repo' error shadowing it.
-      const bareDir = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-tty-norepo-e2e-"));
-      sandboxes.push(bareDir);
-      const env = { ...process.env, JFDI_HOME: path.join(bareDir, ".jfdi") };
+      const bareDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-tty-norepo-e2e-"));
+      sandboxes.push(bareDirectory);
+      const env = { ...process.env, JFDI_HOME: path.join(bareDirectory, ".jfdi") };
 
-      const result = await runCli(["start"], { cwd: bareDir, env });
+      const result = await runCli(["start"], { cwd: bareDirectory, env });
 
       expect(result.code).toBe(1);
       expect(result.stderr).toContain(REFUSAL_MESSAGE);

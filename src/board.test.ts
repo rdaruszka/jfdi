@@ -33,17 +33,17 @@ kanban-plugin: board
 
 `;
 
-let dir: string;
+let directory: string;
 let boardPath: string;
 
 beforeEach(async () => {
-  dir = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-board-"));
-  boardPath = path.join(dir, "board.md");
+  directory = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-board-"));
+  boardPath = path.join(directory, "board.md");
   await fs.writeFile(boardPath, SAMPLE);
 });
 
 afterEach(async () => {
-  await fs.rm(dir, { recursive: true, force: true });
+  await fs.rm(directory, { recursive: true, force: true });
 });
 
 describe("parseBoard", () => {
@@ -67,7 +67,7 @@ describe("moveCard", () => {
   it("writes through a symlinked board and preserves the link", async () => {
     // The deployed shape: board.md in .jfdi/ is a symlink into an Obsidian
     // vault. A move must land in the vault file, not replace the link.
-    const vault = path.join(dir, "vault");
+    const vault = path.join(directory, "vault");
     await fs.mkdir(vault);
     const vaultBoard = path.join(vault, "kanban.md");
     await fs.rename(boardPath, vaultBoard);
@@ -142,7 +142,7 @@ describe("ensureColumns", () => {
 
 describe("createBoardIfMissing", () => {
   it("creates a kanban-plugin board with columns", async () => {
-    const boardPath = path.join(dir, "new-board.md");
+    const boardPath = path.join(directory, "new-board.md");
     await createBoardIfMissing(boardPath, ["Ready", "Done"]);
     const content = await fs.readFile(boardPath, "utf8");
     expect(content).toContain("kanban-plugin: board");

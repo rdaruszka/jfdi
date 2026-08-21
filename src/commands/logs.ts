@@ -1,16 +1,16 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { runsDir } from "../pipeline.js";
+import { runsDirectory } from "../pipeline.js";
 import { buildContext } from "./context.js";
 
-const RUN_DIR_RE = /^run-\d+$/;
+const RUN_DIRECTORY_PATTERN = /^run-\d+$/;
 /** Characters in the `run-` prefix, stripped to compare run directories numerically. */
-const RUN_DIR_PREFIX_LENGTH = "run-".length;
+const RUN_DIRECTORY_PREFIX_LENGTH = "run-".length;
 
 /** `jfdi logs <ticket>` — dump the latest run's raw session logs. */
 export async function logsCommand(ticketId: string): Promise<number> {
   const context = await buildContext();
-  const base = runsDir(context.stateDir, ticketId);
+  const base = runsDirectory(context.stateDirectory, ticketId);
   let entries: string[];
   try {
     entries = await fs.readdir(base);
@@ -20,17 +20,21 @@ export async function logsCommand(ticketId: string): Promise<number> {
     return 1;
   }
   const runs = entries
-    .filter((entry) => RUN_DIR_RE.test(entry))
+    .filter((entry) => RUN_DIRECTORY_PATTERN.test(entry))
     .sort(
-      (a, b) => Number(a.slice(RUN_DIR_PREFIX_LENGTH)) - Number(b.slice(RUN_DIR_PREFIX_LENGTH)),
+      (a, b) =>
+        Number(a.slice(RUN_DIRECTORY_PREFIX_LENGTH)) - Number(b.slice(RUN_DIRECTORY_PREFIX_LENGTH)),
     );
   const latest = runs.at(-1);
-  const dirs = [...(latest ? [path.join(base, latest)] : []), path.join(base, "integration")];
+  const directories = [
+    ...(latest ? [path.join(base, latest)] : []),
+    path.join(base, "integration"),
+  ];
   let hasPrinted = false;
-  for (const dir of dirs) {
+  for (const directory of directories) {
     let files: string[] = [];
     try {
-      const rounds = await fs.readdir(dir, { recursive: true });
+      const rounds = await fs.readdir(directory, { recursive: true });
       files = rounds.filter((entry) => entry.endsWith(".log.jsonl")).sort();
     } catch {
       // This run has no such directory (e.g. no integration ever ran); the
@@ -38,8 +42,8 @@ export async function logsCommand(ticketId: string): Promise<number> {
       continue;
     }
     for (const file of files) {
-      const full = path.join(dir, file);
-      console.log(`\n===== ${path.relative(context.stateDir, full)} =====`);
+      const full = path.join(directory, file);
+      console.log(`\n===== ${path.relative(context.stateDirectory, full)} =====`);
       console.log(await fs.readFile(full, "utf8"));
       hasPrinted = true;
     }

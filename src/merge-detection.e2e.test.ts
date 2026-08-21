@@ -31,8 +31,8 @@ import { ticketIdFromCard } from "./util/ids.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 const SCENARIO_TIMEOUT_MS = 120_000;
 /** Cap on every wait below — a condition that never holds fails, never hangs. */
@@ -93,11 +93,11 @@ process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_err
 
 interface Sandbox {
   root: string;
-  project: string;
+  projectRoot: string;
   home: string;
   jfdiHome: string;
-  stateDir: string;
-  binDir: string;
+  stateDirectory: string;
+  executableDirectory: string;
   boardPath: string;
 }
 
@@ -114,41 +114,41 @@ async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-merge-e2e-"));
   const root = await fs.realpath(created);
   sandboxes.push(created);
-  const project = path.join(root, "project");
+  const projectRoot = path.join(root, "project");
   const home = path.join(root, "home");
-  const binDir = path.join(root, "bin");
-  await fs.mkdir(project, { recursive: true });
+  const executableDirectory = path.join(root, "bin");
+  await fs.mkdir(projectRoot, { recursive: true });
   await fs.mkdir(home);
-  await fs.mkdir(binDir);
+  await fs.mkdir(executableDirectory);
   // Both CLIs the scaffolded config selects, played by the same script:
   // the default mix reviews on Codex and implements on Claude.
   for (const executable of ["claude", "codex"]) {
-    await fs.writeFile(path.join(binDir, executable), STUB_AGENT, { mode: 0o755 });
+    await fs.writeFile(path.join(executableDirectory, executable), STUB_AGENT, { mode: 0o755 });
   }
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
   const jfdiHome = path.join(home, ".jfdi");
   return {
     root,
-    project,
+    projectRoot,
     home,
     jfdiHome,
-    stateDir: path.join(jfdiHome, "projects", expectedProjectKey(project)),
-    binDir,
-    boardPath: path.join(project, ".jfdi", "board.md"),
+    stateDirectory: path.join(jfdiHome, "projects", expectedProjectKey(projectRoot)),
+    executableDirectory,
+    boardPath: path.join(projectRoot, ".jfdi", "board.md"),
   };
 }
 
 function sandboxEnv(sandbox: Sandbox): NodeJS.ProcessEnv {
   return {
     ...process.env,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
     STUB_SLOW_MS: String(SLOW_SESSION_MS),
@@ -164,7 +164,7 @@ interface CliResult {
 async function runCli(sandbox: Sandbox, args: string[]): Promise<CliResult> {
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: sandbox.project,
+      cwd: sandbox.projectRoot,
       env: sandboxEnv(sandbox),
     });
     return { code: 0, stdout, stderr };
@@ -186,7 +186,7 @@ interface Coordinator {
  */
 async function startCoordinator(sandbox: Sandbox): Promise<Coordinator> {
   const child = spawnTtyCli(cliPath, ["start"], {
-    cwd: sandbox.project,
+    cwd: sandbox.projectRoot,
     env: sandboxEnv(sandbox),
   });
   running.push(child);
@@ -227,7 +227,7 @@ interface RecordedEvent {
 }
 
 async function readEvents(sandbox: Sandbox): Promise<RecordedEvent[]> {
-  const raw = await fs.readFile(path.join(sandbox.stateDir, "events.jsonl"), "utf8");
+  const raw = await fs.readFile(path.join(sandbox.stateDirectory, "events.jsonl"), "utf8");
   return raw
     .split("\n")
     .filter((line) => line.trim() !== "")
@@ -267,10 +267,10 @@ async function seedBegin(sandbox: Sandbox, cardTexts: string[]): Promise<void> {
  * the commit its reviews signed off on — the state a run leaves behind.
  */
 async function writeReport(sandbox: Sandbox, cardText: string, commit: string): Promise<void> {
-  const runDir = path.join(sandbox.stateDir, "runs", ticketIdFromCard(cardText));
-  await fs.mkdir(runDir, { recursive: true });
+  const runDirectory = path.join(sandbox.stateDirectory, "runs", ticketIdFromCard(cardText));
+  await fs.mkdir(runDirectory, { recursive: true });
   await fs.writeFile(
-    path.join(runDir, "report.json"),
+    path.join(runDirectory, "report.json"),
     JSON.stringify({
       summary: "signed off",
       decisions: [],
@@ -301,7 +301,9 @@ afterEach(async () => {
   for (const child of running) child.kill("SIGTERM");
   await sleep(SHUTDOWN_GRACE_MS);
   for (const child of running.splice(0)) child.kill("SIGKILL");
-  await Promise.all(sandboxes.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    sandboxes.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe("a running coordinator and merges it did not perform", () => {
@@ -430,9 +432,22 @@ describe("a running coordinator and merges it did not perform", () => {
       // The human approves it the other way: no `jfdi merge`, just git. Nothing
       // writes a `merged` event, and the tidy-up removes the branch that would
       // otherwise prove the work landed.
-      await git(sandbox.project, "worktree", "remove", "--force", `.jfdi/worktrees/${epsilonId}`);
-      await git(sandbox.project, "merge", "--no-ff", "-m", "merge by hand", `jfdi/${epsilonId}`);
-      await git(sandbox.project, "branch", "-D", `jfdi/${epsilonId}`);
+      await git(
+        sandbox.projectRoot,
+        "worktree",
+        "remove",
+        "--force",
+        `.jfdi/worktrees/${epsilonId}`,
+      );
+      await git(
+        sandbox.projectRoot,
+        "merge",
+        "--no-ff",
+        "-m",
+        "merge by hand",
+        `jfdi/${epsilonId}`,
+      );
+      await git(sandbox.projectRoot, "branch", "-D", `jfdi/${epsilonId}`);
 
       // Touch the board so the mtime poll runs a scan, as saving it would.
       const now = new Date();
@@ -511,12 +526,12 @@ describe("a running coordinator and merges it did not perform", () => {
       // sidetrack's sign-off commit is real but never reached the target;
       // ghost's is a sha git cannot resolve at all, which `git merge-base` errors
       // on rather than answering. Neither is evidence that the work landed.
-      await git(sandbox.project, "checkout", "-b", "sidetrack");
-      await fs.writeFile(path.join(sandbox.project, "side.txt"), "side\n");
-      await git(sandbox.project, "add", "-A");
-      await git(sandbox.project, "commit", "-m", "side work");
-      const parked = (await git(sandbox.project, "rev-parse", "HEAD")).trim();
-      await git(sandbox.project, "checkout", "main");
+      await git(sandbox.projectRoot, "checkout", "-b", "sidetrack");
+      await fs.writeFile(path.join(sandbox.projectRoot, "side.txt"), "side\n");
+      await git(sandbox.projectRoot, "add", "-A");
+      await git(sandbox.projectRoot, "commit", "-m", "side work");
+      const parked = (await git(sandbox.projectRoot, "rev-parse", "HEAD")).trim();
+      await git(sandbox.projectRoot, "checkout", "main");
       await writeReport(sandbox, "Add feature ghost", "d".repeat(40));
       await writeReport(sandbox, "Add feature sidetrack", parked);
 

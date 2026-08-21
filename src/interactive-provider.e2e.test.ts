@@ -8,8 +8,8 @@ import { defaultConfig } from "./config.js";
 import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 const sandboxRoots: string[] = [];
 
@@ -27,22 +27,22 @@ async function makeProject(implementationStage?: {
   model?: string;
   effort?: string;
 }): Promise<{
-  project: string;
+  projectRoot: string;
   environment: NodeJS.ProcessEnv;
   tracePath: string;
 }> {
   const createdSandboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-interactive-provider-"));
   sandboxRoots.push(createdSandboxRoot);
   const sandboxRoot = await fs.realpath(createdSandboxRoot);
-  const project = path.join(sandboxRoot, "project");
-  const binDir = path.join(sandboxRoot, "bin");
+  const projectRoot = path.join(sandboxRoot, "project");
+  const executableDirectory = path.join(sandboxRoot, "bin");
   const tracePath = path.join(sandboxRoot, "trace.json");
-  await fs.mkdir(path.join(project, ".jfdi"), { recursive: true });
-  await fs.mkdir(binDir);
+  await fs.mkdir(path.join(projectRoot, ".jfdi"), { recursive: true });
+  await fs.mkdir(executableDirectory);
   if (implementationStage) {
     const stages = { ...defaultConfig().stages, implementation: implementationStage };
     await fs.writeFile(
-      path.join(project, ".jfdi", "config.json"),
+      path.join(projectRoot, ".jfdi", "config.json"),
       `${JSON.stringify({ stages }, null, 2)}\n`,
     );
   }
@@ -68,30 +68,33 @@ process.exit(Number(process.env.SESSION_EXIT ?? 0));
 `;
   await Promise.all(
     ["claude", "codex"].map((executable) =>
-      fs.writeFile(path.join(binDir, executable), stub, { mode: 0o755 }),
+      fs.writeFile(path.join(executableDirectory, executable), stub, { mode: 0o755 }),
     ),
   );
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
   return {
-    project,
+    projectRoot,
     tracePath,
     environment: {
       ...process.env,
-      PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      PATH: `${executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
       TRACE_PATH: tracePath,
     },
   };
 }
 
-function runCli(project: string, environment: NodeJS.ProcessEnv, args: string[]) {
-  return execFileAsync(process.execPath, [cliPath, ...args], { cwd: project, env: environment });
+function runCli(projectRoot: string, environment: NodeJS.ProcessEnv, args: string[]) {
+  return execFileAsync(process.execPath, [cliPath, ...args], {
+    cwd: projectRoot,
+    env: environment,
+  });
 }
 
-async function writeConfig(project: string, contents: string): Promise<void> {
-  await fs.writeFile(path.join(project, ".jfdi", "config.json"), contents);
+async function writeConfig(projectRoot: string, contents: string): Promise<void> {
+  await fs.writeFile(path.join(projectRoot, ".jfdi", "config.json"), contents);
 }
 
 async function readTrace(tracePath: string): Promise<{
@@ -109,7 +112,7 @@ async function readTrace(tracePath: string): Promise<{
 describe("interactive provider selection", () => {
   it("takes the provider, model, and effort from init flags", async () => {
     const sandbox = await makeProject();
-    await runCli(sandbox.project, sandbox.environment, [
+    await runCli(sandbox.projectRoot, sandbox.environment, [
       "init",
       "--harness",
       "codex",
@@ -138,12 +141,12 @@ describe("interactive provider selection", () => {
       expect.stringContaining("You are configuring an agentic coding workflow"),
     ]);
     expect(trace.args.at(-1)).toContain("Explore the project first");
-    expect(trace.cwd).toBe(sandbox.project);
+    expect(trace.cwd).toBe(sandbox.projectRoot);
   });
 
   it("uses init's defaults instead of the implementation stage selection", async () => {
     const sandbox = await makeProject({ harness: "codex", model: "gpt-5.6-sol", effort: "low" });
-    await runCli(sandbox.project, sandbox.environment, ["init"]);
+    await runCli(sandbox.projectRoot, sandbox.environment, ["init"]);
 
     const trace = await readTrace(sandbox.tracePath);
     expect(trace.executable).toBe("claude");
@@ -169,18 +172,18 @@ describe("interactive provider selection", () => {
       "You are configuring an agentic coding workflow",
     );
     expect(trace.args.at(-1)).toContain("Explore the project first");
-    expect(trace.cwd).toBe(sandbox.project);
+    expect(trace.cwd).toBe(sandbox.projectRoot);
   });
 
   it("verifies the gate itself after a session that exited cleanly", async () => {
     const sandbox = await makeProject();
-    const { stdout } = await runCli(sandbox.project, sandbox.environment, ["init"]);
+    const { stdout } = await runCli(sandbox.projectRoot, sandbox.environment, ["init"]);
     expect(stdout).toContain("gate verified");
   });
 
   it("scaffolds without launching a session under --bare", async () => {
     const sandbox = await makeProject();
-    const { stdout } = await runCli(sandbox.project, sandbox.environment, ["init", "--bare"]);
+    const { stdout } = await runCli(sandbox.projectRoot, sandbox.environment, ["init", "--bare"]);
 
     expect(stdout).toContain("scaffolded .jfdi/");
     expect(stdout).not.toContain("gate verified");
@@ -191,7 +194,7 @@ describe("interactive provider selection", () => {
     const sandbox = await makeProject();
     let failure: unknown;
     try {
-      await runCli(sandbox.project, sandbox.environment, ["convo"]);
+      await runCli(sandbox.projectRoot, sandbox.environment, ["convo"]);
     } catch (error) {
       failure = error;
     }
@@ -207,7 +210,7 @@ describe("interactive provider selection", () => {
     const sandbox = await makeProject();
     let failure: unknown;
     try {
-      await runCli(sandbox.project, { ...sandbox.environment, SESSION_EXIT: "3" }, ["init"]);
+      await runCli(sandbox.projectRoot, { ...sandbox.environment, SESSION_EXIT: "3" }, ["init"]);
     } catch (error) {
       failure = error;
     }
@@ -223,7 +226,7 @@ describe("interactive provider selection", () => {
     const sandbox = await makeProject();
     let failure: unknown;
     try {
-      await runCli(sandbox.project, { ...sandbox.environment, GATE_AFTER_SESSION: "exit 7" }, [
+      await runCli(sandbox.projectRoot, { ...sandbox.environment, GATE_AFTER_SESSION: "exit 7" }, [
         "init",
       ]);
     } catch (error) {
@@ -241,7 +244,7 @@ describe("interactive provider selection", () => {
   it("warns, uses auto permissions, and tells the session about an invalid config", async () => {
     const sandbox = await makeProject();
     await writeConfig(
-      sandbox.project,
+      sandbox.projectRoot,
       `${JSON.stringify({
         ...defaultConfig(),
         gate: [{ name: "build" }],
@@ -250,7 +253,7 @@ describe("interactive provider selection", () => {
 
     let failure: unknown;
     try {
-      await runCli(sandbox.project, sandbox.environment, ["init"]);
+      await runCli(sandbox.projectRoot, sandbox.environment, ["init"]);
     } catch (error) {
       failure = error;
     }
@@ -270,11 +273,11 @@ describe("interactive provider selection", () => {
 
   it("warns and launches the session when config JSON is malformed", async () => {
     const sandbox = await makeProject();
-    await writeConfig(sandbox.project, "{nope");
+    await writeConfig(sandbox.projectRoot, "{nope");
 
     let failure: unknown;
     try {
-      await runCli(sandbox.project, sandbox.environment, ["init"]);
+      await runCli(sandbox.projectRoot, sandbox.environment, ["init"]);
     } catch (error) {
       failure = error;
     }
@@ -288,7 +291,7 @@ describe("interactive provider selection", () => {
     const trace = await readTrace(sandbox.tracePath);
     expect(trace.args.at(-1)).toContain(
       `Warning: failed to load .jfdi/config.json: "invalid JSON in ${path.join(
-        sandbox.project,
+        sandbox.projectRoot,
         ".jfdi/config.json",
       )}`,
     );
@@ -310,9 +313,9 @@ describe("interactive provider selection", () => {
     },
   ])("completes --bare with a warning for $name", async ({ contents, errorText }) => {
     const sandbox = await makeProject();
-    await writeConfig(sandbox.project, contents);
+    await writeConfig(sandbox.projectRoot, contents);
 
-    const { stderr, stdout } = await runCli(sandbox.project, sandbox.environment, [
+    const { stderr, stdout } = await runCli(sandbox.projectRoot, sandbox.environment, [
       "init",
       "--bare",
     ]);
@@ -327,9 +330,11 @@ describe("interactive provider selection", () => {
 
     let failure: unknown;
     try {
-      await runCli(sandbox.project, { ...sandbox.environment, INVALID_CONFIG_AFTER_SESSION: "1" }, [
-        "init",
-      ]);
+      await runCli(
+        sandbox.projectRoot,
+        { ...sandbox.environment, INVALID_CONFIG_AFTER_SESSION: "1" },
+        ["init"],
+      );
     } catch (error) {
       failure = error;
     }
@@ -348,13 +353,13 @@ describe("interactive provider selection", () => {
     "%s keeps failing loud on a bad config — the init fallback stays init-only",
     async (command) => {
       const sandbox = await makeProject();
-      await writeConfig(sandbox.project, "{nope");
+      await writeConfig(sandbox.projectRoot, "{nope");
 
       let failure: unknown;
       try {
         await runCli(
-          sandbox.project,
-          { ...sandbox.environment, JFDI_HOME: path.join(sandbox.project, ".jfdi-home") },
+          sandbox.projectRoot,
+          { ...sandbox.environment, JFDI_HOME: path.join(sandbox.projectRoot, ".jfdi-home") },
           command === "run" ? [command, "do a thing"] : [command],
         );
       } catch (error) {

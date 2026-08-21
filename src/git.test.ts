@@ -16,37 +16,37 @@ import {
   isAncestor,
   isMergeInProgress,
   mergeTargetIntoBranch,
+  parseRevision,
   removeWorktree,
-  revParse,
   ticketBranch,
 } from "./git.js";
 
 // Fixtures live under the OS temp dir — never inside a parent git repo
 // (Claude Code and git both walk up the tree; iteration 1 got bitten).
 let root: string;
-let repo: string;
-let worktreesDir: string;
+let projectRoot: string;
+let worktreesDirectory: string;
 
-async function write(repoDir: string, file: string, content: string): Promise<void> {
-  await fs.mkdir(path.dirname(path.join(repoDir, file)), { recursive: true });
-  await fs.writeFile(path.join(repoDir, file), content);
+async function write(projectRoot: string, file: string, content: string): Promise<void> {
+  await fs.mkdir(path.dirname(path.join(projectRoot, file)), { recursive: true });
+  await fs.writeFile(path.join(projectRoot, file), content);
 }
 
-async function commit(repoDir: string, message: string): Promise<void> {
-  await git(repoDir, "add", "-A");
-  await git(repoDir, "commit", "-m", message);
+async function commit(projectRoot: string, message: string): Promise<void> {
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", message);
 }
 
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-git-"));
-  repo = path.join(root, "repo");
-  worktreesDir = path.join(root, "worktrees");
-  await fs.mkdir(repo);
-  await git(repo, "init", "-b", "main");
-  await git(repo, "config", "user.email", "test@jfdi.local");
-  await git(repo, "config", "user.name", "JFDI Test");
-  await write(repo, "README.md", "hello\n");
-  await commit(repo, "initial");
+  projectRoot = path.join(root, "repo");
+  worktreesDirectory = path.join(root, "worktrees");
+  await fs.mkdir(projectRoot);
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await write(projectRoot, "README.md", "hello\n");
+  await commit(projectRoot, "initial");
 });
 
 afterEach(async () => {
@@ -55,7 +55,7 @@ afterEach(async () => {
 
 describe("worktrees", () => {
   it("creates a worktree on a fresh jfdi/<id> branch from the base", async () => {
-    const worktree = await createWorktree(repo, worktreesDir, "my-ticket", "main");
+    const worktree = await createWorktree(projectRoot, worktreesDirectory, "my-ticket", "main");
     expect(worktree.branch).toBe(ticketBranch("my-ticket"));
     expect(await currentBranch(worktree.path)).toBe("jfdi/my-ticket");
     expect(await fs.readFile(path.join(worktree.path, "README.md"), "utf8")).toBe("hello\n");
@@ -77,7 +77,9 @@ describe("worktrees", () => {
   it("creates concurrent worktrees on one repo without them tripping over each other", async () => {
     const ticketIds = ["alpha", "beta", "gamma", "delta"];
     const worktrees = await Promise.all(
-      ticketIds.map((ticketId) => createWorktree(repo, worktreesDir, ticketId, "main")),
+      ticketIds.map((ticketId) =>
+        createWorktree(projectRoot, worktreesDirectory, ticketId, "main"),
+      ),
     );
 
     expect(worktrees.map((worktree) => worktree.branch)).toEqual(ticketIds.map(ticketBranch));
@@ -85,52 +87,52 @@ describe("worktrees", () => {
       expect(await currentBranch(worktree.path)).toBe(ticketBranch(path.basename(worktree.path)));
     }
     // git agrees they are all registered, not just that the directories exist.
-    const registered = await git(repo, "worktree", "list", "--porcelain");
+    const registered = await git(projectRoot, "worktree", "list", "--porcelain");
     for (const ticketId of ticketIds) expect(registered).toContain(ticketBranch(ticketId));
   });
 
   it("removes a worktree while another is being created on the same repo", async () => {
-    const doomed = await createWorktree(repo, worktreesDir, "doomed", "main");
+    const doomed = await createWorktree(projectRoot, worktreesDirectory, "doomed", "main");
     // remove and add write the same registry; neither may see the other's
     // half-written entry.
     const [, created] = await Promise.all([
-      removeWorktree(repo, doomed.path),
-      createWorktree(repo, worktreesDir, "survivor", "main"),
+      removeWorktree(projectRoot, doomed.path),
+      createWorktree(projectRoot, worktreesDirectory, "survivor", "main"),
     ]);
     expect(await currentBranch(created.path)).toBe(ticketBranch("survivor"));
-    const registered = await git(repo, "worktree", "list", "--porcelain");
+    const registered = await git(projectRoot, "worktree", "list", "--porcelain");
     expect(registered).toContain(ticketBranch("survivor"));
     expect(registered).not.toContain(ticketBranch("doomed"));
   });
 
   it("reuses an existing branch and worktree on resume", async () => {
-    const worktree1 = await createWorktree(repo, worktreesDir, "t", "main");
+    const worktree1 = await createWorktree(projectRoot, worktreesDirectory, "t", "main");
     await write(worktree1.path, "work.txt", "wip\n");
     await commit(worktree1.path, "wip");
-    const worktree2 = await createWorktree(repo, worktreesDir, "t", "main");
+    const worktree2 = await createWorktree(projectRoot, worktreesDirectory, "t", "main");
     expect(worktree2.path).toBe(worktree1.path);
     expect(await fs.readFile(path.join(worktree2.path, "work.txt"), "utf8")).toBe("wip\n");
   });
 
   it("removes a worktree", async () => {
-    const worktree = await createWorktree(repo, worktreesDir, "gone", "main");
-    await removeWorktree(repo, worktree.path, { shouldForce: true });
+    const worktree = await createWorktree(projectRoot, worktreesDirectory, "gone", "main");
+    await removeWorktree(projectRoot, worktree.path, { shouldForce: true });
     await expect(fs.access(worktree.path)).rejects.toThrow();
     // Branch survives removal (kept for inspection until merged).
-    expect(await branchExists(repo, "jfdi/gone")).toBe(true);
+    expect(await branchExists(projectRoot, "jfdi/gone")).toBe(true);
   });
 });
 
 describe("merge and land", () => {
   it("clean merge of a moved target, then lands a merge commit with the target first", async () => {
-    const worktree = await createWorktree(repo, worktreesDir, "feat", "main");
+    const worktree = await createWorktree(projectRoot, worktreesDirectory, "feat", "main");
     await write(worktree.path, "feat.txt", "feature\n");
     await commit(worktree.path, "feat");
-    const signedOff = await revParse(repo, "jfdi/feat");
+    const signedOff = await parseRevision(projectRoot, "jfdi/feat");
     // Move main forward with a non-conflicting change.
-    await write(repo, "other.txt", "other\n");
-    await commit(repo, "other");
-    const targetHead = await revParse(repo, "main");
+    await write(projectRoot, "other.txt", "other\n");
+    await commit(projectRoot, "other");
+    const targetHead = await parseRevision(projectRoot, "main");
     expect(await commitCount(worktree.path, "main")).toBe(1);
 
     const merge = await mergeTargetIntoBranch(worktree.path, "main");
@@ -143,56 +145,56 @@ describe("merge and land", () => {
       "Merge jfdi/feat into main",
     );
     // main is checked out in the primary worktree and clean → ff merge.
-    await fastForward(repo, "main", landing);
+    await fastForward(projectRoot, "main", landing);
 
-    expect(await revParse(repo, "main")).toBe(landing);
-    expect(await git(repo, "rev-parse", "main^1")).toBe(targetHead);
-    expect(await git(repo, "rev-parse", "main^2")).toBe(signedOff);
-    expect(await git(repo, "rev-parse", "main^{tree}")).toBe(testedTree);
-    expect(await isAncestor(repo, signedOff, "main")).toBe(true);
-    expect(await fs.readFile(path.join(repo, "feat.txt"), "utf8")).toBe("feature\n");
-    expect(await fs.readFile(path.join(repo, "other.txt"), "utf8")).toBe("other\n");
+    expect(await parseRevision(projectRoot, "main")).toBe(landing);
+    expect(await git(projectRoot, "rev-parse", "main^1")).toBe(targetHead);
+    expect(await git(projectRoot, "rev-parse", "main^2")).toBe(signedOff);
+    expect(await git(projectRoot, "rev-parse", "main^{tree}")).toBe(testedTree);
+    expect(await isAncestor(projectRoot, signedOff, "main")).toBe(true);
+    expect(await fs.readFile(path.join(projectRoot, "feat.txt"), "utf8")).toBe("feature\n");
+    expect(await fs.readFile(path.join(projectRoot, "other.txt"), "utf8")).toBe("other\n");
   });
 
   it("lands a merge commit even when the target could fast-forward", async () => {
-    const worktree = await createWorktree(repo, worktreesDir, "noff", "main");
+    const worktree = await createWorktree(projectRoot, worktreesDirectory, "noff", "main");
     await write(worktree.path, "only.txt", "only\n");
     await commit(worktree.path, "only");
-    const signedOff = await revParse(repo, "jfdi/noff");
-    const targetHead = await revParse(repo, "main");
+    const signedOff = await parseRevision(projectRoot, "jfdi/noff");
+    const targetHead = await parseRevision(projectRoot, "main");
 
     // Target has not moved: nothing to merge, but the landing shape is uniform.
     const merge = await mergeTargetIntoBranch(worktree.path, "main");
     expect(merge.ok).toBe(true);
-    expect(await revParse(worktree.path, "HEAD")).toBe(signedOff);
+    expect(await parseRevision(worktree.path, "HEAD")).toBe(signedOff);
 
     const landing = await commitMerge(
       worktree.path,
       { firstParent: targetHead, secondParent: signedOff },
       "Merge jfdi/noff into main",
     );
-    await fastForward(repo, "main", landing);
+    await fastForward(projectRoot, "main", landing);
 
-    expect(await git(repo, "rev-list", "--count", "--first-parent", `${targetHead}..main`)).toBe(
-      "1",
-    );
-    expect(await git(repo, "rev-parse", "main^2")).toBe(signedOff);
+    expect(
+      await git(projectRoot, "rev-list", "--count", "--first-parent", `${targetHead}..main`),
+    ).toBe("1");
+    expect(await git(projectRoot, "rev-parse", "main^2")).toBe(signedOff);
   });
 
   it("detects conflicts and leaves the merge in progress for the agent", async () => {
-    const worktree = await createWorktree(repo, worktreesDir, "clash", "main");
+    const worktree = await createWorktree(projectRoot, worktreesDirectory, "clash", "main");
     await write(worktree.path, "README.md", "branch version\n");
     await commit(worktree.path, "branch edit");
-    const signedOff = await revParse(repo, "jfdi/clash");
-    await write(repo, "README.md", "main version\n");
-    await commit(repo, "main edit");
+    const signedOff = await parseRevision(projectRoot, "jfdi/clash");
+    await write(projectRoot, "README.md", "main version\n");
+    await commit(projectRoot, "main edit");
 
     const merge = await mergeTargetIntoBranch(worktree.path, "main");
     expect(merge.ok).toBe(false);
     expect(merge.hasConflict).toBe(true);
     expect(await isMergeInProgress(worktree.path)).toBe(true);
     // A conflicted merge commits nothing: the signed-off tip is untouched.
-    expect(await revParse(repo, "jfdi/clash")).toBe(signedOff);
+    expect(await parseRevision(projectRoot, "jfdi/clash")).toBe(signedOff);
     // Resolve as the integration agent would.
     await write(worktree.path, "README.md", "merged version\n");
     await git(worktree.path, "add", "README.md");
@@ -201,18 +203,18 @@ describe("merge and land", () => {
   });
 
   it("aborts a conflicted merge losslessly", async () => {
-    const worktree = await createWorktree(repo, worktreesDir, "abandoned", "main");
+    const worktree = await createWorktree(projectRoot, worktreesDirectory, "abandoned", "main");
     await write(worktree.path, "README.md", "branch version\n");
     await commit(worktree.path, "branch edit");
-    const signedOff = await revParse(repo, "jfdi/abandoned");
-    await write(repo, "README.md", "main version\n");
-    await commit(repo, "main edit");
+    const signedOff = await parseRevision(projectRoot, "jfdi/abandoned");
+    await write(projectRoot, "README.md", "main version\n");
+    await commit(projectRoot, "main edit");
     expect((await mergeTargetIntoBranch(worktree.path, "main")).hasConflict).toBe(true);
 
     await abortMerge(worktree.path);
 
     expect(await isMergeInProgress(worktree.path)).toBe(false);
-    expect(await revParse(repo, "jfdi/abandoned")).toBe(signedOff);
+    expect(await parseRevision(projectRoot, "jfdi/abandoned")).toBe(signedOff);
     expect(await fs.readFile(path.join(worktree.path, "README.md"), "utf8")).toBe(
       "branch version\n",
     );
@@ -228,11 +230,11 @@ describe("merge and land", () => {
    * would have to update the comment that says it does not.
    */
   it("discards a half-done conflict resolution the agent left in the working tree", async () => {
-    const worktree = await createWorktree(repo, worktreesDir, "half-resolved", "main");
+    const worktree = await createWorktree(projectRoot, worktreesDirectory, "half-resolved", "main");
     await write(worktree.path, "README.md", "branch version\n");
     await commit(worktree.path, "branch edit");
-    await write(repo, "README.md", "main version\n");
-    await commit(repo, "main edit");
+    await write(projectRoot, "README.md", "main version\n");
+    await commit(projectRoot, "main edit");
     expect((await mergeTargetIntoBranch(worktree.path, "main")).hasConflict).toBe(true);
     // The integration agent resolves the conflict and stages it, but the session
     // dies before the merge is concluded — the resolution lives only in the tree.
@@ -255,14 +257,14 @@ describe("merge and land", () => {
    * the field: a git process that crashed mid-write leaves one behind.
    */
   it("throws when git cannot abort the merge, leaving the state as it found it", async () => {
-    const worktree = await createWorktree(repo, worktreesDir, "stuck", "main");
+    const worktree = await createWorktree(projectRoot, worktreesDirectory, "stuck", "main");
     await write(worktree.path, "README.md", "branch version\n");
     await commit(worktree.path, "branch edit");
-    await write(repo, "README.md", "main version\n");
-    await commit(repo, "main edit");
+    await write(projectRoot, "README.md", "main version\n");
+    await commit(projectRoot, "main edit");
     expect((await mergeTargetIntoBranch(worktree.path, "main")).hasConflict).toBe(true);
-    const gitDir = await git(worktree.path, "rev-parse", "--absolute-git-dir");
-    await fs.writeFile(path.join(gitDir, "index.lock"), "");
+    const gitDirectory = await git(worktree.path, "rev-parse", "--absolute-git-dir");
+    await fs.writeFile(path.join(gitDirectory, "index.lock"), "");
 
     await expect(abortMerge(worktree.path)).rejects.toThrow(
       /could not abort the merge in progress in .*stuck/,
@@ -273,37 +275,37 @@ describe("merge and land", () => {
   });
 
   it("fastForward refuses non-descendants", async () => {
-    const worktree = await createWorktree(repo, worktreesDir, "diverged", "main");
+    const worktree = await createWorktree(projectRoot, worktreesDirectory, "diverged", "main");
     await write(worktree.path, "a.txt", "a\n");
     await commit(worktree.path, "a");
-    await write(repo, "b.txt", "b\n");
-    await commit(repo, "b");
-    await expect(fastForward(repo, "main", "jfdi/diverged")).rejects.toThrow(GitError);
+    await write(projectRoot, "b.txt", "b\n");
+    await commit(projectRoot, "b");
+    await expect(fastForward(projectRoot, "main", "jfdi/diverged")).rejects.toThrow(GitError);
   });
 
   it("fastForward refuses when target checkout is dirty", async () => {
-    const worktree = await createWorktree(repo, worktreesDir, "clean-req", "main");
+    const worktree = await createWorktree(projectRoot, worktreesDirectory, "clean-req", "main");
     await write(worktree.path, "c.txt", "c\n");
     await commit(worktree.path, "c");
-    await write(repo, "README.md", "uncommitted local edit\n");
-    await expect(fastForward(repo, "main", "jfdi/clean-req")).rejects.toThrow(
+    await write(projectRoot, "README.md", "uncommitted local edit\n");
+    await expect(fastForward(projectRoot, "main", "jfdi/clean-req")).rejects.toThrow(
       /uncommitted changes/,
     );
   });
 
   it("already-merged detection via isAncestor", async () => {
-    const worktree = await createWorktree(repo, worktreesDir, "dup", "main");
+    const worktree = await createWorktree(projectRoot, worktreesDirectory, "dup", "main");
     await write(worktree.path, "d.txt", "d\n");
     await commit(worktree.path, "d");
-    await fastForward(repo, "main", "jfdi/dup");
+    await fastForward(projectRoot, "main", "jfdi/dup");
     // A second merge attempt would see the branch already contained.
-    expect(await isAncestor(repo, "jfdi/dup", "main")).toBe(true);
+    expect(await isAncestor(projectRoot, "jfdi/dup", "main")).toBe(true);
   });
 });
 
 describe("commitAllIfDirty", () => {
   it("commits leftover changes and reports true", async () => {
-    const worktree = await createWorktree(repo, worktreesDir, "dirty", "main");
+    const worktree = await createWorktree(projectRoot, worktreesDirectory, "dirty", "main");
     await write(worktree.path, "left.txt", "over\n");
     expect(await commitAllIfDirty(worktree.path, "jfdi: checkpoint")).toBe(true);
     expect(await commitAllIfDirty(worktree.path, "jfdi: checkpoint")).toBe(false);

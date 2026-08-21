@@ -28,9 +28,9 @@ export function parseBoard(content: string): Board {
   const columns: Column[] = [];
   let current: Column | null = null;
   for (const line of lines) {
-    const col = COLUMN_RE.exec(line);
-    if (col?.[1]) {
-      current = { name: col[1], cards: [] };
+    const column = COLUMN_RE.exec(line);
+    if (column?.[1]) {
+      current = { name: column[1], cards: [] };
       columns.push(current);
       continue;
     }

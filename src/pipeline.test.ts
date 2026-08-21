@@ -45,7 +45,7 @@ describe("runHeldSession", () => {
       "usage-required",
       "implementation",
       "prompt",
-      { cwd: fixture.repo },
+      { cwd: fixture.projectRoot },
       () => undefined,
     );
 
@@ -235,18 +235,18 @@ describe("runPipeline", () => {
     if (outcome.status !== "passed") return;
 
     // Round artifacts (verdicts, logs) live outside the project checkout…
-    const roundDir = path.join(fixture.stateDir, "runs", ticket.id, "run-1", "round-1");
-    expect(await fs.readdir(roundDir)).toContain("implementation.verdict.json");
+    const roundDirectory = path.join(fixture.stateDirectory, "runs", ticket.id, "run-1", "round-1");
+    expect(await fs.readdir(roundDirectory)).toContain("implementation.verdict.json");
     // …and nothing put a runs/ directory back inside .jfdi/.
-    await expect(fs.readdir(path.join(fixture.jfdiDir, "runs"))).rejects.toThrow();
+    await expect(fs.readdir(path.join(fixture.jfdiDirectory, "runs"))).rejects.toThrow();
     // Worktrees are unchanged: still in-project, still gitignored.
-    expect(outcome.worktree.path).toBe(path.join(fixture.jfdiDir, "worktrees", ticket.id));
+    expect(outcome.worktree.path).toBe(path.join(fixture.jfdiDirectory, "worktrees", ticket.id));
   });
 
   it("uses max run index plus one and carries history across a deleted run directory", async () => {
     const carriedFeedback = "feedback from the latest existing run";
     const ticket = await resolveTicket("Build after a run directory gap", fixture.ticketsDirectory);
-    const runBase = path.join(fixture.stateDir, "runs", ticket.id);
+    const runBase = path.join(fixture.stateDirectory, "runs", ticket.id);
     await fs.mkdir(path.join(runBase, "run-1"), { recursive: true });
     await fs.mkdir(path.join(runBase, "run-3"), { recursive: true });
     await fs.writeFile(
@@ -291,7 +291,7 @@ describe("runPipeline", () => {
     // max+1 must land run-5 and resolve `previous` to run-4.
     const carriedFeedback = "feedback from the highest surviving run";
     const ticket = await resolveTicket("Build after a non-colliding gap", fixture.ticketsDirectory);
-    const runBase = path.join(fixture.stateDir, "runs", ticket.id);
+    const runBase = path.join(fixture.stateDirectory, "runs", ticket.id);
     for (const existing of ["run-1", "run-2", "run-4"]) {
       await fs.mkdir(path.join(runBase, existing), { recursive: true });
     }
@@ -615,11 +615,11 @@ describe("runPipeline", () => {
       const message = await git(outcome.worktree.path, "show", "-s", "--format=%B", commit);
       expect(implementationComment?.body).toContain(message.trimEnd());
     }
-    const roundDir = path.join(fixture.stateDir, "runs", ticket.id, "run-1", "round-1");
-    expect(await fs.readFile(path.join(roundDir, "gate-implementation-1.log"), "utf8")).toBe(
+    const roundDirectory = path.join(fixture.stateDirectory, "runs", ticket.id, "run-1", "round-1");
+    expect(await fs.readFile(path.join(roundDirectory, "gate-implementation-1.log"), "utf8")).toBe(
       "RED_TRANSCRIPT\n",
     );
-    expect(await fs.readFile(path.join(roundDir, "gate-implementation-2.log"), "utf8")).toBe(
+    expect(await fs.readFile(path.join(roundDirectory, "gate-implementation-2.log"), "utf8")).toBe(
       "GREEN_TRANSCRIPT\n",
     );
   });
@@ -794,10 +794,10 @@ describe("runPipeline", () => {
 
   it("blocks malformed prior feedback history with an actionable warning and error event", async () => {
     const ticket = await resolveTicket("Malformed history", fixture.ticketsDirectory);
-    const priorRunDir = path.join(fixture.stateDir, "runs", ticket.id, "run-1");
-    const historyFile = path.join(priorRunDir, "history.json");
+    const priorRunDirectory = path.join(fixture.stateDirectory, "runs", ticket.id, "run-1");
+    const historyFile = path.join(priorRunDirectory, "history.json");
     const malformedItem = { run: 1, round: 1, source: "qa", feedback: 17 };
-    await fs.mkdir(priorRunDir, { recursive: true });
+    await fs.mkdir(priorRunDirectory, { recursive: true });
     await fs.writeFile(historyFile, JSON.stringify([malformedItem]));
 
     const context = fixture.context(() => {
@@ -820,15 +820,15 @@ describe("runPipeline", () => {
     expect(note).toContain("Fix the file to resume with its feedback intact");
     expect(note).toContain("delete it to deliberately resume without history");
     await expect(
-      fs.access(path.join(fixture.stateDir, "runs", ticket.id, "run-2")),
+      fs.access(path.join(fixture.stateDirectory, "runs", ticket.id, "run-2")),
     ).rejects.toThrow();
   });
 
   it("resumes with the full feedback history after the operator fixes the malformed file", async () => {
     const ticket = await resolveTicket("Repair history", fixture.ticketsDirectory);
-    const priorRunDir = path.join(fixture.stateDir, "runs", ticket.id, "run-1");
-    const historyFile = path.join(priorRunDir, "history.json");
-    await fs.mkdir(priorRunDir, { recursive: true });
+    const priorRunDirectory = path.join(fixture.stateDirectory, "runs", ticket.id, "run-1");
+    const historyFile = path.join(priorRunDirectory, "history.json");
+    await fs.mkdir(priorRunDirectory, { recursive: true });
     await fs.writeFile(historyFile, '[{"feedback":17}]');
 
     const blocked = fixture.context(() => {
@@ -964,14 +964,14 @@ describe("runPipeline", () => {
   it("sanitizes a worktree a killed session left dirty and mid-merge", async () => {
     const ticket = await resolveTicket("Interrupted mid-flight", fixture.ticketsDirectory);
     const worktree = await createWorktree(
-      fixture.repo,
-      path.join(fixture.jfdiDir, "worktrees"),
+      fixture.projectRoot,
+      path.join(fixture.jfdiDirectory, "worktrees"),
       ticket.id,
       "main",
     );
     // A killed run's leavings: a conflicted merge and uncommitted edits.
     await commitFile(worktree.path, "shared.txt", "branch\n", "branch edit");
-    await commitFile(fixture.repo, "shared.txt", "main\n", "main edit");
+    await commitFile(fixture.projectRoot, "shared.txt", "main\n", "main edit");
     await mergeTargetIntoBranch(worktree.path, "main");
     await fs.writeFile(path.join(worktree.path, "impl.txt"), "salvaged\n");
 
@@ -1557,7 +1557,13 @@ describe("runPipeline under a broken provider", () => {
     expect(prompts[1]).not.toContain("Feedback on earlier attempts");
     expect(pauses.map((event) => event.type)).toEqual(["harness_paused", "harness_resumed"]);
     // Nothing to inherit: the run answered everything it was asked.
-    const historyPath = path.join(fixture.stateDir, "runs", ticket.id, "run-1", "history.json");
+    const historyPath = path.join(
+      fixture.stateDirectory,
+      "runs",
+      ticket.id,
+      "run-1",
+      "history.json",
+    );
     expect(JSON.parse(await fs.readFile(historyPath, "utf8"))).toEqual([]);
   });
 
@@ -1819,7 +1825,7 @@ describe("pipeline-owned commits", () => {
     const ticket = await resolveTicket("Killed mid-edit", fixture.ticketsDirectory);
     expect((await runPipeline(dying, ticket)).status).toBe("blocked");
 
-    const worktree = path.join(fixture.jfdiDir, "worktrees", ticket.id);
+    const worktree = path.join(fixture.jfdiDirectory, "worktrees", ticket.id);
     const subjects = (await git(worktree, "log", "--format=%s", "main..HEAD")).split("\n");
     expect(subjects).toHaveLength(3);
     for (const subject of subjects) expect(subject).toContain(`${ticket.id}: WIP — `);

@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadReport } from "./report.js";
+import { loadReport, saveReport } from "./report.js";
 import type { Fixture } from "./test-helpers.js";
 import { makeFixture } from "./test-helpers.js";
 
@@ -16,34 +16,62 @@ afterEach(async () => {
 });
 
 describe("loadReport", () => {
+  it("writes the established report.json keys", async () => {
+    const ticketId = "report-shape";
+    await saveReport(fixture.stateDirectory, ticketId, {
+      summary: "done",
+      decisions: [],
+      observations: [],
+      testsAdded: "none",
+      rounds: 1,
+      commit: "abc123",
+      usageRows: [],
+      elapsedMs: 1,
+    });
+
+    const saved = JSON.parse(
+      await fs.readFile(path.join(fixture.stateDirectory, "runs", ticketId, "report.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(Object.keys(saved)).toEqual([
+      "summary",
+      "decisions",
+      "observations",
+      "testsAdded",
+      "rounds",
+      "commit",
+      "usageRows",
+      "elapsedMs",
+    ]);
+  });
+
   it("distinguishes a corrupt report from an absent report and preserves the parse error", async () => {
     const ticketId = "corrupt-report";
-    const reportPath = path.join(fixture.stateDir, "runs", ticketId, "report.json");
+    const reportPath = path.join(fixture.stateDirectory, "runs", ticketId, "report.json");
     await fs.mkdir(path.dirname(reportPath), { recursive: true });
     await fs.writeFile(reportPath, '{"summary":');
 
-    const corrupt = await loadReport(fixture.stateDir, ticketId);
+    const corrupt = await loadReport(fixture.stateDirectory, ticketId);
     expect(corrupt).toMatchObject({ kind: "corrupt", path: reportPath });
     expect(corrupt && "error" in corrupt ? corrupt.error : "").toContain("JSON");
 
     await fs.rm(reportPath);
-    expect(await loadReport(fixture.stateDir, ticketId)).toBeNull();
+    expect(await loadReport(fixture.stateDirectory, ticketId)).toBeNull();
   });
 
   it("reports which required field makes a parsed report corrupt", async () => {
     const ticketId = "invalid-report";
-    const reportPath = path.join(fixture.stateDir, "runs", ticketId, "report.json");
+    const reportPath = path.join(fixture.stateDirectory, "runs", ticketId, "report.json");
     await fs.mkdir(path.dirname(reportPath), { recursive: true });
     await fs.writeFile(reportPath, JSON.stringify({ summary: "unfinished" }));
 
-    const corrupt = await loadReport(fixture.stateDir, ticketId);
+    const corrupt = await loadReport(fixture.stateDirectory, ticketId);
     expect(corrupt).toMatchObject({ kind: "corrupt", path: reportPath });
     expect(corrupt && "error" in corrupt ? corrupt.error : "").toContain("decisions");
   });
 
   it("backfills model data when loading a report written before model reporting", async () => {
     const ticketId = "old-report";
-    const reportPath = path.join(fixture.stateDir, "runs", ticketId, "report.json");
+    const reportPath = path.join(fixture.stateDirectory, "runs", ticketId, "report.json");
     await fs.mkdir(path.dirname(reportPath), { recursive: true });
     await fs.writeFile(
       reportPath,
@@ -71,7 +99,7 @@ describe("loadReport", () => {
       }),
     );
 
-    const report = await loadReport(fixture.stateDir, ticketId);
+    const report = await loadReport(fixture.stateDirectory, ticketId);
     expect(report && !("kind" in report) ? report.usageRows[0]?.models : null).toEqual([]);
   });
 });

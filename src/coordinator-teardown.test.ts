@@ -37,7 +37,7 @@ const FAST_POLL_MS = 20;
 const NON_EVENT_WINDOW_MS = 300;
 
 function boardPath(): string {
-  return path.join(fixture.jfdiDir, "board.md");
+  return path.join(fixture.jfdiDirectory, "board.md");
 }
 
 function sleep(durationMs: number): Promise<void> {
@@ -55,7 +55,7 @@ async function waitUntil(isSatisfied: () => boolean): Promise<void> {
 
 /** Another process landing a merge on the shared stream — a foreign event only a poll picks up. */
 async function emitForeignMerge(ticketId: string): Promise<void> {
-  const merger = new EventLog(fixture.stateDir);
+  const merger = new EventLog(fixture.stateDirectory);
   merger.emit("merge_start", ticketId);
   merger.emit("merged", ticketId);
   await merger.flush();

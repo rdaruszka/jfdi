@@ -532,15 +532,15 @@ export function renderPrompt(template: string, variables: Record<string, string>
   return template.replace(/\{\{([A-Z_]+)\}\}/g, (_, name: string) => variables[name] ?? "");
 }
 
-export function promptsDir(jfdiDir: string): string {
-  return path.join(jfdiDir, "prompts");
+export function promptsDirectory(jfdiDirectory: string): string {
+  return path.join(jfdiDirectory, "prompts");
 }
 
 /** Seed any missing prompt files with defaults (user-tunable afterwards). */
-export async function ensurePrompts(jfdiDir: string): Promise<void> {
-  const dir = promptsDir(jfdiDir);
+export async function ensurePrompts(jfdiDirectory: string): Promise<void> {
+  const directory = promptsDirectory(jfdiDirectory);
   for (const [name, content] of Object.entries(DEFAULT_PROMPTS)) {
-    const file = path.join(dir, `${name}.md`);
+    const file = path.join(directory, `${name}.md`);
     if (!(await fileExists(file))) await atomicWrite(file, `${content}\n`);
   }
 }
@@ -553,14 +553,14 @@ export async function ensurePrompts(jfdiDir: string): Promise<void> {
  * from an earlier era — must be retired so the setup session starts from
  * clean raw material.
  */
-export async function isPristineDefaultPromptSet(jfdiDir: string): Promise<boolean> {
-  const dir = promptsDir(jfdiDir);
+export async function isPristineDefaultPromptSet(jfdiDirectory: string): Promise<boolean> {
+  const directory = promptsDirectory(jfdiDirectory);
   const defaults = new Map(
     Object.entries(DEFAULT_PROMPTS).map(([name, content]) => [`${name}.md`, `${content}\n`]),
   );
   let entries: string[];
   try {
-    entries = await fs.readdir(dir);
+    entries = await fs.readdir(directory);
   } catch {
     // No directory at all: nothing to retire.
     return true;
@@ -568,7 +568,7 @@ export async function isPristineDefaultPromptSet(jfdiDir: string): Promise<boole
   for (const entry of entries) {
     const expected = defaults.get(entry);
     if (expected === undefined) return false;
-    if ((await readIfExists(path.join(dir, entry))) !== expected) return false;
+    if ((await readIfExists(path.join(directory, entry))) !== expected) return false;
   }
   return true;
 }
@@ -578,8 +578,8 @@ export async function isPristineDefaultPromptSet(jfdiDir: string): Promise<boole
  * if it is missing it is seeded with the default first, so what ran is always
  * on disk — never a silent in-code fallback.
  */
-export async function loadPrompt(jfdiDir: string, name: PromptName): Promise<string> {
-  const file = path.join(promptsDir(jfdiDir), `${name}.md`);
+export async function loadPrompt(jfdiDirectory: string, name: PromptName): Promise<string> {
+  const file = path.join(promptsDirectory(jfdiDirectory), `${name}.md`);
   const existing = await readIfExists(file);
   if (existing !== null) return existing;
   const content = `${DEFAULT_PROMPTS[name]}\n`;

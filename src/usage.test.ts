@@ -120,10 +120,10 @@ describe("UsageLedger", () => {
 
     const rows = ledger.snapshot();
     expect(rows.map((row) => row.label)).toEqual(["Implementation", "Code Review", "Scribe"]);
-    const impl = rows[0];
-    expect(impl?.sessions).toBe(2);
-    expect(impl?.durationMs).toBe(120_000);
-    expect(impl?.knownCostUsd).toBeCloseTo(9.0, 6);
+    const implementation = rows[0];
+    expect(implementation?.sessions).toBe(2);
+    expect(implementation?.durationMs).toBe(120_000);
+    expect(implementation?.knownCostUsd).toBeCloseTo(9.0, 6);
 
     const totals = ledger.totals();
     expect(totals.sessions).toBe(4);

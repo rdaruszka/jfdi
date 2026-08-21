@@ -10,50 +10,50 @@ function readyCard(text: string): Card {
   return { raw: `- [ ] ${text}`, text, checked: false };
 }
 
-let dir: string;
+let directory: string;
 let ticketsDirectory: string;
 
 beforeEach(async () => {
-  dir = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-tickets-"));
-  ticketsDirectory = path.join(dir, "tickets");
+  directory = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-tickets-"));
+  ticketsDirectory = path.join(directory, "tickets");
   await fs.mkdir(ticketsDirectory);
 });
 
 afterEach(async () => {
-  await fs.rm(dir, { recursive: true, force: true });
+  await fs.rm(directory, { recursive: true, force: true });
 });
 
 describe("resolveTicket", () => {
-  it("card without wikilink: card line is the entire spec", async () => {
+  it("card without wikilink: card line is the entire description", async () => {
     const ticket = await resolveTicket("Add a --help flag", ticketsDirectory);
-    expect(ticket.spec).toBe("Add a --help flag");
+    expect(ticket.description).toBe("Add a --help flag");
     expect(ticket.notePath).toBeNull();
     expect(ticket.links).toEqual([]);
     expect(ticket.mode).toBe("default");
   });
 
-  it("wikilinked note body becomes the spec", async () => {
+  it("wikilinked note body becomes the description", async () => {
     await fs.writeFile(
       path.join(ticketsDirectory, "fix-thing.md"),
       "# Fix the thing\n\nDetailed spec here.\n",
     );
     const ticket = await resolveTicket("Fix it [[fix-thing]]", ticketsDirectory);
-    expect(ticket.spec).toContain("Detailed spec here.");
+    expect(ticket.description).toContain("Detailed spec here.");
     expect(ticket.notePath).toBe(path.join(ticketsDirectory, "fix-thing.md"));
     expect(ticket.id).toBe("fix-thing");
   });
 
-  it("reads mode: ask from frontmatter and strips it from the spec", async () => {
+  it("reads mode: ask from frontmatter and strips it from the description", async () => {
     await fs.writeFile(
       path.join(ticketsDirectory, "careful.md"),
       "---\nmode: ask\n---\n\nSensitive work.\n",
     );
     const ticket = await resolveTicket("[[careful]]", ticketsDirectory);
     expect(ticket.mode).toBe("ask");
-    expect(ticket.spec).toBe("Sensitive work.");
+    expect(ticket.description).toBe("Sensitive work.");
   });
 
-  it("pins the spec slice: title, description, questions and decision comments only", async () => {
+  it("pins the description slice: title, description, questions and decision comments only", async () => {
     await fs.writeFile(
       path.join(ticketsDirectory, "full.md"),
       [
@@ -94,7 +94,7 @@ describe("resolveTicket", () => {
       ].join("\n"),
     );
     const ticket = await resolveTicket("[[full]]", ticketsDirectory);
-    expect(ticket.spec).toBe(
+    expect(ticket.description).toBe(
       [
         "# Fix the thing",
         "",
@@ -115,14 +115,14 @@ describe("resolveTicket", () => {
         "> Chose sqlite: already a dependency.",
       ].join("\n"),
     );
-    expect(ticket.spec).not.toContain("Dispatched, gate green.");
-    expect(ticket.spec).not.toContain("legacy decision line");
-    expect(ticket.spec).not.toContain("Shipped in 2 rounds.");
+    expect(ticket.description).not.toContain("Dispatched, gate green.");
+    expect(ticket.description).not.toContain("legacy decision line");
+    expect(ticket.description).not.toContain("Shipped in 2 rounds.");
   });
 
-  it("wikilink with missing note falls back to card text as spec", async () => {
+  it("wikilink with missing note falls back to card text as its description", async () => {
     const ticket = await resolveTicket("Do it [[ghost]]", ticketsDirectory);
-    expect(ticket.spec).toBe("Do it [[ghost]]");
+    expect(ticket.description).toBe("Do it [[ghost]]");
     expect(ticket.notePath).toBe(path.join(ticketsDirectory, "ghost.md"));
   });
 
@@ -149,12 +149,12 @@ describe("resolveTicket", () => {
       { kind: "blocks", target: "other", notePath: path.join(ticketsDirectory, "other.md") },
       { kind: "blocked-by", target: "ghost", notePath: null },
     ]);
-    // Frontmatter is the tool's, not the agent's: none of it reaches the spec.
-    expect(ticket.spec).toBe("# Linked\n\nBody.");
+    // Frontmatter is the tool's, not the agent's: none of it reaches the description.
+    expect(ticket.description).toBe("# Linked\n\nBody.");
   });
 
   it("never resolves a link outside ticketsDirectory", async () => {
-    await fs.writeFile(path.join(dir, "outside.md"), "# Outside\n");
+    await fs.writeFile(path.join(directory, "outside.md"), "# Outside\n");
     await fs.writeFile(
       path.join(ticketsDirectory, "escaper.md"),
       '---\nblocked-by:\n  - "[[../outside]]"\n---\n\n# Escaper\n',

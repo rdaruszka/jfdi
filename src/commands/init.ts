@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   defaultConfig,
-  JFDI_DIR,
+  JFDI_DIRECTORY,
   type JfdiConfig,
   type LegacyConfigNotice,
   loadConfig,
@@ -13,7 +13,7 @@ import {
   type SessionConfig,
 } from "../config.js";
 import { runGate } from "../gate.js";
-import { repoRoot } from "../git.js";
+import { projectRoot } from "../git.js";
 import { CODING_GUIDELINES } from "../guidelines.js";
 import { createHarness, EFFORT_LEVELS_BY_HARNESS } from "../harness/index.js";
 import type { HarnessName } from "../harness/types.js";
@@ -23,7 +23,7 @@ import { scaffoldJfdi } from "../scaffold.js";
 
 const DEFAULT_INIT_HARNESS: HarnessName = "claude";
 const DEFAULT_INIT_MODEL = "claude-fable-5";
-const CONFIG_PATH = path.join(JFDI_DIR, "config.json");
+const CONFIG_PATH = path.join(JFDI_DIRECTORY, "config.json");
 
 export interface InitOptions {
   isBare?: boolean;
@@ -47,10 +47,13 @@ function initSessionConfig(options: InitOptions): SessionConfig {
   };
 }
 
-async function verifyGate(root: string, onLegacyKeys: LegacyConfigNotice): Promise<boolean> {
+async function verifyGate(
+  resolvedProjectRoot: string,
+  onLegacyKeys: LegacyConfigNotice,
+): Promise<boolean> {
   let config: JfdiConfig;
   try {
-    config = await loadConfig(root, { onLegacyKeys });
+    config = await loadConfig(resolvedProjectRoot, { onLegacyKeys });
   } catch (error) {
     console.error(
       `gate could not load ${CONFIG_PATH}: ${(error as Error).message}; ` +
@@ -58,9 +61,13 @@ async function verifyGate(root: string, onLegacyKeys: LegacyConfigNotice): Promi
     );
     return false;
   }
-  const temporaryDir = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-init-gate-"));
+  const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-init-gate-"));
   try {
-    const result = await runGate(config.gate, root, path.join(temporaryDir, "gate.log"));
+    const result = await runGate(
+      config.gate,
+      resolvedProjectRoot,
+      path.join(temporaryDirectory, "gate.log"),
+    );
     if (result.ok) {
       console.log("gate verified");
       return true;
@@ -70,7 +77,7 @@ async function verifyGate(root: string, onLegacyKeys: LegacyConfigNotice): Promi
     console.error(`gate failed at "${failedStep.name}"; rerun \`jfdi init\` to finish setup`);
     return false;
   } finally {
-    await fs.rm(temporaryDir, { recursive: true, force: true });
+    await fs.rm(temporaryDirectory, { recursive: true, force: true });
   }
 }
 
@@ -83,13 +90,15 @@ async function verifyGate(root: string, onLegacyKeys: LegacyConfigNotice): Promi
  * so it looks at the repo with fresh eyes. `--bare` skips the agent step.
  */
 export async function initCommand(options: InitOptions = {}): Promise<number> {
-  const root = await repoRoot(process.cwd());
-  const jfdiDir = path.join(root, JFDI_DIR);
-  const { retiredPromptsPath } = await scaffoldJfdi(root, jfdiDir);
-  console.log(`scaffolded ${JFDI_DIR}/ (config, board, tickets, ticket format, sandbox contract)`);
+  const resolvedProjectRoot = await projectRoot(process.cwd());
+  const jfdiDirectory = path.join(resolvedProjectRoot, JFDI_DIRECTORY);
+  const { retiredPromptsPath } = await scaffoldJfdi(resolvedProjectRoot, jfdiDirectory);
+  console.log(
+    `scaffolded ${JFDI_DIRECTORY}/ (config, board, tickets, ticket format, sandbox contract)`,
+  );
   if (retiredPromptsPath !== null) {
     console.log(
-      `retired existing prompts to ${path.relative(root, retiredPromptsPath)} — ` +
+      `retired existing prompts to ${path.relative(resolvedProjectRoot, retiredPromptsPath)} — ` +
         "the setup agent never reads them; the pipeline reseeds defaults on first use",
     );
   }
@@ -103,7 +112,7 @@ export async function initCommand(options: InitOptions = {}): Promise<number> {
     printLegacyConfigNotice(legacyKeys, file);
   };
   try {
-    permissionMode = (await loadConfig(root, { onLegacyKeys })).permissions.mode;
+    permissionMode = (await loadConfig(resolvedProjectRoot, { onLegacyKeys })).permissions.mode;
   } catch (error) {
     const reason = (error as Error).message;
     configWarning =
@@ -129,13 +138,13 @@ export async function initCommand(options: InitOptions = {}): Promise<number> {
   ).spawnInteractive(
     configWarning === null ? INIT_USER_PROMPT : `${configWarning}\n\n${INIT_USER_PROMPT}`,
     {
-      cwd: root,
+      cwd: resolvedProjectRoot,
       systemPrompt,
       shouldIgnoreProjectContext: true,
     },
   );
   if (exitCode !== 0) console.error(`setup session exited with code ${exitCode}`);
-  const isGateVerified = await verifyGate(root, onLegacyKeys);
+  const isGateVerified = await verifyGate(resolvedProjectRoot, onLegacyKeys);
   if (!isGateVerified && exitCode === 0) return 1;
   return exitCode;
 }

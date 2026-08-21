@@ -12,26 +12,26 @@ import {
   withPathLock,
 } from "./fsx.js";
 
-let dir: string;
+let directory: string;
 
 beforeEach(async () => {
-  dir = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-fsx-"));
+  directory = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-fsx-"));
 });
 
 afterEach(async () => {
-  await fs.rm(dir, { recursive: true, force: true });
+  await fs.rm(directory, { recursive: true, force: true });
 });
 
 describe("atomicWrite", () => {
   it("writes content and leaves no temp files", async () => {
-    const file = path.join(dir, "a.txt");
+    const file = path.join(directory, "a.txt");
     await atomicWrite(file, "hello");
     expect(await fs.readFile(file, "utf8")).toBe("hello");
-    const entries = await fs.readdir(dir);
+    const entries = await fs.readdir(directory);
     expect(entries).toEqual(["a.txt"]);
   });
   it("creates parent directories", async () => {
-    const file = path.join(dir, "x/y/z.txt");
+    const file = path.join(directory, "x/y/z.txt");
     await atomicWrite(file, "deep");
     expect(await fs.readFile(file, "utf8")).toBe("deep");
   });
@@ -39,11 +39,11 @@ describe("atomicWrite", () => {
 
 describe("atomicWrite through symlinks", () => {
   it("writes through a file symlink and preserves the link", async () => {
-    const vault = path.join(dir, "vault");
+    const vault = path.join(directory, "vault");
     await fs.mkdir(vault);
     const target = path.join(vault, "board.md");
     await fs.writeFile(target, "original");
-    const link = path.join(dir, "board.md");
+    const link = path.join(directory, "board.md");
     await fs.symlink(target, link);
 
     await atomicWrite(link, "updated");
@@ -51,14 +51,14 @@ describe("atomicWrite through symlinks", () => {
     expect(await fs.readFile(target, "utf8")).toBe("updated");
     expect((await fs.lstat(link)).isSymbolicLink()).toBe(true);
     expect(await fs.readdir(vault)).toEqual(["board.md"]);
-    expect(await fs.readdir(dir)).toEqual(expect.arrayContaining(["board.md", "vault"]));
+    expect(await fs.readdir(directory)).toEqual(expect.arrayContaining(["board.md", "vault"]));
   });
 
   it("follows a dangling symlink and creates its target", async () => {
-    const vault = path.join(dir, "vault");
+    const vault = path.join(directory, "vault");
     await fs.mkdir(vault);
     const target = path.join(vault, "new-note.md");
-    const link = path.join(dir, "note.md");
+    const link = path.join(directory, "note.md");
     await fs.symlink(target, link);
 
     await atomicWrite(link, "born");
@@ -68,35 +68,35 @@ describe("atomicWrite through symlinks", () => {
   });
 
   it("creates new files through a symlinked directory", async () => {
-    const vault = path.join(dir, "vault");
+    const vault = path.join(directory, "vault");
     await fs.mkdir(vault);
-    const linkedDir = path.join(dir, "tickets");
-    await fs.symlink(vault, linkedDir);
+    const linkedDirectory = path.join(directory, "tickets");
+    await fs.symlink(vault, linkedDirectory);
 
-    await atomicWrite(path.join(linkedDir, "ticket.md"), "note");
+    await atomicWrite(path.join(linkedDirectory, "ticket.md"), "note");
 
     expect(await fs.readFile(path.join(vault, "ticket.md"), "utf8")).toBe("note");
-    expect((await fs.lstat(linkedDir)).isSymbolicLink()).toBe(true);
+    expect((await fs.lstat(linkedDirectory)).isSymbolicLink()).toBe(true);
   });
 });
 
 describe("readIfExists / fileExists", () => {
   it("returns null / false for missing files", async () => {
-    expect(await readIfExists(path.join(dir, "nope"))).toBeNull();
-    expect(await fileExists(path.join(dir, "nope"))).toBe(false);
+    expect(await readIfExists(path.join(directory, "nope"))).toBeNull();
+    expect(await fileExists(path.join(directory, "nope"))).toBe(false);
   });
 });
 
 describe("readModifyWrite", () => {
   it("applies the modification", async () => {
-    const file = path.join(dir, "b.txt");
+    const file = path.join(directory, "b.txt");
     await fs.writeFile(file, "one");
     const wrote = await readModifyWrite(file, (c) => c.replace("one", "two"));
     expect(wrote).toBe(true);
     expect(await fs.readFile(file, "utf8")).toBe("two");
   });
   it("re-reads and retries when the file changed under it", async () => {
-    const file = path.join(dir, "raced.txt");
+    const file = path.join(directory, "raced.txt");
     await fs.writeFile(file, "original\n");
     let attempts = 0;
     // Writing from inside `modify` lands exactly where a human's Obsidian save
@@ -112,7 +112,7 @@ describe("readModifyWrite", () => {
   });
 
   it("gives up with a conflict error when the file never settles", async () => {
-    const file = path.join(dir, "hot.txt");
+    const file = path.join(directory, "hot.txt");
     await fs.writeFile(file, "one\n");
     let writes = 0;
     await expect(
@@ -130,7 +130,7 @@ describe("readModifyWrite", () => {
   });
 
   it("skips writing when modify returns null", async () => {
-    const file = path.join(dir, "c.txt");
+    const file = path.join(directory, "c.txt");
     await fs.writeFile(file, "keep");
     const wrote = await readModifyWrite(file, () => null);
     expect(wrote).toBe(false);

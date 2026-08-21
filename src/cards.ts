@@ -6,7 +6,7 @@ import { ticketIdFromCard } from "./util/ids.js";
 
 /** Where the board lives for a project — every card read and write starts here. */
 export function boardPath(context: PipelineContext): string {
-  return path.join(context.repoRoot, context.config.board.path);
+  return path.join(context.projectRoot, context.config.board.path);
 }
 
 /**

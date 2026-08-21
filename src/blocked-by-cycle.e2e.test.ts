@@ -9,7 +9,7 @@
  * ticket note gets one comment naming the loop and the way out. It must do this
  * once per episode — a board that already holds the refused loop is not
  * re-commented on each scan — and it must dispatch nothing (stub agents never
- * run, so `CAPTURE_DIR/ran.log` staying absent proves no session spawned).
+ * run, so `CAPTURE_DIRECTORY/ran.log` staying absent proves no session spawned).
  *
  * `JFDI_HOME`/`HOME` always point inside the scratch tree; nothing here can
  * reach the real `~/.jfdi`.
@@ -28,8 +28,8 @@ import { ticketIdFromCard } from "./util/ids.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 const SCENARIO_TIMEOUT_MS = 60_000;
 /** How long to wait for the coordinator to settle the board into its expected shape. */
@@ -41,19 +41,19 @@ const POLL_INTERVAL_MS = 250;
 /** A stub that records every invocation, so an absent log proves no dispatch. */
 const RECORDING_STUB = `#!/usr/bin/env node
 const fs = require("node:fs");
-fs.mkdirSync(process.env.CAPTURE_DIR, { recursive: true });
-fs.appendFileSync(process.env.CAPTURE_DIR + "/ran.log", "ran\\n");
+fs.mkdirSync(process.env.CAPTURE_DIRECTORY, { recursive: true });
+fs.appendFileSync(process.env.CAPTURE_DIRECTORY + "/ran.log", "ran\\n");
 process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done" }) + "\\n");
 process.exit(0);
 `;
 
 interface Sandbox {
   root: string;
-  project: string;
+  projectRoot: string;
   home: string;
   jfdiHome: string;
-  binDir: string;
-  captureDir: string;
+  executableDirectory: string;
+  captureDirectory: string;
   ticketsDirectory: string;
   boardPath: string;
 }
@@ -65,35 +65,36 @@ async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-cycle-e2e-"));
   const root = await fs.realpath(created);
   sandboxes.push(created);
-  const project = path.join(root, "project");
+  const projectRoot = path.join(root, "project");
   const home = path.join(root, "home");
-  const binDir = path.join(root, "bin");
-  const captureDir = path.join(root, "capture");
-  for (const dir of [project, home, binDir, captureDir]) await fs.mkdir(dir, { recursive: true });
+  const executableDirectory = path.join(root, "bin");
+  const captureDirectory = path.join(root, "capture");
+  for (const directory of [projectRoot, home, executableDirectory, captureDirectory])
+    await fs.mkdir(directory, { recursive: true });
   for (const executable of ["claude", "codex"]) {
-    await fs.writeFile(path.join(binDir, executable), RECORDING_STUB, { mode: 0o755 });
+    await fs.writeFile(path.join(executableDirectory, executable), RECORDING_STUB, { mode: 0o755 });
   }
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
   const jfdiHome = path.join(home, ".jfdi");
   const sandbox: Sandbox = {
     root,
-    project,
+    projectRoot,
     home,
     jfdiHome,
-    binDir,
-    captureDir,
-    ticketsDirectory: path.join(project, ".jfdi", "tickets"),
-    boardPath: path.join(project, ".jfdi", "board.md"),
+    executableDirectory,
+    captureDirectory,
+    ticketsDirectory: path.join(projectRoot, ".jfdi", "tickets"),
+    boardPath: path.join(projectRoot, ".jfdi", "board.md"),
   };
   const init = await execFileAsync(process.execPath, [cliPath, "init", "--bare"], {
-    cwd: project,
+    cwd: projectRoot,
     env: envFor(sandbox),
   });
   expect(init.stderr).not.toContain("Error");
@@ -103,10 +104,10 @@ async function makeSandbox(): Promise<Sandbox> {
 function envFor(sandbox: Sandbox): NodeJS.ProcessEnv {
   return {
     ...process.env,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
-    CAPTURE_DIR: sandbox.captureDir,
+    CAPTURE_DIRECTORY: sandbox.captureDirectory,
   };
 }
 
@@ -146,7 +147,7 @@ async function noteComments(sandbox: Sandbox, id: string): Promise<string[]> {
 
 async function agentRan(sandbox: Sandbox): Promise<boolean> {
   try {
-    await fs.access(path.join(sandbox.captureDir, "ran.log"));
+    await fs.access(path.join(sandbox.captureDirectory, "ran.log"));
     return true;
   } catch {
     return false;
@@ -162,7 +163,7 @@ function delay(ms: number): Promise<void> {
 /** Launch the built CLI's supported TTY mode while retaining pipe capture for the test. */
 function startCoordinator(sandbox: Sandbox): ChildProcess {
   const child = spawnTtyCli(cliPath, ["start"], {
-    cwd: sandbox.project,
+    cwd: sandbox.projectRoot,
     env: envFor(sandbox),
     stdio: ["pipe", "ignore", "ignore"],
   });
@@ -190,7 +191,9 @@ async function waitUntil(check: () => Promise<boolean>): Promise<boolean> {
 
 afterEach(async () => {
   await Promise.all(running.splice(0).map((child) => stopCoordinator(child)));
-  await Promise.all(sandboxes.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    sandboxes.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe("jfdi start — blocked-by cycle refusal (built CLI)", () => {

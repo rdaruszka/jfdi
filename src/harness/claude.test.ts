@@ -236,24 +236,24 @@ describe("mapClaudeLine failure classification", () => {
 });
 
 describe("ClaudeHarness subprocess", () => {
-  let dir: string;
+  let directory: string;
   beforeEach(async () => {
-    dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-harness-")));
+    directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-harness-")));
   });
   afterEach(async () => {
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(directory, { recursive: true, force: true });
   });
 
   /** Stub `claude` executable that replays canned stream-json lines. */
   async function stubClaude(lines: object[], exitCode = 0): Promise<string> {
-    const script = path.join(dir, "fake-claude");
+    const script = path.join(directory, "fake-claude");
     const body = [
       "#!/bin/sh",
       '[ "$1" = "-p" ] || exit 91',
       '[ "$2" = "first line\nsecond line with spaces" ] || exit 94',
       '[ "$6" = "--permission-mode" ] || exit 92',
       '[ "$7" = "bypassPermissions" ] || exit 93',
-      `[ "$(pwd)" = "${dir}" ] || exit 95`,
+      `[ "$(pwd)" = "${directory}" ] || exit 95`,
       ...lines.map((l) => `echo '${JSON.stringify(l)}'`),
       `exit ${exitCode}`,
     ].join("\n");
@@ -262,12 +262,12 @@ describe("ClaudeHarness subprocess", () => {
   }
 
   it("streams events and resolves with the result", async () => {
-    const exe = await stubClaude([
+    const executable = await stubClaude([
       { type: "assistant", message: { content: [{ type: "text", text: "hi" }] } },
       { type: "result", subtype: "success", result: "finished the work" },
     ]);
-    const harness = new ClaudeHarness(TEST_SELECTION, "bypass", exe);
-    const session = harness.spawn("first line\nsecond line with spaces", { cwd: dir });
+    const harness = new ClaudeHarness(TEST_SELECTION, "bypass", executable);
+    const session = harness.spawn("first line\nsecond line with spaces", { cwd: directory });
     const seen: HarnessEvent[] = [];
     for await (const event of session.events) seen.push(event);
     const result = await session.done;
@@ -277,46 +277,53 @@ describe("ClaudeHarness subprocess", () => {
   });
 
   it("captures raw output to the log path", async () => {
-    const exe = await stubClaude([{ type: "result", subtype: "success", result: "ok" }]);
-    const logPath = path.join(dir, "logs/session.jsonl");
-    const harness = new ClaudeHarness(TEST_SELECTION, "bypass", exe);
-    const session = harness.spawn("first line\nsecond line with spaces", { cwd: dir, logPath });
+    const executable = await stubClaude([{ type: "result", subtype: "success", result: "ok" }]);
+    const logPath = path.join(directory, "logs/session.jsonl");
+    const harness = new ClaudeHarness(TEST_SELECTION, "bypass", executable);
+    const session = harness.spawn("first line\nsecond line with spaces", {
+      cwd: directory,
+      logPath,
+    });
     await session.done;
     const log = await fs.readFile(logPath, "utf8");
     expect(log).toContain('"result"');
   });
 
   it("reports failure when the process exits non-zero", async () => {
-    const exe = await stubClaude([], 2);
-    const harness = new ClaudeHarness(TEST_SELECTION, "bypass", exe);
-    const session = harness.spawn("first line\nsecond line with spaces", { cwd: dir });
+    const executable = await stubClaude([], 2);
+    const harness = new ClaudeHarness(TEST_SELECTION, "bypass", executable);
+    const session = harness.spawn("first line\nsecond line with spaces", { cwd: directory });
     const result = await session.done;
     expect(result.ok).toBe(false);
     expect(result).not.toHaveProperty("exitCode");
   });
 
   it("reports failure when the executable is missing", async () => {
-    const harness = new ClaudeHarness(TEST_SELECTION, "bypass", path.join(dir, "does-not-exist"));
-    const session = harness.spawn("p", { cwd: dir });
+    const harness = new ClaudeHarness(
+      TEST_SELECTION,
+      "bypass",
+      path.join(directory, "does-not-exist"),
+    );
+    const session = harness.spawn("p", { cwd: directory });
     const result = await session.done;
     expect(result.ok).toBe(false);
     expect(result.text).toContain("failed to spawn");
   });
 
   it("resolves with the session id so the pipeline can continue the session", async () => {
-    const exe = await stubClaude([
+    const executable = await stubClaude([
       { type: "system", subtype: "init", session_id: "session-1" },
       { type: "result", subtype: "success", result: "ok", session_id: "session-1" },
     ]);
-    const result = await new ClaudeHarness(TEST_SELECTION, "bypass", exe).spawn(
+    const result = await new ClaudeHarness(TEST_SELECTION, "bypass", executable).spawn(
       "first line\nsecond line with spaces",
-      { cwd: dir },
+      { cwd: directory },
     ).done;
     expect(result.sessionId).toBe("session-1");
   });
 
   it("passes --resume when continuing an earlier session", async () => {
-    const script = path.join(dir, "fake-claude-resume");
+    const script = path.join(directory, "fake-claude-resume");
     const body = [
       "#!/bin/sh",
       '[ "$8" = "--resume" ] || exit 96',
@@ -325,7 +332,7 @@ describe("ClaudeHarness subprocess", () => {
     ].join("\n");
     await fs.writeFile(script, `${body}\n`, { mode: 0o755 });
     const result = await new ClaudeHarness(TEST_SELECTION, "bypass", script).spawn("go on", {
-      cwd: dir,
+      cwd: directory,
       continueSessionId: "old-session",
     }).done;
     expect(result.ok).toBe(true);
@@ -333,10 +340,10 @@ describe("ClaudeHarness subprocess", () => {
   });
 
   it("passes --settings when the worktree carries .jfdi/claude-settings.json", async () => {
-    const settingsPath = path.join(dir, ".jfdi", "claude-settings.json");
+    const settingsPath = path.join(directory, ".jfdi", "claude-settings.json");
     await fs.mkdir(path.dirname(settingsPath), { recursive: true });
     await fs.writeFile(settingsPath, "{}");
-    const script = path.join(dir, "fake-claude-settings");
+    const script = path.join(directory, "fake-claude-settings");
     const body = [
       "#!/bin/sh",
       '[ "$8" = "--settings" ] || exit 96',
@@ -345,7 +352,7 @@ describe("ClaudeHarness subprocess", () => {
     ].join("\n");
     await fs.writeFile(script, `${body}\n`, { mode: 0o755 });
     const result = await new ClaudeHarness(TEST_SELECTION, "bypass", script).spawn("p", {
-      cwd: dir,
+      cwd: directory,
     }).done;
     expect(result.ok).toBe(true);
     expect(result.text).toBe("hooked");
@@ -353,20 +360,20 @@ describe("ClaudeHarness subprocess", () => {
 });
 
 describe("ClaudeHarness selection flags", () => {
-  let dir: string;
+  let directory: string;
   beforeEach(async () => {
-    dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-claude-argv-")));
+    directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-claude-argv-")));
   });
   afterEach(async () => {
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(directory, { recursive: true, force: true });
   });
 
   /** Stub `claude` that records the argv it was handed, one argument per line. */
   async function argvRecorder(
     name = "recording-claude",
   ): Promise<{ executable: string; argv: () => Promise<string[]> }> {
-    const argvPath = path.join(dir, `${name}.txt`);
-    const executable = path.join(dir, name);
+    const argvPath = path.join(directory, `${name}.txt`);
+    const executable = path.join(directory, name);
     await fs.writeFile(
       executable,
       ["#!/bin/sh", `for arg in "$@"; do echo "$arg" >> "${argvPath}"; done`, ""].join("\n"),
@@ -384,7 +391,7 @@ describe("ClaudeHarness selection flags", () => {
       { sessionKind: "qa", model: "claude-opus-4-8", effort: "xhigh" },
       "bypass",
       recorder.executable,
-    ).spawn("p", { cwd: dir }).done;
+    ).spawn("p", { cwd: directory }).done;
     const argv = await recorder.argv();
     expect(argv).toContain("--model");
     expect(argv[argv.indexOf("--model") + 1]).toBe("claude-opus-4-8");
@@ -398,7 +405,7 @@ describe("ClaudeHarness selection flags", () => {
       { sessionKind: "qa", model: "opus" },
       "bypass",
       recorder.executable,
-    ).spawn("p", { cwd: dir }).done;
+    ).spawn("p", { cwd: directory }).done;
     const argv = await recorder.argv();
     expect(argv).toContain("--model");
     expect(argv).not.toContain("--effort");
@@ -410,7 +417,7 @@ describe("ClaudeHarness selection flags", () => {
       { sessionKind: "implementation", model: "claude-opus-4-8", effort: "high" },
       "bypass",
       recorder.executable,
-    ).spawnInteractive("brief", { cwd: dir });
+    ).spawnInteractive("brief", { cwd: directory });
     expect(await recorder.argv()).toEqual([
       "--permission-mode",
       "bypassPermissions",
@@ -441,11 +448,11 @@ describe("ClaudeHarness selection flags", () => {
     async ({ permissionMode, headlessArgs, interactiveArgs }) => {
       const headless = await argvRecorder(`${permissionMode}-headless`);
       await new ClaudeHarness(TEST_SELECTION, permissionMode, headless.executable).spawn("start", {
-        cwd: dir,
+        cwd: directory,
       }).done;
       const resume = await argvRecorder(`${permissionMode}-resume`);
       await new ClaudeHarness(TEST_SELECTION, permissionMode, resume.executable).spawn("continue", {
-        cwd: dir,
+        cwd: directory,
         continueSessionId: "session-4",
       }).done;
       const interactive = await argvRecorder(`${permissionMode}-interactive`);
@@ -453,7 +460,7 @@ describe("ClaudeHarness selection flags", () => {
         TEST_SELECTION,
         permissionMode,
         interactive.executable,
-      ).spawnInteractive("talk", { cwd: dir });
+      ).spawnInteractive("talk", { cwd: directory });
 
       for (const argv of [await headless.argv(), await resume.argv()]) {
         const flagIndex = argv.indexOf("--permission-mode");
@@ -472,8 +479,8 @@ describe("ClaudeHarness selection flags", () => {
     const result = await new ClaudeHarness(
       { sessionKind: "code-review" },
       "auto",
-      path.join(dir, "not-installed"),
-    ).spawn("p", { cwd: dir }).done;
+      path.join(directory, "not-installed"),
+    ).spawn("p", { cwd: directory }).done;
     expect(result.ok).toBe(false);
     expect(result.text).toContain("not-installed");
     expect(result.text).toContain("stages.code-review.harness");

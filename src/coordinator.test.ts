@@ -4,9 +4,16 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { findColumn, moveCard, parseBoard } from "./board.js";
 import { Coordinator } from "./coordinator.js";
 import { EventLog, integrationRecords, type JfdiEvent, loadState } from "./events.js";
-import { branchExists, createWorktree, deleteBranch, git, isAncestor, revParse } from "./git.js";
+import {
+  branchExists,
+  createWorktree,
+  deleteBranch,
+  git,
+  isAncestor,
+  parseRevision,
+} from "./git.js";
 import { integrateTicket } from "./integrate.js";
-import { worktreesDir } from "./pipeline.js";
+import { worktreesDirectory } from "./pipeline.js";
 import { isCorruptReport, loadReport, saveReport } from "./report.js";
 import {
   commitFile,
@@ -80,13 +87,13 @@ kanban-plugin: board
 `;
 
 async function readBoard(): Promise<ReturnType<typeof parseBoard>> {
-  return parseBoard(await fs.readFile(path.join(fixture.jfdiDir, "board.md"), "utf8"));
+  return parseBoard(await fs.readFile(path.join(fixture.jfdiDirectory, "board.md"), "utf8"));
 }
 
 beforeEach(async () => {
   coordinators = [];
   fixture = await makeFixture();
-  await fs.writeFile(path.join(fixture.jfdiDir, "board.md"), BOARD);
+  await fs.writeFile(path.join(fixture.jfdiDirectory, "board.md"), BOARD);
 });
 
 afterEach(async () => {
@@ -133,9 +140,9 @@ class FlushControlledEventLog extends EventLog {
   private readonly diskLog: EventLog;
   private pendingEvents: JfdiEvent[] = [];
 
-  constructor(stateDir: string) {
-    super(stateDir, false);
-    this.diskLog = new EventLog(stateDir);
+  constructor(stateDirectory: string) {
+    super(stateDirectory, false);
+    this.diskLog = new EventLog(stateDirectory);
   }
 
   override emit(...args: Parameters<EventLog["emit"]>): JfdiEvent {
@@ -171,7 +178,7 @@ async function waitUntil(isSatisfied: () => boolean): Promise<void> {
  * Returns the card's ticket id.
  */
 async function strandCard(): Promise<string> {
-  await fs.writeFile(path.join(fixture.jfdiDir, "board.md"), STRANDED_BOARD);
+  await fs.writeFile(path.join(fixture.jfdiDirectory, "board.md"), STRANDED_BOARD);
   return ticketIdFromCard("Add feature alpha");
 }
 
@@ -183,19 +190,19 @@ async function strandCard(): Promise<string> {
  */
 async function landAndDeleteBranch(ticketId: string): Promise<string> {
   const branch = `jfdi/${ticketId}`;
-  await git(fixture.repo, "checkout", "-b", branch);
-  await commitFile(fixture.repo, `${ticketId}.txt`, "work\n", `implement ${ticketId}`);
-  const tip = await revParse(fixture.repo, "HEAD");
-  await git(fixture.repo, "checkout", "main");
-  await git(fixture.repo, "merge", "--no-ff", "-m", `merge ${branch}`, branch);
-  await deleteBranch(fixture.repo, branch);
-  expect(await branchExists(fixture.repo, branch)).toBe(false);
+  await git(fixture.projectRoot, "checkout", "-b", branch);
+  await commitFile(fixture.projectRoot, `${ticketId}.txt`, "work\n", `implement ${ticketId}`);
+  const tip = await parseRevision(fixture.projectRoot, "HEAD");
+  await git(fixture.projectRoot, "checkout", "main");
+  await git(fixture.projectRoot, "merge", "--no-ff", "-m", `merge ${branch}`, branch);
+  await deleteBranch(fixture.projectRoot, branch);
+  expect(await branchExists(fixture.projectRoot, branch)).toBe(false);
   return tip;
 }
 
 /** Every `merged` line the shared stream carries for one ticket. */
 async function recordedMergedEvents(ticketId: string): Promise<JfdiEvent[]> {
-  const content = await fs.readFile(path.join(fixture.stateDir, "events.jsonl"), "utf8");
+  const content = await fs.readFile(path.join(fixture.stateDirectory, "events.jsonl"), "utf8");
   return content
     .split("\n")
     .filter((line) => line.trim())
@@ -205,7 +212,7 @@ async function recordedMergedEvents(ticketId: string): Promise<JfdiEvent[]> {
 
 /** A report.json for a ticket, naming the commit its reviews signed off on. */
 async function recordSignOff(ticketId: string, commit: string): Promise<void> {
-  await saveReport(fixture.stateDir, ticketId, {
+  await saveReport(fixture.stateDirectory, ticketId, {
     summary: "built alpha",
     decisions: [],
     observations: [],
@@ -306,7 +313,7 @@ kanban-plugin: board
 `;
 
 function boardPath(): string {
-  return path.join(fixture.jfdiDir, "board.md");
+  return path.join(fixture.jfdiDirectory, "board.md");
 }
 
 /** Handler whose implementation stage makes a distinct commit on every run. */
@@ -345,7 +352,7 @@ describe("Coordinator", () => {
   it("blocks a corrupt report with an unblock recipe and never dispatches", async () => {
     await fs.writeFile(boardPath(), SINGLE_CARD_BOARD);
     const ticketId = ticketIdFromCard(ALPHA_TEXT);
-    const reportPath = path.join(fixture.stateDir, "runs", ticketId, "report.json");
+    const reportPath = path.join(fixture.stateDirectory, "runs", ticketId, "report.json");
     await fs.mkdir(path.dirname(reportPath), { recursive: true });
     const corruptContent = '{"summary":';
     await fs.writeFile(reportPath, corruptContent);
@@ -372,14 +379,14 @@ describe("Coordinator", () => {
     await fs.writeFile(boardPath(), SINGLE_CARD_BOARD);
     const ticketId = ticketIdFromCard(ALPHA_TEXT);
     const worktree = await createWorktree(
-      fixture.repo,
-      worktreesDir(fixture.jfdiDir),
+      fixture.projectRoot,
+      worktreesDirectory(fixture.jfdiDirectory),
       ticketId,
       "main",
     );
     await commitFile(worktree.path, "restored.txt", "restored\n", "restore signed-off work");
-    const signedOffCommit = await revParse(worktree.path, "HEAD");
-    const reportPath = path.join(fixture.stateDir, "runs", ticketId, "report.json");
+    const signedOffCommit = await parseRevision(worktree.path, "HEAD");
+    const reportPath = path.join(fixture.stateDirectory, "runs", ticketId, "report.json");
     await fs.mkdir(path.dirname(reportPath), { recursive: true });
     await fs.writeFile(reportPath, '{"summary":');
     const stages: string[] = [];
@@ -406,7 +413,9 @@ describe("Coordinator", () => {
     await rescan(coordinator);
 
     expect(stages).toEqual([]);
-    expect(await fs.readFile(path.join(fixture.repo, "restored.txt"), "utf8")).toBe("restored\n");
+    expect(await fs.readFile(path.join(fixture.projectRoot, "restored.txt"), "utf8")).toBe(
+      "restored\n",
+    );
     expect(findColumn(await readBoard(), "Done")?.cards.map((card) => card.text)).toEqual([
       ALPHA_TEXT,
     ]);
@@ -414,7 +423,7 @@ describe("Coordinator", () => {
 
   it("moves a Ready-to-Merge card to Blocked when its sign-off report is corrupt", async () => {
     const ticketId = await strandCard();
-    const reportPath = path.join(fixture.stateDir, "runs", ticketId, "report.json");
+    const reportPath = path.join(fixture.stateDirectory, "runs", ticketId, "report.json");
     await fs.mkdir(path.dirname(reportPath), { recursive: true });
     await fs.writeFile(reportPath, JSON.stringify({ summary: "missing core fields" }));
     const coordinator = new Coordinator(fixture.context(autoHandler()), { pollMs: 60_000 });
@@ -440,8 +449,8 @@ describe("Coordinator", () => {
     coordinator.stop();
 
     // Both features merged to main.
-    expect(await fs.readFile(path.join(fixture.repo, "alpha.txt"), "utf8")).toBe("alpha\n");
-    expect(await fs.readFile(path.join(fixture.repo, "beta.txt"), "utf8")).toBe("beta\n");
+    expect(await fs.readFile(path.join(fixture.projectRoot, "alpha.txt"), "utf8")).toBe("alpha\n");
+    expect(await fs.readFile(path.join(fixture.projectRoot, "beta.txt"), "utf8")).toBe("beta\n");
 
     // Cards moved to Done and checked off; well-known columns created.
     const board = await readBoard();
@@ -469,7 +478,7 @@ describe("Coordinator", () => {
     const board = await readBoard();
     expect(findColumn(board, "Ready to Merge")?.cards).toHaveLength(2);
     // Nothing merged yet.
-    await expect(fs.access(path.join(fixture.repo, "alpha.txt"))).rejects.toThrow();
+    await expect(fs.access(path.join(fixture.projectRoot, "alpha.txt"))).rejects.toThrow();
 
     // QA's phase record names the approval queue; the report stays on disk.
     const alphaId = ticketIdFromCard("Add feature alpha");
@@ -506,13 +515,13 @@ describe("Coordinator", () => {
 
     // Human merges alpha by hand.
     const alphaId = ticketIdFromCard("Add feature alpha");
-    await git(fixture.repo, "merge", "--ff-only", `jfdi/${alphaId}`);
-    const headBefore = await git(fixture.repo, "rev-parse", "HEAD");
+    await git(fixture.projectRoot, "merge", "--ff-only", `jfdi/${alphaId}`);
+    const headBefore = await git(fixture.projectRoot, "rev-parse", "HEAD");
 
     await rescan(coordinator);
     coordinator.stop();
 
-    expect(await git(fixture.repo, "rev-parse", "HEAD")).toBe(headBefore);
+    expect(await git(fixture.projectRoot, "rev-parse", "HEAD")).toBe(headBefore);
     const board = await readBoard();
     const doneCards = findColumn(board, "Done")?.cards ?? [];
     expect(doneCards.some((c) => c.text.includes("alpha"))).toBe(true);
@@ -524,7 +533,7 @@ describe("Coordinator", () => {
     // branch that carried it is gone, and the merge is on the event stream.
     const alphaId = await strandCard();
     await landAndDeleteBranch(alphaId);
-    const merger = new EventLog(fixture.stateDir);
+    const merger = new EventLog(fixture.stateDirectory);
     merger.emit("merge_start", alphaId);
     merger.emit("merged", alphaId);
     await merger.flush();
@@ -554,13 +563,13 @@ describe("Coordinator", () => {
     // convergence test.
     const alphaId = await strandCard();
     const branch = `jfdi/${alphaId}`;
-    await git(fixture.repo, "checkout", "-b", branch);
-    await commitFile(fixture.repo, `${alphaId}.txt`, "work\n", `implement ${alphaId}`);
-    await git(fixture.repo, "checkout", "main");
-    await git(fixture.repo, "merge", "--no-ff", "-m", `merge ${branch}`, branch);
+    await git(fixture.projectRoot, "checkout", "-b", branch);
+    await commitFile(fixture.projectRoot, `${alphaId}.txt`, "work\n", `implement ${alphaId}`);
+    await git(fixture.projectRoot, "checkout", "main");
+    await git(fixture.projectRoot, "merge", "--no-ff", "-m", `merge ${branch}`, branch);
     // The branch stays: the merging process has not reached its cleanup yet.
 
-    const merger = new EventLog(fixture.stateDir);
+    const merger = new EventLog(fixture.stateDirectory);
     merger.emit("merge_start", alphaId);
     await merger.flush();
 
@@ -596,19 +605,19 @@ describe("Coordinator", () => {
 
     const alphaId = ticketIdFromCard(ALPHA_TEXT);
     const ticket = await resolveTicket(ALPHA_TEXT, fixture.ticketsDirectory);
-    const report = await loadReport(fixture.stateDir, alphaId);
+    const report = await loadReport(fixture.stateDirectory, alphaId);
     if (!report || isCorruptReport(report))
       throw new Error("pipeline should save a valid report before integration");
 
     const integrationContext = fixture.context(autoHandler());
-    const integrationLog = new FlushControlledEventLog(fixture.stateDir);
+    const integrationLog = new FlushControlledEventLog(fixture.stateDirectory);
     integrationContext.log = integrationLog;
     const outcome = await integrateTicket(integrationContext, ticket, {
-      path: path.join(worktreesDir(fixture.jfdiDir), alphaId),
+      path: path.join(worktreesDirectory(fixture.jfdiDirectory), alphaId),
       branch: `jfdi/${alphaId}`,
     });
     expect(outcome.status).toBe("merged");
-    expect(await isAncestor(fixture.repo, report.commit, "main")).toBe(true);
+    expect(await isAncestor(fixture.projectRoot, report.commit, "main")).toBe(true);
     expect(integrationLog.pendingTypes()).toContain("merged");
 
     // The merge command has landed and deleted the branch. A coordinator scan
@@ -643,7 +652,7 @@ describe("Coordinator", () => {
 
     const alphaId = ticketIdFromCard(ALPHA_TEXT);
     const ticket = await resolveTicket(ALPHA_TEXT, fixture.ticketsDirectory);
-    const report = await loadReport(fixture.stateDir, alphaId);
+    const report = await loadReport(fixture.stateDirectory, alphaId);
     if (!report || isCorruptReport(report))
       throw new Error("pipeline should save a valid report before integration");
     // Narrowing does not flow into class method bodies; capture the commit.
@@ -653,23 +662,23 @@ describe("Coordinator", () => {
     class BarrierObservingEventLog extends EventLog {
       override async flush(): Promise<void> {
         await super.flush();
-        const records = await integrationRecords(fixture.stateDir);
+        const records = await integrationRecords(fixture.stateDirectory);
         barriers.push({
           recordedPhase: records.get(alphaId)?.phase,
-          mergeVisibleInTarget: await isAncestor(fixture.repo, signedOffCommit, "main"),
+          mergeVisibleInTarget: await isAncestor(fixture.projectRoot, signedOffCommit, "main"),
         });
       }
     }
 
     const context = fixture.context(autoHandler());
-    context.log = new BarrierObservingEventLog(fixture.stateDir);
+    context.log = new BarrierObservingEventLog(fixture.stateDirectory);
     const outcome = await integrateTicket(context, ticket, {
-      path: path.join(worktreesDir(fixture.jfdiDir), alphaId),
+      path: path.join(worktreesDirectory(fixture.jfdiDirectory), alphaId),
       branch: `jfdi/${alphaId}`,
     });
 
     expect(outcome.status).toBe("merged");
-    expect(await isAncestor(fixture.repo, report.commit, "main")).toBe(true);
+    expect(await isAncestor(fixture.projectRoot, report.commit, "main")).toBe(true);
     // A durability barrier ran, and the first one made the in-flight record
     // durable while git still hid the merge — the exact ordering the fix adds.
     expect(barriers[0]?.recordedPhase).toBe("in-flight");
@@ -722,10 +731,10 @@ describe("Coordinator", () => {
     // itself — containment is the question.
     // Parked on a branch of its own so the sha still resolves; unmerged either
     // way. The board is written afterwards so this detour cannot commit it.
-    await git(fixture.repo, "checkout", "-b", "sidetrack");
-    await commitFile(fixture.repo, "alpha.txt", "alpha\n", "implement alpha");
-    const tip = await revParse(fixture.repo, "HEAD");
-    await git(fixture.repo, "checkout", "main");
+    await git(fixture.projectRoot, "checkout", "-b", "sidetrack");
+    await commitFile(fixture.projectRoot, "alpha.txt", "alpha\n", "implement alpha");
+    const tip = await parseRevision(fixture.projectRoot, "HEAD");
+    await git(fixture.projectRoot, "checkout", "main");
     const alphaId = await strandCard();
     await recordSignOff(alphaId, tip);
 
@@ -753,7 +762,12 @@ describe("Coordinator", () => {
       c.text.includes("alpha"),
     );
     if (!card) throw new Error("alpha card is not in Ready to Merge");
-    await moveCard(path.join(fixture.jfdiDir, "board.md"), card.raw, "Ready to Merge", "Done");
+    await moveCard(
+      path.join(fixture.jfdiDirectory, "board.md"),
+      card.raw,
+      "Ready to Merge",
+      "Done",
+    );
 
     await rescan(coordinator);
     coordinator.stop();
@@ -807,7 +821,7 @@ describe("Coordinator", () => {
 
     const alphaId = ticketIdFromCard("Add feature alpha");
     const betaId = ticketIdFromCard("Add feature beta");
-    expect((await loadState(fixture.stateDir)).tickets[alphaId]?.status).toBe("merge-ready");
+    expect((await loadState(fixture.stateDirectory)).tickets[alphaId]?.status).toBe("merge-ready");
 
     const before = await fs.readFile(boardPath(), "utf8");
     const after = before.replace("- [ ] Add feature alpha\n", "");
@@ -818,7 +832,7 @@ describe("Coordinator", () => {
     coordinator.stop();
     await context.log.flush();
 
-    const persisted = await loadState(fixture.stateDir);
+    const persisted = await loadState(fixture.stateDirectory);
     expect(persisted.tickets[alphaId]?.status).toBe("done");
     expect(persisted.tickets[alphaId]?.lastActivity).toBe("done");
     // Only the deleted card was acknowledged; the other still awaits approval.
@@ -858,7 +872,7 @@ describe("Coordinator", () => {
     expect(context.log.snapshot().tickets[alphaId]?.status).toBe("merge-ready");
 
     // A `jfdi merge` in another terminal: its own EventLog, the same stream.
-    const merger = new EventLog(fixture.stateDir);
+    const merger = new EventLog(fixture.stateDirectory);
     merger.emit("merge_start", alphaId);
     merger.emit("merged", alphaId);
     await merger.flush();
@@ -979,7 +993,7 @@ describe("Coordinator", () => {
 
     // No second pipeline: the saved sign-off still describes the branch tip.
     expect(stages.filter((s) => s === "implementation")).toHaveLength(1);
-    expect(await fs.readFile(path.join(fixture.repo, "impl-1.txt"), "utf8")).toBe("1\n");
+    expect(await fs.readFile(path.join(fixture.projectRoot, "impl-1.txt"), "utf8")).toBe("1\n");
     const done = findColumn(await readBoard(), "Done")?.cards ?? [];
     expect(done.some((c) => c.text.includes("alpha"))).toBe(true);
   });
@@ -989,7 +1003,10 @@ describe("Coordinator", () => {
     const coordinator = await runToMergeReady(stages);
     // A human commits on the branch after the sign-off — the report no longer
     // describes what a merge would land.
-    const worktree = path.join(worktreesDir(fixture.jfdiDir), ticketIdFromCard(ALPHA_TEXT));
+    const worktree = path.join(
+      worktreesDirectory(fixture.jfdiDirectory),
+      ticketIdFromCard(ALPHA_TEXT),
+    );
     await commitFile(worktree, "by-hand.txt", "hand\n", "human edit");
     await moveCard(boardPath(), ALPHA_CARD, "Ready to Merge", "Ready");
 
@@ -998,7 +1015,7 @@ describe("Coordinator", () => {
 
     // Pipeline re-ran instead of merging the stale branch.
     expect(stages.filter((s) => s === "implementation")).toHaveLength(2);
-    await expect(fs.access(path.join(fixture.repo, "impl-1.txt"))).rejects.toThrow();
+    await expect(fs.access(path.join(fixture.projectRoot, "impl-1.txt"))).rejects.toThrow();
     expect(findColumn(await readBoard(), "Ready to Merge")?.cards).toHaveLength(1);
   });
 
@@ -1006,7 +1023,7 @@ describe("Coordinator", () => {
     // The board a dead coordinator leaves: a card in flight with no run behind
     // it. Its branch holds partial work, so the treatment is to pick it back
     // up — the human should not have to drag it anywhere.
-    await fs.writeFile(path.join(fixture.jfdiDir, "board.md"), ORPHANED_BOARD);
+    await fs.writeFile(path.join(fixture.jfdiDirectory, "board.md"), ORPHANED_BOARD);
     const context = fixture.context(autoHandler());
     fixture.config.integration.mode = "on-approval";
     const coordinator = new Coordinator(context, { pollMs: 60_000 });
@@ -1025,7 +1042,7 @@ describe("Coordinator", () => {
     // Both columns want the single slot. The in-progress card holds partial
     // work already paid for, so it goes first; the waiting card gets the slot
     // it frees, not a second one alongside it.
-    await fs.writeFile(path.join(fixture.jfdiDir, "board.md"), STRANDED_AND_WAITING_BOARD);
+    await fs.writeFile(path.join(fixture.jfdiDirectory, "board.md"), STRANDED_AND_WAITING_BOARD);
     const context = fixture.context(autoHandler());
     fixture.config.maxConcurrent = 1;
     fixture.config.integration.mode = "on-approval";
@@ -1154,7 +1171,7 @@ describe("Coordinator under a broken provider", () => {
     expect(findColumn(board, "Ready to Merge")?.cards.map((c) => c.text)).toEqual([ALPHA_TEXT]);
     // The dead session cost a respawn, not a round.
     expect(implementationAttempts).toBe(2);
-    const report = await loadReport(fixture.stateDir, ticketIdFromCard(ALPHA_TEXT));
+    const report = await loadReport(fixture.stateDirectory, ticketIdFromCard(ALPHA_TEXT));
     expect(report && !isCorruptReport(report) ? report.rounds : null).toBe(1);
   });
 

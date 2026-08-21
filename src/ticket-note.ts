@@ -124,7 +124,7 @@ export function parseTicketNote(content: string): TicketNote {
  * pipeline's narration is for humans, and review feedback reaches the
  * implementer through the feedback history instead.
  */
-export function ticketSpec(note: TicketNote): string {
+export function ticketDescription(note: TicketNote): string {
   const parts: string[] = [];
   if (note.title !== "") parts.push(`# ${note.title}`);
   if (note.description !== "") parts.push(note.description);

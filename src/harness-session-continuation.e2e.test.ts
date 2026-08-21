@@ -32,8 +32,8 @@ import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 const PIPELINE_TIMEOUT_MS = 120_000;
 
@@ -118,10 +118,10 @@ process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "age
 
 interface Sandbox {
   root: string;
-  project: string;
+  projectRoot: string;
   home: string;
   jfdiHome: string;
-  binDir: string;
+  executableDirectory: string;
   argvLog: string;
 }
 
@@ -131,28 +131,28 @@ async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-session-continuation-"));
   const root = await fs.realpath(created);
   sandboxRoots.push(created);
-  const project = path.join(root, "project");
+  const projectRoot = path.join(root, "project");
   const home = path.join(root, "home");
-  const binDir = path.join(root, "bin");
-  await fs.mkdir(project, { recursive: true });
+  const executableDirectory = path.join(root, "bin");
+  await fs.mkdir(projectRoot, { recursive: true });
   await fs.mkdir(home);
-  await fs.mkdir(binDir);
-  await fs.writeFile(path.join(binDir, "claude"), STUB_CLAUDE, { mode: 0o755 });
-  await fs.writeFile(path.join(binDir, "codex"), STUB_CODEX, { mode: 0o755 });
+  await fs.mkdir(executableDirectory);
+  await fs.writeFile(path.join(executableDirectory, "claude"), STUB_CLAUDE, { mode: 0o755 });
+  await fs.writeFile(path.join(executableDirectory, "codex"), STUB_CODEX, { mode: 0o755 });
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
   return {
     root,
-    project,
+    projectRoot,
     home,
     jfdiHome: path.join(home, ".jfdi"),
-    binDir,
+    executableDirectory,
     argvLog: path.join(root, "argv.jsonl"),
   };
 }
@@ -166,7 +166,7 @@ interface CliResult {
 async function runCli(sandbox: Sandbox, args: string[]): Promise<CliResult> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
     STUB_ARGV_LOG: sandbox.argvLog,
@@ -174,7 +174,7 @@ async function runCli(sandbox: Sandbox, args: string[]): Promise<CliResult> {
   };
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: sandbox.project,
+      cwd: sandbox.projectRoot,
       env,
       maxBuffer: 64 * 1024 * 1024,
     });
@@ -219,7 +219,7 @@ async function invocations(sandbox: Sandbox): Promise<Invocation[]> {
 
 afterEach(async () => {
   await Promise.all(
-    sandboxRoots.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    sandboxRoots.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -236,18 +236,18 @@ describe("harness session-id continuation, end to end", () => {
       expect(run.code, `${run.stdout}${run.stderr}`).toBe(0);
 
       const all = await invocations(sandbox);
-      const implCalls = all.filter((call) => call.stage === "implementation");
+      const implementationCalls = all.filter((call) => call.stage === "implementation");
       const reviewCalls = all.filter((call) => call.stage === "code-review");
 
       // All three rounds ran for each continued stage.
-      expect(implCalls.map((call) => call.cli)).toEqual(["claude", "claude", "claude"]);
+      expect(implementationCalls.map((call) => call.cli)).toEqual(["claude", "claude", "claude"]);
       expect(reviewCalls.map((call) => call.cli)).toEqual(["codex", "codex", "codex"]);
 
       // Round 1 is always fresh; rounds 2 and 3 continue the *prior* round's
       // captured id — the exact value the harness parsed off the prior stream,
       // not this round's and not a placeholder. Claude's id was announced on
       // the init line alone, so this also proves init-line-only capture.
-      expect(implCalls.map((call) => call.continuedId)).toEqual([
+      expect(implementationCalls.map((call) => call.continuedId)).toEqual([
         undefined,
         "impl-sess-r1",
         "impl-sess-r2",

@@ -55,12 +55,12 @@ export interface JfdiConfig {
   stages: Record<SessionKind, SessionConfig>;
 }
 
-export const JFDI_DIR = ".jfdi";
+export const JFDI_DIRECTORY = ".jfdi";
 
 export function defaultConfig(): JfdiConfig {
   return {
     board: {
-      path: `${JFDI_DIR}/board.md`,
+      path: `${JFDI_DIRECTORY}/board.md`,
       columns: {
         begin: "Ready",
         inProgress: "In Progress",
@@ -70,7 +70,7 @@ export function defaultConfig(): JfdiConfig {
         inbox: "Inbox",
       },
     },
-    ticketsDirectory: `${JFDI_DIR}/tickets`,
+    ticketsDirectory: `${JFDI_DIRECTORY}/tickets`,
     gate: [],
     pipeline: { maxRounds: 3 },
     integration: {
@@ -497,12 +497,12 @@ export function printLegacyConfigNotice(legacyKeys: readonly string[], file: str
   );
 }
 
-/** Load config from <repoRoot>/.jfdi/config.json; defaults if the file is absent. */
+/** Load config from <projectRoot>/.jfdi/config.json; defaults if the file is absent. */
 export async function loadConfig(
-  repoRoot: string,
+  projectRoot: string,
   options: LoadConfigOptions = {},
 ): Promise<JfdiConfig> {
-  const file = path.join(repoRoot, JFDI_DIR, "config.json");
+  const file = path.join(projectRoot, JFDI_DIRECTORY, "config.json");
   const content = await readIfExists(file);
   if (content === null) return defaultConfig();
   const raw = parseConfigJson(content, file);

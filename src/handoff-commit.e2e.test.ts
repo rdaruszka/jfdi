@@ -29,8 +29,8 @@ import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 const PIPELINE_TIMEOUT_MS = 120_000;
 
@@ -126,10 +126,10 @@ else process.stdout.write(JSON.stringify({ type: "item.completed", item: { type:
 
 interface Sandbox {
   root: string;
-  project: string;
+  projectRoot: string;
   home: string;
   jfdiHome: string;
-  binDir: string;
+  executableDirectory: string;
 }
 
 const sandboxRoots: string[] = [];
@@ -139,23 +139,23 @@ async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-handoff-"));
   const root = await fs.realpath(created);
   sandboxRoots.push(created);
-  const project = path.join(root, "project");
+  const projectRoot = path.join(root, "project");
   const home = path.join(root, "home");
-  const binDir = path.join(root, "bin");
-  await fs.mkdir(project, { recursive: true });
+  const executableDirectory = path.join(root, "bin");
+  await fs.mkdir(projectRoot, { recursive: true });
   await fs.mkdir(home);
-  await fs.mkdir(binDir);
-  await fs.writeFile(path.join(binDir, "claude"), STUB_CLAUDE, { mode: 0o755 });
-  await fs.writeFile(path.join(binDir, "codex"), STUB_CODEX, { mode: 0o755 });
+  await fs.mkdir(executableDirectory);
+  await fs.writeFile(path.join(executableDirectory, "claude"), STUB_CLAUDE, { mode: 0o755 });
+  await fs.writeFile(path.join(executableDirectory, "codex"), STUB_CODEX, { mode: 0o755 });
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
-  return { root, project, home, jfdiHome: path.join(home, ".jfdi"), binDir };
+  return { root, projectRoot, home, jfdiHome: path.join(home, ".jfdi"), executableDirectory };
 }
 
 interface CliResult {
@@ -178,7 +178,7 @@ async function runCli(
 ): Promise<CliResult> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
     STUB_MODE: options.stubMode ?? "pass",
@@ -190,7 +190,7 @@ async function runCli(
   if (options.deathText !== undefined) env.STUB_DEATH_TEXT = options.deathText;
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: sandbox.project,
+      cwd: sandbox.projectRoot,
       env,
       maxBuffer: 64 * 1024 * 1024,
     });
@@ -235,17 +235,17 @@ async function scribeAnswer(sandbox: Sandbox, name: string, text: string): Promi
 }
 
 /** What `git` itself makes of a commit's trailers — not what the source hoped. */
-function trailerValue(project: string, revision: string, key: string): Promise<string> {
-  return git(project, "log", "-1", `--format=%(trailers:key=${key},valueonly)`, revision);
+function trailerValue(projectRoot: string, revision: string, key: string): Promise<string> {
+  return git(projectRoot, "log", "-1", `--format=%(trailers:key=${key},valueonly)`, revision);
 }
 
 function readNote(sandbox: Sandbox, ticketId: string): Promise<string> {
-  return fs.readFile(path.join(sandbox.project, ".jfdi", "tickets", `${ticketId}.md`), "utf8");
+  return fs.readFile(path.join(sandbox.projectRoot, ".jfdi", "tickets", `${ticketId}.md`), "utf8");
 }
 
 afterEach(async () => {
   await Promise.all(
-    sandboxRoots.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    sandboxRoots.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -263,10 +263,10 @@ describe("handoff commit messages, as git reads them", () => {
       // off a commit with git, and [[cost-reporting]] adds JFDI-Duration and
       // JFDI-Cost to the same block. Asserting on the message text instead
       // would pass even when git sees no trailer block at all.
-      expect(await trailerValue(sandbox.project, branch, "JFDI-Round")).toBe("1/3");
+      expect(await trailerValue(sandbox.projectRoot, branch, "JFDI-Round")).toBe("1/3");
 
       // …and the human-facing half of the same block is still there.
-      const message = await git(sandbox.project, "log", "-1", "--format=%B", branch);
+      const message = await git(sandbox.projectRoot, "log", "-1", "--format=%B", branch);
       expect(message).toContain("JFDI Implementation complete — gate green, moving to Code Review");
       expect(message).toContain("JFDI-Round: 1/3");
     },
@@ -285,21 +285,21 @@ describe("handoff commit messages, as git reads them", () => {
 
       // Two sessions changed the worktree, so the branch carries exactly two
       // pipeline commits — and neither is the one the agent made for itself.
-      const subjects = (await git(sandbox.project, "log", "--format=%s", `main..${branch}`)).split(
-        "\n",
-      );
+      const subjects = (
+        await git(sandbox.projectRoot, "log", "--format=%s", `main..${branch}`)
+      ).split("\n");
       expect(subjects).toHaveLength(2);
       for (const subject of subjects) expect(subject).toMatch(new RegExp(`^${ticketId}: `));
       expect(subjects.join("\n")).not.toContain("AGENT SELF COMMIT");
 
       // The QA commit is the tip, holds only the file QA wrote, and says so.
-      expect(await git(sandbox.project, "show", "--name-only", "--format=", branch)).toBe(
+      expect(await git(sandbox.projectRoot, "show", "--name-only", "--format=", branch)).toBe(
         "acceptance.test.txt",
       );
-      const qaMessage = await git(sandbox.project, "log", "-1", "--format=%B", branch);
+      const qaMessage = await git(sandbox.projectRoot, "log", "-1", "--format=%B", branch);
       expect(qaMessage).toContain("JFDI QA PASSED — sign-off on commit");
       expect(qaMessage).toContain("gate green, queued for approval before integration");
-      expect(await trailerValue(sandbox.project, branch, "JFDI-Round")).toBe("1/3");
+      expect(await trailerValue(sandbox.projectRoot, branch, "JFDI-Round")).toBe("1/3");
 
       // Same text on the other surface, verbatim, quoted as note entries are.
       const note = await readNote(sandbox, ticketId);
@@ -326,17 +326,17 @@ describe("handoff commit messages, as git reads them", () => {
 
       // Work that would otherwise be lost — sanitization discards uncommitted
       // changes — is on the branch instead, one WIP commit per round.
-      const subjects = (await git(sandbox.project, "log", "--format=%s", `main..${branch}`)).split(
-        "\n",
-      );
+      const subjects = (
+        await git(sandbox.projectRoot, "log", "--format=%s", `main..${branch}`)
+      ).split("\n");
       expect(subjects).toHaveLength(3);
       for (const subject of subjects) expect(subject).toContain(`${ticketId}: WIP — `);
-      expect(await git(sandbox.project, "log", "--format=%s", `main..${branch}`)).not.toContain(
+      expect(await git(sandbox.projectRoot, "log", "--format=%s", `main..${branch}`)).not.toContain(
         "AGENT SELF COMMIT",
       );
       // The round each partial commit belongs to is machine-readable too.
-      expect(await trailerValue(sandbox.project, branch, "JFDI-Round")).toBe("3/3");
-      expect(await git(sandbox.project, "log", "-1", "--format=%B", branch)).toContain(
+      expect(await trailerValue(sandbox.projectRoot, branch, "JFDI-Round")).toBe("3/3");
+      expect(await git(sandbox.projectRoot, "log", "-1", "--format=%B", branch)).toContain(
         "moving to Blocked for human review",
       );
 
@@ -369,7 +369,7 @@ describe("handoff commit messages, as git reads them", () => {
       expect(run.code).toBe(2);
       const branch = `jfdi/${ticketIdOf(run)}`;
 
-      const message = await git(sandbox.project, "log", "-1", "--format=%B", branch);
+      const message = await git(sandbox.projectRoot, "log", "-1", "--format=%B", branch);
       // The status line is the one that carries the pipeline-built outcome. It
       // is exactly one line: firstLine took only the outcome's first line, so
       // the CRLF-delimited second line never wrapped below it and broke the
@@ -390,7 +390,7 @@ describe("handoff commit messages, as git reads them", () => {
       expect(message).not.toContain(ESCAPE);
       // The trailer block below the status line is still machine-readable, so
       // the status line did not bleed into it.
-      expect(await trailerValue(sandbox.project, branch, "JFDI-Round")).toBe("3/3");
+      expect(await trailerValue(sandbox.projectRoot, branch, "JFDI-Round")).toBe("3/3");
     },
     PIPELINE_TIMEOUT_MS,
   );
@@ -417,7 +417,7 @@ describe("handoff commit messages, as git reads them", () => {
       expect(run.code).toBe(2);
       const branch = `jfdi/${ticketIdOf(run)}`;
 
-      const message = await git(sandbox.project, "log", "-1", "--format=%B", branch);
+      const message = await git(sandbox.projectRoot, "log", "-1", "--format=%B", branch);
       const statusLines = message
         .split("\n")
         .filter((line) => line.startsWith("JFDI Implementation interrupted:"));
@@ -438,7 +438,7 @@ describe("handoff commit messages, as git reads them", () => {
       expect(message).not.toContain("\r");
       // The trailer block below stays machine-readable: the outcome did not
       // bleed a stray newline into it.
-      expect(await trailerValue(sandbox.project, branch, "JFDI-Round")).toBe("3/3");
+      expect(await trailerValue(sandbox.projectRoot, branch, "JFDI-Round")).toBe("3/3");
     },
     PIPELINE_TIMEOUT_MS,
   );
@@ -530,7 +530,7 @@ describe("handoff commit messages, as git reads them", () => {
         const ticketId = ticketIdOf(run);
         const branch = `jfdi/${ticketId}`;
 
-        const message = await git(sandbox.project, "log", "-1", "--format=%B", branch);
+        const message = await git(sandbox.projectRoot, "log", "-1", "--format=%B", branch);
         expect(message.split("\n")[0], testCase.name).toBe(testCase.subject(ticketId));
         testCase.body?.(message);
         // The two lines the pipeline owns survive every hostile answer, and the
@@ -538,7 +538,7 @@ describe("handoff commit messages, as git reads them", () => {
         expect(message, testCase.name).toContain(
           "JFDI Implementation complete — gate green, moving to Code Review",
         );
-        expect(await trailerValue(sandbox.project, branch, "JFDI-Round"), testCase.name).toBe(
+        expect(await trailerValue(sandbox.projectRoot, branch, "JFDI-Round"), testCase.name).toBe(
           "1/3",
         );
 
@@ -579,16 +579,16 @@ describe("handoff commit messages, as git reads them", () => {
 
       // git itself reports the whole first line as the subject — no truncation,
       // no padding, and no demotion to a pipeline-authored subject.
-      const subject = await git(sandbox.project, "log", "-1", "--format=%s", branch);
+      const subject = await git(sandbox.projectRoot, "log", "-1", "--format=%s", branch);
       expect(subject).toBe(`${ticketId}: ${firstLine}`);
       expect(subject).not.toContain("Implementation round");
 
       // The first line is the subject, not a body paragraph, and the real body
       // still follows it.
-      const message = await git(sandbox.project, "log", "-1", "--format=%B", branch);
+      const message = await git(sandbox.projectRoot, "log", "-1", "--format=%B", branch);
       expect(message).not.toContain(`\n\n${firstLine}`);
       expect(message).toContain(body);
-      expect(await trailerValue(sandbox.project, branch, "JFDI-Round")).toBe("1/3");
+      expect(await trailerValue(sandbox.projectRoot, branch, "JFDI-Round")).toBe("1/3");
 
       // The 72-char figure survives only where the ticket allows it: as guidance
       // in the scribe's prompt, never as a threshold the code enforces.
@@ -603,7 +603,7 @@ describe("handoff commit messages, as git reads them", () => {
     async () => {
       const sandbox = await makeSandbox();
       await initProject(sandbox);
-      const ticketsDirectory = path.join(sandbox.project, ".jfdi", "tickets");
+      const ticketsDirectory = path.join(sandbox.projectRoot, ".jfdi", "tickets");
       await fs.mkdir(ticketsDirectory, { recursive: true });
       await fs.writeFile(
         path.join(ticketsDirectory, "marmalade-export.md"),
@@ -635,7 +635,7 @@ describe("handoff commit messages, as git reads them", () => {
     async () => {
       const sandbox = await makeSandbox();
       await initProject(sandbox);
-      const configPath = path.join(sandbox.project, ".jfdi", "config.json");
+      const configPath = path.join(sandbox.projectRoot, ".jfdi", "config.json");
       const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
         stages: Record<string, unknown>;
       };

@@ -42,25 +42,31 @@ async function gitTry(cwd: string, ...args: string[]): Promise<{ ok: boolean; ou
   }
 }
 
-export function repoRoot(cwd: string): Promise<string> {
+export function projectRoot(cwd: string): Promise<string> {
   return git(cwd, "rev-parse", "--show-toplevel");
 }
 
-export function currentBranch(repo: string): Promise<string> {
-  return git(repo, "rev-parse", "--abbrev-ref", "HEAD");
+export function currentBranch(cwd: string): Promise<string> {
+  return git(cwd, "rev-parse", "--abbrev-ref", "HEAD");
 }
 
-export function revParse(repo: string, ref: string): Promise<string> {
-  return git(repo, "rev-parse", ref);
+export function parseRevision(cwd: string, reference: string): Promise<string> {
+  return git(cwd, "rev-parse", reference);
 }
 
-export async function branchExists(repo: string, branch: string): Promise<boolean> {
-  const result = await gitTry(repo, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`);
+export async function branchExists(projectRoot: string, branch: string): Promise<boolean> {
+  const result = await gitTry(
+    projectRoot,
+    "show-ref",
+    "--verify",
+    "--quiet",
+    `refs/heads/${branch}`,
+  );
   return result.ok;
 }
 
-export async function isWorkingTreeClean(repo: string): Promise<boolean> {
-  return (await git(repo, "status", "--porcelain")) === "";
+export async function isWorkingTreeClean(cwd: string): Promise<boolean> {
+  return (await git(cwd, "status", "--porcelain")) === "";
 }
 
 /**
@@ -68,13 +74,17 @@ export async function isWorkingTreeClean(repo: string): Promise<boolean> {
  * before a fast-forward, where only tracked modifications can conflict
  * (git itself refuses if a checkout would clobber an untracked file).
  */
-export async function hasTrackedChanges(repo: string): Promise<boolean> {
-  return (await git(repo, "status", "--porcelain", "--untracked-files=no")) !== "";
+export async function hasTrackedChanges(projectRoot: string): Promise<boolean> {
+  return (await git(projectRoot, "status", "--porcelain", "--untracked-files=no")) !== "";
 }
 
 /** True if `ancestor` is contained in `ref` (already-merged detection). */
-export async function isAncestor(repo: string, ancestor: string, ref: string): Promise<boolean> {
-  const result = await gitTry(repo, "merge-base", "--is-ancestor", ancestor, ref);
+export async function isAncestor(
+  projectRoot: string,
+  ancestor: string,
+  reference: string,
+): Promise<boolean> {
+  const result = await gitTry(projectRoot, "merge-base", "--is-ancestor", ancestor, reference);
   return result.ok;
 }
 
@@ -88,7 +98,7 @@ export function ticketBranch(ticketId: string): string {
 }
 
 /**
- * Every command that writes `<repo>/.git/worktrees/` runs under this key.
+ * Every command that writes `<projectRoot>/.git/worktrees/` runs under this key.
  *
  * `git worktree add` walks the entries already registered there while it
  * registers its own, and reads each one's `commondir`. A sibling `add` that has
@@ -97,11 +107,11 @@ export function ticketBranch(ticketId: string): string {
  * whole command exits non-zero. `remove`/`prune` delete the same entries a
  * concurrent `add` is reading. None of this is a corner case: the coordinator
  * dispatches up to `maxConcurrent` cards from a single scan, so two adds on
- * one repo is the ordinary path, and the loser's run died with a git error
+ * one project is the ordinary path, and the loser's run died with a git error
  * nothing in the pipeline could interpret.
  */
-function worktreeRegistryKey(repo: string): string {
-  return path.join(repo, ".git", "worktrees");
+function worktreeRegistryKey(projectRoot: string): string {
+  return path.join(projectRoot, ".git", "worktrees");
 }
 
 /**
@@ -109,48 +119,48 @@ function worktreeRegistryKey(repo: string): string {
  * branch. If the branch already exists (resume after Blocked), reuse it.
  */
 export function createWorktree(
-  repo: string,
-  worktreesDir: string,
+  projectRoot: string,
+  worktreesDirectory: string,
   ticketId: string,
   baseBranch: string,
 ): Promise<Worktree> {
   const branch = ticketBranch(ticketId);
-  const worktreePath = path.join(worktreesDir, ticketId);
-  return withPathLock(worktreeRegistryKey(repo), async () => {
-    await fs.mkdir(worktreesDir, { recursive: true });
-    // Clean up a stale registration for this path if the dir vanished.
-    await gitTry(repo, "worktree", "prune");
+  const worktreePath = path.join(worktreesDirectory, ticketId);
+  return withPathLock(worktreeRegistryKey(projectRoot), async () => {
+    await fs.mkdir(worktreesDirectory, { recursive: true });
+    // Clean up a stale registration for this path if the directory vanished.
+    await gitTry(projectRoot, "worktree", "prune");
     try {
       await fs.access(worktreePath);
-      // Worktree dir already exists — reuse it (resume case).
+      // Worktree directory already exists — reuse it (resume case).
       return { path: worktreePath, branch };
     } catch {
       // continue to create
     }
-    if (await branchExists(repo, branch)) {
-      await git(repo, "worktree", "add", worktreePath, branch);
+    if (await branchExists(projectRoot, branch)) {
+      await git(projectRoot, "worktree", "add", worktreePath, branch);
     } else {
-      await git(repo, "worktree", "add", "-b", branch, worktreePath, baseBranch);
+      await git(projectRoot, "worktree", "add", "-b", branch, worktreePath, baseBranch);
     }
     return { path: worktreePath, branch };
   });
 }
 
 export function removeWorktree(
-  repo: string,
+  projectRoot: string,
   worktreePath: string,
   options: { shouldForce?: boolean } = {},
 ): Promise<void> {
-  return withPathLock(worktreeRegistryKey(repo), async () => {
+  return withPathLock(worktreeRegistryKey(projectRoot), async () => {
     const args = ["worktree", "remove", worktreePath];
     if (options.shouldForce) args.push("--force");
-    await gitTry(repo, ...args);
-    await gitTry(repo, "worktree", "prune");
+    await gitTry(projectRoot, ...args);
+    await gitTry(projectRoot, "worktree", "prune");
   });
 }
 
-export async function deleteBranch(repo: string, branch: string): Promise<void> {
-  await gitTry(repo, "branch", "-D", branch);
+export async function deleteBranch(projectRoot: string, branch: string): Promise<void> {
+  await gitTry(projectRoot, "branch", "-D", branch);
 }
 
 export interface MergeResult {
@@ -179,10 +189,12 @@ export async function mergeTargetIntoBranch(
 }
 
 export async function isMergeInProgress(worktree: string): Promise<boolean> {
-  const gitDir = await git(worktree, "rev-parse", "--git-dir");
-  const gitDirPath = path.isAbsolute(gitDir) ? gitDir : path.join(worktree, gitDir);
+  const gitDirectory = await git(worktree, "rev-parse", "--git-dir");
+  const absoluteGitDirectory = path.isAbsolute(gitDirectory)
+    ? gitDirectory
+    : path.join(worktree, gitDirectory);
   try {
-    await fs.access(path.join(gitDirPath, "MERGE_HEAD"));
+    await fs.access(path.join(absoluteGitDirectory, "MERGE_HEAD"));
     return true;
   } catch {
     return false;
@@ -256,18 +268,22 @@ export async function commitMerge(
  *  - target checked out here and tree clean → `git merge --ff-only`
  *  - target not checked out anywhere → `git branch -f` (ref update only)
  */
-export async function fastForward(repo: string, target: string, commitish: string): Promise<void> {
-  if (!(await isAncestor(repo, target, commitish)))
+export async function fastForward(
+  projectRoot: string,
+  target: string,
+  commitish: string,
+): Promise<void> {
+  if (!(await isAncestor(projectRoot, target, commitish)))
     throw new GitError(`cannot fast-forward ${target} to ${commitish}: not a descendant`);
-  const head = await currentBranch(repo);
+  const head = await currentBranch(projectRoot);
   if (head === target) {
-    if (await hasTrackedChanges(repo))
+    if (await hasTrackedChanges(projectRoot))
       throw new GitError(
         `target branch "${target}" is checked out with uncommitted changes; commit or stash before merging`,
       );
-    await git(repo, "merge", "--ff-only", commitish);
+    await git(projectRoot, "merge", "--ff-only", commitish);
   } else {
-    await git(repo, "branch", "-f", target, commitish);
+    await git(projectRoot, "branch", "-f", target, commitish);
   }
 }
 
@@ -282,8 +298,8 @@ export async function commitCount(worktree: string, target: string): Promise<num
 }
 
 /** True if the index holds anything to commit — what the pipeline's own commit turns on. */
-export async function hasStagedChanges(repo: string): Promise<boolean> {
-  return (await git(repo, "diff", "--cached", "--name-only")) !== "";
+export async function hasStagedChanges(cwd: string): Promise<boolean> {
+  return (await git(cwd, "diff", "--cached", "--name-only")) !== "";
 }
 
 /** Commit anything left uncommitted in the worktree (agent safety net). */

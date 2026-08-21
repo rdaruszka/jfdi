@@ -26,8 +26,8 @@ import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 const SCENARIO_TIMEOUT_MS = 180_000;
 
@@ -86,11 +86,11 @@ const GATE_COMMAND = `if test -f gate-ok.txt; then echo ${GREEN_MARKER}; else ec
 
 interface Sandbox {
   root: string;
-  project: string;
+  projectRoot: string;
   home: string;
   jfdiHome: string;
-  stateDir: string;
-  binDir: string;
+  stateDirectory: string;
+  executableDirectory: string;
   promptDump: string;
 }
 
@@ -104,31 +104,31 @@ async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-gatelog-"));
   const root = await fs.realpath(created);
   sandboxes.push(created);
-  const project = path.join(root, "project");
+  const projectRoot = path.join(root, "project");
   const home = path.join(root, "home");
-  const binDir = path.join(root, "bin");
-  await fs.mkdir(project, { recursive: true });
+  const executableDirectory = path.join(root, "bin");
+  await fs.mkdir(projectRoot, { recursive: true });
   await fs.mkdir(home);
-  await fs.mkdir(binDir);
+  await fs.mkdir(executableDirectory);
   for (const executable of ["claude", "codex"]) {
-    await fs.writeFile(path.join(binDir, executable), STUB_AGENT, { mode: 0o755 });
+    await fs.writeFile(path.join(executableDirectory, executable), STUB_AGENT, { mode: 0o755 });
   }
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
   const jfdiHome = path.join(home, ".jfdi");
   return {
     root,
-    project,
+    projectRoot,
     home,
     jfdiHome,
-    stateDir: path.join(jfdiHome, "projects", expectedProjectKey(project)),
-    binDir,
+    stateDirectory: path.join(jfdiHome, "projects", expectedProjectKey(projectRoot)),
+    executableDirectory,
     promptDump: path.join(root, "gatefix-prompt.txt"),
   };
 }
@@ -142,14 +142,14 @@ interface CliResult {
 async function runCli(sandbox: Sandbox, args: string[]): Promise<CliResult> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
     JFDI_GATEFIX_PROMPT_DUMP: sandbox.promptDump,
   };
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: sandbox.project,
+      cwd: sandbox.projectRoot,
       env,
     });
     return { code: 0, stdout, stderr };
@@ -167,7 +167,7 @@ function ticketIdOf(result: CliResult): string {
 
 /** Force the scratch project's gate to the red-then-green command. */
 async function setGate(sandbox: Sandbox): Promise<void> {
-  const configPath = path.join(sandbox.project, ".jfdi", "config.json");
+  const configPath = path.join(sandbox.projectRoot, ".jfdi", "config.json");
   const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
     gate: Array<{ name: string; command: string }>;
   };
@@ -176,7 +176,9 @@ async function setGate(sandbox: Sandbox): Promise<void> {
 }
 
 afterEach(async () => {
-  await Promise.all(sandboxes.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    sandboxes.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe("gate output persisted to the run directory", () => {
@@ -191,13 +193,25 @@ describe("gate output persisted to the run directory", () => {
       expect(run.code).toBe(0);
       const ticketId = ticketIdOf(run);
 
-      const roundDir = path.join(sandbox.stateDir, "runs", ticketId, "run-1", "round-1");
+      const roundDirectory = path.join(
+        sandbox.stateDirectory,
+        "runs",
+        ticketId,
+        "run-1",
+        "round-1",
+      );
 
       // Criterion 1: the red gate-fix attempt AND the green one both left their
       // full transcripts on disk — the failing one was not discarded when the
       // round went green.
-      const redLog = await fs.readFile(path.join(roundDir, "gate-implementation-1.log"), "utf8");
-      const greenLog = await fs.readFile(path.join(roundDir, "gate-implementation-2.log"), "utf8");
+      const redLog = await fs.readFile(
+        path.join(roundDirectory, "gate-implementation-1.log"),
+        "utf8",
+      );
+      const greenLog = await fs.readFile(
+        path.join(roundDirectory, "gate-implementation-2.log"),
+        "utf8",
+      );
       expect(redLog).toContain(RED_MARKER);
       expect(redLog).not.toContain(GREEN_MARKER);
       expect(greenLog).toContain(GREEN_MARKER);
@@ -207,7 +221,7 @@ describe("gate output persisted to the run directory", () => {
       // on-disk log by its real path, and that path resolves to the red log.
       const fixPrompt = await fs.readFile(sandbox.promptDump, "utf8");
       const named = /Full output: `([^`]+)`/.exec(fixPrompt);
-      expect(named?.[1]).toBe(path.join(roundDir, "gate-implementation-1.log"));
+      expect(named?.[1]).toBe(path.join(roundDirectory, "gate-implementation-1.log"));
       expect(fixPrompt).toContain(RED_MARKER);
 
       expect(run.stdout).toContain("ready to merge");
@@ -233,12 +247,18 @@ describe("gate output persisted to the run directory", () => {
       // left its transcript in the integration run directory — green here,
       // because the merged tree carries gate-ok.txt.
       const integrationLog = await fs.readFile(
-        path.join(sandbox.stateDir, "runs", ticketId, "integration", "gate-clean-merge-1.log"),
+        path.join(
+          sandbox.stateDirectory,
+          "runs",
+          ticketId,
+          "integration",
+          "gate-clean-merge-1.log",
+        ),
         "utf8",
       );
       expect(integrationLog).toContain(GREEN_MARKER);
 
-      expect(await git(sandbox.project, "log", "--oneline", "main")).toContain(`${ticketId}:`);
+      expect(await git(sandbox.projectRoot, "log", "--oneline", "main")).toContain(`${ticketId}:`);
     },
     SCENARIO_TIMEOUT_MS,
   );

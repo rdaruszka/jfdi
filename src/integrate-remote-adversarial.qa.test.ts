@@ -14,7 +14,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { JfdiEvent } from "./events.js";
-import { git, revParse } from "./git.js";
+import { git, parseRevision } from "./git.js";
 import { integrateTicket } from "./integrate.js";
 import { runPipeline } from "./pipeline.js";
 import {
@@ -33,8 +33,8 @@ async function addOrigin(): Promise<string> {
   const remote = path.join(fixture.root, "origin.git");
   await fs.mkdir(remote);
   await git(remote, "init", "--bare", "--initial-branch=main");
-  await git(fixture.repo, "remote", "add", "origin", remote);
-  await git(fixture.repo, "push", "-u", "origin", "main");
+  await git(fixture.projectRoot, "remote", "add", "origin", remote);
+  await git(fixture.projectRoot, "push", "-u", "origin", "main");
   return remote;
 }
 
@@ -88,7 +88,7 @@ describe("remote integration — adversarial QA", () => {
     });
     fixture = gated;
     const remote = await addOrigin();
-    const remoteHead = await revParse(remote, "refs/heads/main");
+    const remoteHead = await parseRevision(remote, "refs/heads/main");
     const context = gated.context(passingHandler("clean-feature.txt"));
     context.config.integration.remote.pushAfter = true;
     const events: JfdiEvent[] = [];
@@ -98,8 +98,8 @@ describe("remote integration — adversarial QA", () => {
     if (outcome.status !== "passed") throw new Error("pipeline should pass before integration");
 
     // Target moves with a file the gate rejects — merged in, not conflicting.
-    await commitFile(gated.repo, "integration-poison.txt", "boom\n", "add poison to target");
-    const preIntegrationLocal = await revParse(gated.repo, "main");
+    await commitFile(gated.projectRoot, "integration-poison.txt", "boom\n", "add poison to target");
+    const preIntegrationLocal = await parseRevision(gated.projectRoot, "main");
 
     const result = await integrateTicket(context, ticket, outcome.worktree);
 
@@ -108,8 +108,8 @@ describe("remote integration — adversarial QA", () => {
     expect(result.reason).toContain("gate failed");
     // The local target never advanced past its pre-integration head, and the
     // remote was never touched: no push attempt, no retry, no success.
-    expect(await revParse(gated.repo, "main")).toBe(preIntegrationLocal);
-    expect(await revParse(remote, "refs/heads/main")).toBe(remoteHead);
+    expect(await parseRevision(gated.projectRoot, "main")).toBe(preIntegrationLocal);
+    expect(await parseRevision(remote, "refs/heads/main")).toBe(remoteHead);
     const pushActivity = events.filter(
       (event) => event.type === "integration_activity" && event.data?.operation === "push",
     );
@@ -141,7 +141,7 @@ describe("remote integration — adversarial QA", () => {
     if (outcome.status !== "passed") throw new Error("pipeline should pass");
 
     // Conflicting change on the target so integration must resolve it.
-    await commitFile(fixture.repo, "README.md", "main version\n", "conflicting main edit");
+    await commitFile(fixture.projectRoot, "README.md", "main version\n", "conflicting main edit");
 
     const integrationContext = fixture.context(async (prompt, options) => {
       expect(sessionKindOf(prompt)).toBe("integration");
@@ -159,7 +159,9 @@ describe("remote integration — adversarial QA", () => {
     expect(result).toEqual({ status: "merged" });
     // The remote's target now equals the local landing commit — the conflict
     // resolution reached the remote, not just the local branch.
-    expect(await revParse(remote, "refs/heads/main")).toBe(await revParse(fixture.repo, "main"));
+    expect(await parseRevision(remote, "refs/heads/main")).toBe(
+      await parseRevision(fixture.projectRoot, "main"),
+    );
     expect(await git(remote, "show", "main:README.md")).toBe("merged version");
     expect(events).toContainEqual(
       expect.objectContaining({
@@ -188,17 +190,17 @@ describe("remote integration — adversarial QA", () => {
     const publisher = await clonePublisher(remote);
     await commitFile(publisher, "remote-work.txt", "remote\n", "remote target work");
     await git(publisher, "push", "origin", "main");
-    const remoteCommitBeforeLanding = await revParse(remote, "refs/heads/main");
+    const remoteCommitBeforeLanding = await parseRevision(remote, "refs/heads/main");
 
     const result = await integrateTicket(context, ticket, outcome.worktree);
 
     expect(result).toEqual({ status: "merged" });
-    const landing = await revParse(fixture.repo, "main");
+    const landing = await parseRevision(fixture.projectRoot, "main");
     // Remote ends exactly at the local landing commit.
-    expect(await revParse(remote, "refs/heads/main")).toBe(landing);
+    expect(await parseRevision(remote, "refs/heads/main")).toBe(landing);
     // The landing's first parent is the fetched remote commit — the target was
     // fast-forwarded onto the remote work before the merge was built.
-    expect(await git(fixture.repo, "rev-parse", "main^1")).toBe(remoteCommitBeforeLanding);
+    expect(await git(fixture.projectRoot, "rev-parse", "main^1")).toBe(remoteCommitBeforeLanding);
     // Both the fetched remote work and the ticket work are in what the remote holds.
     expect(await git(remote, "show", "main:remote-work.txt")).toBe("remote");
     expect(await git(remote, "show", "main:ticket-work.txt")).toBe("feature");

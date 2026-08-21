@@ -23,8 +23,8 @@ import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 const RUN_TIMEOUT_MS = 120_000;
 
@@ -48,8 +48,8 @@ const match = prompt.match(/(\\/\\S+\\.verdict\\.json)/);
 if (match) {
   const verdictPath = match[1];
   const stage = verdictPath.split("/").pop().replace(".verdict.json", "");
-  fs.mkdirSync(process.env.CAPTURE_DIR, { recursive: true });
-  fs.appendFileSync(process.env.CAPTURE_DIR + "/ran.log", stage + "\\n");
+  fs.mkdirSync(process.env.CAPTURE_DIRECTORY, { recursive: true });
+  fs.appendFileSync(process.env.CAPTURE_DIRECTORY + "/ran.log", stage + "\\n");
   let verdict;
   if (stage === "implementation") {
     fs.writeFileSync(process.cwd() + "/feature.txt", "the feature\\n");
@@ -69,11 +69,11 @@ process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_err
 
 interface Sandbox {
   root: string;
-  project: string;
+  projectRoot: string;
   home: string;
   jfdiHome: string;
-  binDir: string;
-  captureDir: string;
+  executableDirectory: string;
+  captureDirectory: string;
   ticketsDirectory: string;
   boardPath: string;
 }
@@ -85,32 +85,33 @@ async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-blockedby-e2e-"));
   const root = await fs.realpath(created);
   sandboxes.push(created);
-  const project = path.join(root, "project");
+  const projectRoot = path.join(root, "project");
   const home = path.join(root, "home");
-  const binDir = path.join(root, "bin");
-  const captureDir = path.join(root, "capture");
-  for (const dir of [project, home, binDir, captureDir]) await fs.mkdir(dir, { recursive: true });
+  const executableDirectory = path.join(root, "bin");
+  const captureDirectory = path.join(root, "capture");
+  for (const directory of [projectRoot, home, executableDirectory, captureDirectory])
+    await fs.mkdir(directory, { recursive: true });
   for (const executable of ["claude", "codex"]) {
-    await fs.writeFile(path.join(binDir, executable), STUB_AGENT, { mode: 0o755 });
+    await fs.writeFile(path.join(executableDirectory, executable), STUB_AGENT, { mode: 0o755 });
   }
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
   const jfdiHome = path.join(home, ".jfdi");
   const sandbox: Sandbox = {
     root,
-    project,
+    projectRoot,
     home,
     jfdiHome,
-    binDir,
-    captureDir,
-    ticketsDirectory: path.join(project, ".jfdi", "tickets"),
-    boardPath: path.join(project, ".jfdi", "board.md"),
+    executableDirectory,
+    captureDirectory,
+    ticketsDirectory: path.join(projectRoot, ".jfdi", "tickets"),
+    boardPath: path.join(projectRoot, ".jfdi", "board.md"),
   };
   expect((await runCli(sandbox, ["init", "--bare"])).code).toBe(0);
   return sandbox;
@@ -125,14 +126,14 @@ interface CliResult {
 async function runCli(sandbox: Sandbox, args: string[]): Promise<CliResult> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
-    CAPTURE_DIR: sandbox.captureDir,
+    CAPTURE_DIRECTORY: sandbox.captureDirectory,
   };
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: sandbox.project,
+      cwd: sandbox.projectRoot,
       env,
     });
     return { code: 0, stdout, stderr };
@@ -163,7 +164,7 @@ async function writeBoardWithBlocker(sandbox: Sandbox, blockerColumn: string): P
 /** Whether the stub agent recorded a run — present only if the pipeline dispatched. */
 async function agentRan(sandbox: Sandbox): Promise<boolean> {
   try {
-    await fs.access(path.join(sandbox.captureDir, "ran.log"));
+    await fs.access(path.join(sandbox.captureDirectory, "ran.log"));
     return true;
   } catch {
     return false;
@@ -171,7 +172,9 @@ async function agentRan(sandbox: Sandbox): Promise<boolean> {
 }
 
 afterEach(async () => {
-  await Promise.all(sandboxes.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    sandboxes.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe("jfdi run — blocked-by gate (built CLI)", () => {

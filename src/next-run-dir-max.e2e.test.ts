@@ -31,14 +31,14 @@ import { git } from "./git.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 const PIPELINE_TIMEOUT_MS = 120_000;
 
 /**
  * The agent both stubbed CLIs play. It replays the stream-json the harness
- * parses, records each prompt it was handed under STUB_PROMPT_DIR, and writes
+ * parses, records each prompt it was handed under STUB_PROMPT_DIRECTORY, and writes
  * the verdict its prompt names. The implementation stage appends STUB_TAG so a
  * re-dispatch of the same ticket commits genuinely new content (the branch
  * already holds the prior run's commit), letting the second run pass cleanly.
@@ -53,8 +53,8 @@ const prompt = (dashP === -1 ? argv[argv.length - 1] : argv[dashP + 1]) || "";
 process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "stub-thread" }) + "\\n");
 process.on("exit", () => process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "done" } }) + "\\n"));
 process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "stub" }] } }) + "\\n");
-const promptDir = process.env.STUB_PROMPT_DIR;
-if (promptDir) fs.mkdirSync(promptDir, { recursive: true });
+const promptDirectory = process.env.STUB_PROMPT_DIRECTORY;
+if (promptDirectory) fs.mkdirSync(promptDirectory, { recursive: true });
 const match = prompt.match(/(\\/\\S+\\.verdict\\.json)/);
 if (!match) {
   // The scribe: no verdict file, its result text becomes the commit subject.
@@ -63,10 +63,10 @@ if (!match) {
 }
 const verdictPath = match[1];
 const stage = path.basename(verdictPath).replace(".verdict.json", "");
-if (promptDir) {
+if (promptDirectory) {
   let index = 0;
-  while (fs.existsSync(path.join(promptDir, stage + "-" + index + ".txt"))) index += 1;
-  fs.writeFileSync(path.join(promptDir, stage + "-" + index + ".txt"), prompt);
+  while (fs.existsSync(path.join(promptDirectory, stage + "-" + index + ".txt"))) index += 1;
+  fs.writeFileSync(path.join(promptDirectory, stage + "-" + index + ".txt"), prompt);
 }
 let verdict;
 if (stage === "implementation") {
@@ -86,12 +86,12 @@ process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_err
 
 interface Sandbox {
   root: string;
-  project: string;
+  projectRoot: string;
   home: string;
   jfdiHome: string;
-  stateDir: string;
-  binDir: string;
-  promptDir: string;
+  stateDirectory: string;
+  executableDirectory: string;
+  promptDirectory: string;
 }
 
 const sandboxRoots: string[] = [];
@@ -100,32 +100,32 @@ async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-runmax-"));
   const root = await fs.realpath(created);
   sandboxRoots.push(created);
-  const project = path.join(root, "project");
+  const projectRoot = path.join(root, "project");
   const home = path.join(root, "home");
-  const binDir = path.join(root, "bin");
-  await fs.mkdir(project, { recursive: true });
+  const executableDirectory = path.join(root, "bin");
+  await fs.mkdir(projectRoot, { recursive: true });
   await fs.mkdir(home);
-  await fs.mkdir(binDir);
+  await fs.mkdir(executableDirectory);
   for (const executable of ["claude", "codex"]) {
-    await fs.writeFile(path.join(binDir, executable), STUB_AGENT, { mode: 0o755 });
+    await fs.writeFile(path.join(executableDirectory, executable), STUB_AGENT, { mode: 0o755 });
   }
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
   const jfdiHome = path.join(home, ".jfdi");
   return {
     root,
-    project,
+    projectRoot,
     home,
     jfdiHome,
-    binDir,
-    promptDir: path.join(root, "prompts"),
-    stateDir: path.join(jfdiHome, "projects", project.split(path.sep).join("-")),
+    executableDirectory,
+    promptDirectory: path.join(root, "prompts"),
+    stateDirectory: path.join(jfdiHome, "projects", projectRoot.split(path.sep).join("-")),
   };
 }
 
@@ -138,20 +138,23 @@ interface CliResult {
 async function runCli(
   sandbox: Sandbox,
   args: string[],
-  options: { tag?: string; promptSubdir?: string } = {},
+  options: { tag?: string; promptSubdirectory?: string } = {},
 ): Promise<CliResult> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
     STUB_TAG: options.tag ?? "work",
-    STUB_PROMPT_DIR: path.join(sandbox.promptDir, options.promptSubdir ?? "default"),
+    STUB_PROMPT_DIRECTORY: path.join(
+      sandbox.promptDirectory,
+      options.promptSubdirectory ?? "default",
+    ),
     NO_COLOR: "1",
   };
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: sandbox.project,
+      cwd: sandbox.projectRoot,
       env,
       maxBuffer: 64 * 1024 * 1024,
     });
@@ -169,16 +172,16 @@ function ticketIdOf(result: CliResult): string {
 }
 
 function runsBase(sandbox: Sandbox, ticketId: string): string {
-  return path.join(sandbox.stateDir, "runs", ticketId);
+  return path.join(sandbox.stateDirectory, "runs", ticketId);
 }
 
-async function readdirSorted(dir: string): Promise<string[]> {
-  return (await fs.readdir(dir)).sort();
+async function readdirSorted(directory: string): Promise<string[]> {
+  return (await fs.readdir(directory)).sort();
 }
 
 afterEach(async () => {
   await Promise.all(
-    sandboxRoots.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    sandboxRoots.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -195,7 +198,7 @@ describe("run-directory allocation across a deleted middle run", () => {
       // id and gives us a genuine run-1 on disk.
       const run1 = await runCli(sandbox, ["run", "Fix the widget alignment"], {
         tag: "one",
-        promptSubdir: "run1",
+        promptSubdirectory: "run1",
       });
       expect(run1.code).toBe(0);
       const ticketId = ticketIdOf(run1);
@@ -222,7 +225,7 @@ describe("run-directory allocation across a deleted middle run", () => {
       // Run 2: re-dispatch the same ticket with the gap present.
       const run2 = await runCli(sandbox, ["run", "Fix the widget alignment"], {
         tag: "two",
-        promptSubdir: "run2",
+        promptSubdirectory: "run2",
       });
       expect(run2.code).toBe(0);
 
@@ -245,7 +248,7 @@ describe("run-directory allocation across a deleted middle run", () => {
       // `previous` resolved to the highest surviving index (run-3), not the
       // deleted run-2: run-3's feedback reaches the fresh implementation prompt.
       const implementationPrompt = await fs.readFile(
-        path.join(sandbox.promptDir, "run2", "implementation-0.txt"),
+        path.join(sandbox.promptDirectory, "run2", "implementation-0.txt"),
         "utf8",
       );
       expect(implementationPrompt).toContain(PlantedRun3Feedback);

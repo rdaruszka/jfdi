@@ -13,7 +13,7 @@ const WIKILINK_RE = /\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/;
 /** Slug words kept from a bare card's text — enough to stay readable as a directory name. */
 const MAX_SLUG_WORDS = 6;
 /** Hex characters of the content hash appended to a bare card's slug. */
-const SLUG_HASH_CHARS = 6;
+const SLUG_HASH_CHARACTERS = 6;
 
 /** Extract the first [[wikilink]] target from a card line, or null. */
 export function extractWikilink(text: string): string | null {
@@ -30,6 +30,6 @@ export function ticketIdFromCard(cardText: string): string {
   const link = extractWikilink(cardText);
   if (link) return slugify(link);
   const slug = slugify(cardText).split("-").slice(0, MAX_SLUG_WORDS).join("-") || "ticket";
-  const hash = createHash("sha256").update(cardText).digest("hex").slice(0, SLUG_HASH_CHARS);
+  const hash = createHash("sha256").update(cardText).digest("hex").slice(0, SLUG_HASH_CHARACTERS);
   return `${slug}-${hash}`;
 }

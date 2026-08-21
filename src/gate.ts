@@ -20,19 +20,19 @@ export interface GateResult {
 }
 
 /** Transcript characters quoted into prompts; the complete output stays in `logPath`. */
-const MAX_PROMPT_OUTPUT_CHARS = 20_000;
+const MAX_PROMPT_OUTPUT_CHARACTERS = 20_000;
 const TRUNCATION_MARKER = "\n…(middle truncated; full output is in the gate log)…\n";
 const MILLISECONDS_PER_SECOND = 1_000;
 
 function promptExcerpt(output: string): string {
-  if (output.length <= MAX_PROMPT_OUTPUT_CHARS) return output;
-  const contentChars = MAX_PROMPT_OUTPUT_CHARS - TRUNCATION_MARKER.length;
-  const headChars = Math.ceil(contentChars / 2);
-  const tailChars = contentChars - headChars;
-  return `${output.slice(0, headChars)}${TRUNCATION_MARKER}${output.slice(-tailChars)}`;
+  if (output.length <= MAX_PROMPT_OUTPUT_CHARACTERS) return output;
+  const contentCharacters = MAX_PROMPT_OUTPUT_CHARACTERS - TRUNCATION_MARKER.length;
+  const headCharacters = Math.ceil(contentCharacters / 2);
+  const tailCharacters = contentCharacters - headCharacters;
+  return `${output.slice(0, headCharacters)}${TRUNCATION_MARKER}${output.slice(-tailCharacters)}`;
 }
 
-function runCommand(command: string, cwd: string): Promise<{ code: number; output: string }> {
+function runGateCommand(command: string, cwd: string): Promise<{ code: number; output: string }> {
   return new Promise((resolve) => {
     const child = spawn("/bin/sh", ["-c", command], { cwd, stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
@@ -62,7 +62,7 @@ export async function runGate(
   for (const { name, command } of gate) {
     onCommand?.(name);
     const started = Date.now();
-    const { code, output } = await runCommand(command, cwd);
+    const { code, output } = await runGateCommand(command, cwd);
     fullResults.push({ name, command, code, output, durationMs: Date.now() - started });
     if (code !== 0) break;
   }

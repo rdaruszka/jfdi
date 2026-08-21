@@ -10,7 +10,7 @@ import {
   parseTicketNote,
   quoteAgentText,
   type TicketComment,
-  ticketSpec,
+  ticketDescription,
 } from "./ticket-note.js";
 
 /**
@@ -44,15 +44,15 @@ vi.mock("./util/fsx.js", async (importOriginal) => {
   };
 });
 
-let dir: string;
+let directory: string;
 
 beforeEach(async () => {
-  dir = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-note-"));
+  directory = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-note-"));
 });
 
 afterEach(async () => {
   fsxSeam.editBeforeWrite = null;
-  await fs.rm(dir, { recursive: true, force: true });
+  await fs.rm(directory, { recursive: true, force: true });
 });
 
 const FULL_NOTE = [
@@ -171,10 +171,10 @@ describe("parseTicketNote", () => {
   });
 });
 
-describe("ticketSpec", () => {
+describe("ticketDescription", () => {
   it("carries title, description, questions and decision entries — and nothing else", () => {
-    const spec = ticketSpec(parseTicketNote(FULL_NOTE));
-    expect(spec).toBe(
+    const description = ticketDescription(parseTicketNote(FULL_NOTE));
+    expect(description).toBe(
       [
         "# Add a category filter",
         "",
@@ -199,7 +199,7 @@ describe("ticketSpec", () => {
         "> Covered the empty-ledger path too.",
       ].join("\n"),
     );
-    expect(spec).not.toContain("Dispatched onto jfdi/filter.");
+    expect(description).not.toContain("Dispatched onto jfdi/filter.");
   });
 
   it("keeps a decision whose own text contains headings whole", () => {
@@ -229,11 +229,11 @@ describe("ticketSpec", () => {
         body: injected,
       },
     ]);
-    expect(ticketSpec(note)).toContain("SWALLOWED trailing rationale that matters");
+    expect(ticketDescription(note)).toContain("SWALLOWED trailing rationale that matters");
   });
 
   it("leaves legacy Decisions and Report blocks out", () => {
-    const spec = ticketSpec(
+    const description = ticketDescription(
       parseTicketNote(
         [
           "# T",
@@ -251,7 +251,7 @@ describe("ticketSpec", () => {
         ].join("\n"),
       ),
     );
-    expect(spec).toBe("# T\n\nBody.");
+    expect(description).toBe("# T\n\nBody.");
   });
 });
 
@@ -278,7 +278,7 @@ describe("quoteAgentText", () => {
     // The injectivity gap the backslash escape had: an already-escaped line
     // lost its marker on read. Quoting nests instead, so one level on, one
     // level off is exact whatever the body starts with.
-    const notePath = path.join(dir, "n.md");
+    const notePath = path.join(directory, "n.md");
     await fs.writeFile(notePath, "# T\n\nBody.\n");
     const body = ["> ## Comments", ">", "> quoted quote", "and a plain line"].join("\n");
     await appendComment(notePath, {
@@ -293,7 +293,7 @@ describe("quoteAgentText", () => {
   });
 
   it("survives an append and comes back out of the note as it went in", async () => {
-    const notePath = path.join(dir, "n.md");
+    const notePath = path.join(directory, "n.md");
     await fs.writeFile(notePath, "# T\n\nBody.\n");
     const body = "The note now reads:\n\n## Comments\n\nINJECTED and this follows.";
     await appendComment(notePath, {
@@ -334,7 +334,7 @@ describe("quoteAgentText", () => {
 
 describe("appendToSection", () => {
   it("creates the section at end of file when absent", async () => {
-    const notePath = path.join(dir, "n.md");
+    const notePath = path.join(directory, "n.md");
     await fs.writeFile(notePath, "# Title\n\nBody.\n");
     await appendToSection(notePath, "Report", "Merged into `main`.");
     const content = await fs.readFile(notePath, "utf8");
@@ -342,7 +342,7 @@ describe("appendToSection", () => {
   });
 
   it("appends within an existing section, before the next heading", async () => {
-    const notePath = path.join(dir, "n.md");
+    const notePath = path.join(directory, "n.md");
     await fs.writeFile(notePath, "# T\n\n## Questions\n\n- first\n\n## Report\n\ndone\n");
     await appendToSection(notePath, "Questions", "- second");
     const content = await fs.readFile(notePath, "utf8");
@@ -350,7 +350,7 @@ describe("appendToSection", () => {
   });
 
   it("creates the file when missing", async () => {
-    const notePath = path.join(dir, "new.md");
+    const notePath = path.join(directory, "new.md");
     await appendToSection(notePath, "Questions", "**Q:** which db?\n**Recommendation:** none");
     expect(await fs.readFile(notePath, "utf8")).toBe(
       "## Questions\n\n**Q:** which db?\n**Recommendation:** none\n",
@@ -358,11 +358,11 @@ describe("appendToSection", () => {
   });
 
   it("lands on a symlink's target rather than replacing the link", async () => {
-    const vault = path.join(dir, "vault");
+    const vault = path.join(directory, "vault");
     await fs.mkdir(vault);
     const real = path.join(vault, "n.md");
     await fs.writeFile(real, "# T\n\nBody.\n");
-    const link = path.join(dir, "n.md");
+    const link = path.join(directory, "n.md");
     await fs.symlink(real, link);
     await appendToSection(link, "Comments", "### stamp — implementation round 1\n\nhi");
     expect((await fs.lstat(link)).isSymbolicLink()).toBe(true);
@@ -370,7 +370,7 @@ describe("appendToSection", () => {
   });
 
   it("does not lose an append racing another on the same note", async () => {
-    const notePath = path.join(dir, "n.md");
+    const notePath = path.join(directory, "n.md");
     await fs.writeFile(notePath, "# T\n\nBody.\n");
     await Promise.all([
       appendToSection(notePath, "Comments", "first entry"),
@@ -393,7 +393,7 @@ describe("appendComment", () => {
   };
 
   it("creates the Comments section and writes a round-trippable entry", async () => {
-    const notePath = path.join(dir, "n.md");
+    const notePath = path.join(directory, "n.md");
     await fs.writeFile(notePath, "# T\n\nBody.\n");
     await appendComment(notePath, decision);
     const content = await fs.readFile(notePath, "utf8");
@@ -415,7 +415,7 @@ describe("appendComment", () => {
   });
 
   it("appends later entries in order under the existing section", async () => {
-    const notePath = path.join(dir, "n.md");
+    const notePath = path.join(directory, "n.md");
     await fs.writeFile(notePath, "# T\n\nBody.\n");
     const transition: TicketComment = {
       kind: "transition",
@@ -437,11 +437,11 @@ describe("appendComment", () => {
     // interleaving is forced, not raced: the seam below fires the human's
     // synchronous write from inside the modify callback `appendToSection`
     // passes to `readModifyWrite` — exactly where a save would land.
-    const vault = path.join(dir, "vault");
+    const vault = path.join(directory, "vault");
     await fs.mkdir(vault);
     const real = path.join(vault, "n.md");
     await fs.writeFile(real, "# T\n\nBody the pipeline read first.\n");
-    const link = path.join(dir, "n.md");
+    const link = path.join(directory, "n.md");
     await fs.symlink(real, link);
 
     const transition: TicketComment = {
@@ -474,7 +474,7 @@ describe("appendComment", () => {
   });
 
   it("leaves frontmatter and unrecognized sections byte-for-byte intact", async () => {
-    const notePath = path.join(dir, "n.md");
+    const notePath = path.join(directory, "n.md");
     const before = [
       "---",
       "mode: ask",

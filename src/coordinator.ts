@@ -18,10 +18,10 @@ import {
 } from "./board.js";
 import { boardPath, moveCardSafe } from "./cards.js";
 import { type IntegrationRecord, integrationRecords } from "./events.js";
-import { branchExists, isAncestor, revParse, ticketBranch } from "./git.js";
+import { branchExists, isAncestor, parseRevision, ticketBranch } from "./git.js";
 import { IntegrationQueue, integrateTicket } from "./integrate.js";
 import type { PipelineContext, RunReport } from "./pipeline.js";
-import { runPipeline, worktreesDir } from "./pipeline.js";
+import { runPipeline, worktreesDirectory } from "./pipeline.js";
 import {
   isCorruptReport,
   loadReport,
@@ -106,7 +106,7 @@ export class Coordinator {
 
   /** Set up board + watchers and run the initial scan. Resolves once watching. */
   async start(): Promise<void> {
-    await ensureJfdiGitignore(this.context.jfdiDir);
+    await ensureJfdiGitignore(this.context.jfdiDirectory);
     const columns = this.context.config.board.columns;
     if (!(await fileExists(this.boardPath)))
       throw new Error(
@@ -244,10 +244,10 @@ export class Coordinator {
     for (const card of cards) {
       const id = ticketIdFromCard(card.text);
       if (this.active.has(id)) continue;
-      const report = await loadReport(this.context.stateDir, id);
+      const report = await loadReport(this.context.stateDirectory, id);
       if (report && isCorruptReport(report)) {
         const ticketsDirectory = path.join(
-          this.context.repoRoot,
+          this.context.projectRoot,
           this.context.config.ticketsDirectory,
         );
         const ticket = await resolveTicket(card.text, ticketsDirectory);
@@ -286,7 +286,7 @@ export class Coordinator {
     // Read the event stream at most once per scan, and only once a card needs it.
     let records: Map<string, IntegrationRecord> | null = null;
     for (const { card, id, report } of readyReports) {
-      if (records === null) records = await integrationRecords(this.context.stateDir);
+      if (records === null) records = await integrationRecords(this.context.stateDirectory);
       const record = records.get(id);
       // Mid-integration in another process (`jfdi merge` in a second
       // terminal): between its landing commit and its own card move, git
@@ -295,7 +295,7 @@ export class Coordinator {
       if (record?.phase === "in-flight") continue;
       const branch = ticketBranch(id);
       let hasMerged: boolean;
-      if (await branchExists(this.context.repoRoot, branch)) {
+      if (await branchExists(this.context.projectRoot, branch)) {
         // A live branch answers for itself: a recorded merge may be an earlier
         // run's, and a re-dispatched ticket's fresh branch must not close on it.
         hasMerged = await this.isInTarget(branch);
@@ -322,7 +322,7 @@ export class Coordinator {
 
   private isInTarget(commitish: string): Promise<boolean> {
     return isAncestor(
-      this.context.repoRoot,
+      this.context.projectRoot,
       commitish,
       this.context.config.integration.targetBranch,
     );
@@ -396,7 +396,10 @@ export class Coordinator {
    */
   private async dispatchableBeginCards(board: Board): Promise<Card[]> {
     const columns = this.context.config.board.columns;
-    const ticketsDirectory = path.join(this.context.repoRoot, this.context.config.ticketsDirectory);
+    const ticketsDirectory = path.join(
+      this.context.projectRoot,
+      this.context.config.ticketsDirectory,
+    );
     // One shared policy for the whole gate: `unresolvedBlockers` deduplicates
     // links and computes the missing set, so dispatch, the event payload, and
     // the cycle nodes all read the same answer as `jfdi run`.
@@ -538,11 +541,11 @@ export class Coordinator {
     const columns = this.context.config.board.columns;
     try {
       const ticketsDirectory = path.join(
-        this.context.repoRoot,
+        this.context.projectRoot,
         this.context.config.ticketsDirectory,
       );
       const ticket = await resolveTicket(card.text, ticketsDirectory);
-      const savedReport = await loadReport(this.context.stateDir, id);
+      const savedReport = await loadReport(this.context.stateDirectory, id);
       if (savedReport && isCorruptReport(savedReport)) {
         const notePath = await ensureTicketNote(ticket, ticketsDirectory);
         await recordCorruptReport(this.context, id, notePath, savedReport);
@@ -561,8 +564,8 @@ export class Coordinator {
       const branch = ticketBranch(id);
       if (
         savedReport &&
-        (await branchExists(this.context.repoRoot, branch)) &&
-        (await revParse(this.context.repoRoot, branch)) === savedReport.commit
+        (await branchExists(this.context.projectRoot, branch)) &&
+        (await parseRevision(this.context.projectRoot, branch)) === savedReport.commit
       ) {
         await this.integrate(card, ticket);
         return;
@@ -582,7 +585,7 @@ export class Coordinator {
         return;
       }
 
-      await saveReport(this.context.stateDir, id, outcome.report);
+      await saveReport(this.context.stateDirectory, id, outcome.report);
       if (this.context.config.integration.mode === "on-approval") {
         await recordMergeReady(this.context, id, outcome.report);
         await moveCardSafe(this.context, card, columns.inProgress, columns.readyToMerge, false);
@@ -605,7 +608,7 @@ export class Coordinator {
     this.context.log.emit("merge_queued", ticket.id);
     const outcome = await this.integrations.enqueue(() =>
       integrateTicket(this.context, ticket, {
-        path: path.join(worktreesDir(this.context.jfdiDir), ticket.id),
+        path: path.join(worktreesDirectory(this.context.jfdiDirectory), ticket.id),
         branch: ticketBranch(ticket.id),
       }),
     );

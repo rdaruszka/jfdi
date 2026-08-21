@@ -25,8 +25,8 @@ import { spawnTtyCli } from "./test-helpers.js";
 
 const execFileAsync = promisify(execFile);
 
-const repoRoot = path.dirname(import.meta.dirname);
-const cliPath = path.join(repoRoot, "dist", "index.js");
+const projectRoot = path.dirname(import.meta.dirname);
+const cliPath = path.join(projectRoot, "dist", "index.js");
 
 const PIPELINE_TIMEOUT_MS = 120_000;
 /** How long a spawned coordinator gets to reach the state a test waits for. */
@@ -70,7 +70,7 @@ const resultText = prompt.includes("Write the commit message") && scribedSummary
   : "done";
 process.on("exit", () => process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: resultText } }) + "\\n"));
 const match = prompt.match(/(\\/\\S+\\.verdict\\.json)/);
-const promptDir = process.env.STUB_PROMPT_DIR;
+const promptDirectory = process.env.STUB_PROMPT_DIRECTORY;
 const RESET_SECONDS_AHEAD = 3600;
 // Provider-down modes: the session dies the way a real one does — a result
 // line the harness classifies, no verdict file, nonzero exit.
@@ -79,8 +79,8 @@ function die(result) {
   process.exit(1);
 }
 // Every spawn announces itself, so a test can prove the tool stopped spawning.
-fs.mkdirSync(promptDir, { recursive: true });
-fs.appendFileSync(path.join(promptDir, "spawns.log"), "spawn\\n");
+fs.mkdirSync(promptDirectory, { recursive: true });
+fs.appendFileSync(path.join(promptDirectory, "spawns.log"), "spawn\\n");
 if (process.env.STUB_MODE === "usage-limit") {
   die("Claude AI usage limit reached|" + (Math.floor(Date.now() / 1000) + RESET_SECONDS_AHEAD));
 }
@@ -88,7 +88,7 @@ if (process.env.STUB_MODE === "needs-human") {
   die("API Error: Invalid API key · Please run /login");
 }
 if (process.env.STUB_MODE === "outage-once") {
-  const marker = path.join(promptDir, "outage-used");
+  const marker = path.join(promptDirectory, "outage-used");
   if (!fs.existsSync(marker)) {
     fs.writeFileSync(marker, "1");
     die("API Error: Connection error.");
@@ -99,13 +99,13 @@ if (match) {
   const verdictPath = match[1];
   const stage = path.basename(verdictPath).replace(".verdict.json", "");
   let index = 0;
-  while (fs.existsSync(path.join(promptDir, stage + "-" + index + ".txt"))) index += 1;
-  fs.writeFileSync(path.join(promptDir, stage + "-" + index + ".txt"), prompt);
+  while (fs.existsSync(path.join(promptDirectory, stage + "-" + index + ".txt"))) index += 1;
+  fs.writeFileSync(path.join(promptDirectory, stage + "-" + index + ".txt"), prompt);
   let verdict;
   if (stage === "implementation") {
     if (index === 0) {
       const status = execFileSync("git", ["status", "--porcelain"], { cwd: process.cwd() }).toString();
-      fs.writeFileSync(path.join(promptDir, "tree-at-first-session.txt"), status);
+      fs.writeFileSync(path.join(promptDirectory, "tree-at-first-session.txt"), status);
     }
     // Unique content per attempt, so every round has something real to commit.
     fs.appendFileSync(path.join(process.cwd(), "feature.txt"), process.env.STUB_TAG + "-" + index + "\\n");
@@ -129,13 +129,13 @@ process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_err
 
 interface Sandbox {
   root: string;
-  project: string;
+  projectRoot: string;
   home: string;
   jfdiHome: string;
-  stateDir: string;
-  binDir: string;
+  stateDirectory: string;
+  executableDirectory: string;
   /** Where the stub drops one file per prompt it was handed. */
-  promptDir: string;
+  promptDirectory: string;
 }
 
 const sandboxRoots: string[] = [];
@@ -145,34 +145,34 @@ async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-resume-"));
   const root = await fs.realpath(created);
   sandboxRoots.push(created);
-  const project = path.join(root, "project");
+  const projectRoot = path.join(root, "project");
   const home = path.join(root, "home");
-  const binDir = path.join(root, "bin");
-  await fs.mkdir(project, { recursive: true });
+  const executableDirectory = path.join(root, "bin");
+  await fs.mkdir(projectRoot, { recursive: true });
   await fs.mkdir(home);
-  await fs.mkdir(binDir);
+  await fs.mkdir(executableDirectory);
   // Both CLIs the scaffolded config selects, played by the same script:
   // the default mix reviews on Codex and implements on Claude.
   for (const executable of ["claude", "codex"]) {
-    await fs.writeFile(path.join(binDir, executable), STUB_AGENT, { mode: 0o755 });
+    await fs.writeFile(path.join(executableDirectory, executable), STUB_AGENT, { mode: 0o755 });
   }
 
-  await git(project, "init", "-b", "main");
-  await git(project, "config", "user.email", "test@jfdi.local");
-  await git(project, "config", "user.name", "JFDI Test");
-  await fs.writeFile(path.join(project, "README.md"), "product\n");
-  await git(project, "add", "-A");
-  await git(project, "commit", "-m", "initial");
+  await git(projectRoot, "init", "-b", "main");
+  await git(projectRoot, "config", "user.email", "test@jfdi.local");
+  await git(projectRoot, "config", "user.name", "JFDI Test");
+  await fs.writeFile(path.join(projectRoot, "README.md"), "product\n");
+  await git(projectRoot, "add", "-A");
+  await git(projectRoot, "commit", "-m", "initial");
 
   const jfdiHome = path.join(home, ".jfdi");
   return {
     root,
-    project,
+    projectRoot,
     home,
     jfdiHome,
-    binDir,
-    promptDir: path.join(root, "prompts"),
-    stateDir: path.join(jfdiHome, "projects", project.split(path.sep).join("-")),
+    executableDirectory,
+    promptDirectory: path.join(root, "prompts"),
+    stateDirectory: path.join(jfdiHome, "projects", projectRoot.split(path.sep).join("-")),
   };
 }
 
@@ -181,19 +181,22 @@ interface StubOptions {
   stubMode?: string;
   /** Distinguishes one dispatch's commits from another's in the branch log. */
   tag?: string;
-  /** Subdirectory of promptDir this invocation records into. */
-  promptSubdir?: string;
+  /** Subdirectory of promptDirectory this invocation records into. */
+  promptSubdirectory?: string;
 }
 
 function stubEnv(sandbox: Sandbox, options: StubOptions): NodeJS.ProcessEnv {
   return {
     ...process.env,
-    PATH: `${sandbox.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${sandbox.executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
     STUB_MODE: options.stubMode ?? "pass",
     STUB_TAG: options.tag ?? "work",
-    STUB_PROMPT_DIR: path.join(sandbox.promptDir, options.promptSubdir ?? "default"),
+    STUB_PROMPT_DIRECTORY: path.join(
+      sandbox.promptDirectory,
+      options.promptSubdirectory ?? "default",
+    ),
     NO_COLOR: "1",
   };
 }
@@ -211,7 +214,7 @@ async function runCli(
 ): Promise<CliResult> {
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], {
-      cwd: sandbox.project,
+      cwd: sandbox.projectRoot,
       env: stubEnv(sandbox, options),
       maxBuffer: 64 * 1024 * 1024,
     });
@@ -228,8 +231,8 @@ function ticketIdOf(result: CliResult): string {
   return match[1];
 }
 
-function readPrompt(sandbox: Sandbox, subdir: string, name: string): Promise<string> {
-  return fs.readFile(path.join(sandbox.promptDir, subdir, name), "utf8");
+function readPrompt(sandbox: Sandbox, subdirectory: string, name: string): Promise<string> {
+  return fs.readFile(path.join(sandbox.promptDirectory, subdirectory, name), "utf8");
 }
 
 interface RecordedEvent {
@@ -242,7 +245,7 @@ async function readEvents(sandbox: Sandbox): Promise<RecordedEvent[]> {
   // Polled while a coordinator is still starting up, so "not written yet" is
   // an ordinary answer: no events.
   const raw = await fs
-    .readFile(path.join(sandbox.stateDir, "events.jsonl"), "utf8")
+    .readFile(path.join(sandbox.stateDirectory, "events.jsonl"), "utf8")
     .catch(() => "");
   return raw
     .split("\n")
@@ -251,11 +254,11 @@ async function readEvents(sandbox: Sandbox): Promise<RecordedEvent[]> {
 }
 
 function boardPath(sandbox: Sandbox): string {
-  return path.join(sandbox.project, ".jfdi", "board.md");
+  return path.join(sandbox.projectRoot, ".jfdi", "board.md");
 }
 
 function worktreePath(sandbox: Sandbox, ticketId: string): string {
-  return path.join(sandbox.project, ".jfdi", "worktrees", ticketId);
+  return path.join(sandbox.projectRoot, ".jfdi", "worktrees", ticketId);
 }
 
 /** The card lines under one board column heading, in order. */
@@ -305,7 +308,7 @@ function spawnCli(
   options: StubOptions = {},
   shouldUseTTY = false,
 ): LiveCli {
-  const spawnOptions = { cwd: sandbox.project, env: stubEnv(sandbox, options) };
+  const spawnOptions = { cwd: sandbox.projectRoot, env: stubEnv(sandbox, options) };
   const child = shouldUseTTY
     ? spawnTtyCli(cliPath, args, spawnOptions)
     : spawn(process.execPath, [cliPath, ...args], spawnOptions);
@@ -361,7 +364,7 @@ async function runCoordinatorUntil(
 
 afterEach(async () => {
   await Promise.all(
-    sandboxRoots.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    sandboxRoots.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -377,7 +380,7 @@ describe("resuming an interrupted run", () => {
       const first = await runCli(sandbox, ["run", "Fix the parser"], {
         stubMode: "review-fail",
         tag: "first",
-        promptSubdir: "run1",
+        promptSubdirectory: "run1",
       });
       expect(first.code).toBe(2);
       const ticketId = ticketIdOf(first);
@@ -392,7 +395,7 @@ describe("resuming an interrupted run", () => {
       const second = await runCli(sandbox, ["run", "Fix the parser"], {
         stubMode: "review-fail-round-1",
         tag: "second",
-        promptSubdir: "run2",
+        promptSubdirectory: "run2",
       });
       expect(second.code).toBe(0);
 
@@ -437,7 +440,7 @@ describe("resuming an interrupted run", () => {
       await initProject(sandbox);
       const first = await runCli(sandbox, ["run", "Add a greeting"], {
         tag: "first",
-        promptSubdir: "run1",
+        promptSubdirectory: "run1",
       });
       expect(first.code).toBe(0);
       const ticketId = ticketIdOf(first);
@@ -447,15 +450,15 @@ describe("resuming an interrupted run", () => {
       // edits that never got committed.
       await fs.writeFile(path.join(worktree, "README.md"), "branch version\n");
       await git(worktree, "commit", "-am", "branch edit");
-      await fs.writeFile(path.join(sandbox.project, "README.md"), "main version\n");
-      await git(sandbox.project, "commit", "-am", "main edit");
+      await fs.writeFile(path.join(sandbox.projectRoot, "README.md"), "main version\n");
+      await git(sandbox.projectRoot, "commit", "-am", "main edit");
       expect((await mergeTargetIntoBranch(worktree, "main")).hasConflict).toBe(true);
       expect(await isMergeInProgress(worktree)).toBe(true);
       await fs.writeFile(path.join(worktree, "salvaged.txt"), "half-written\n");
 
       const second = await runCli(sandbox, ["run", "Add a greeting"], {
         tag: "second",
-        promptSubdir: "run2",
+        promptSubdirectory: "run2",
       });
       expect(second.code).toBe(0);
 
@@ -498,15 +501,17 @@ describe("resuming an interrupted run", () => {
       await initProject(sandbox);
       const first = await runCli(sandbox, ["run", "Add a farewell"], {
         tag: "first",
-        promptSubdir: "run1",
+        promptSubdirectory: "run1",
       });
       expect(first.code).toBe(0);
       const ticketId = ticketIdOf(first);
-      expect((await runCli(sandbox, ["merge", ticketId], { promptSubdir: "merge" })).code).toBe(0);
+      expect(
+        (await runCli(sandbox, ["merge", ticketId], { promptSubdirectory: "merge" })).code,
+      ).toBe(0);
 
       const second = await runCli(sandbox, ["run", "Add a farewell"], {
         tag: "second",
-        promptSubdir: "run2",
+        promptSubdirectory: "run2",
       });
       expect(second.code).toBe(0);
 
@@ -537,7 +542,7 @@ describe("coordinator startup", () => {
       // Picked back up where it stood — not flagged for the human to drag back.
       expect(await cardsInColumn(sandbox, "Ready to Merge")).toEqual(["- [ ] Half-finished thing"]);
       expect(await cardsInColumn(sandbox, "Blocked")).toEqual([]);
-      expect(await fs.readdir(path.join(sandbox.promptDir, "default"))).toContain(
+      expect(await fs.readdir(path.join(sandbox.promptDirectory, "default"))).toContain(
         "implementation-0.txt",
       );
     },
@@ -556,7 +561,7 @@ describe("coordinator startup", () => {
       await runCoordinatorUntil(
         sandbox,
         async () => (await cardsInColumn(sandbox, "Blocked")).length > 0,
-        { stubMode: "review-fail", tag: "first", promptSubdir: "run1" },
+        { stubMode: "review-fail", tag: "first", promptSubdirectory: "run1" },
       );
 
       // The human reads the note and readies the card again.
@@ -571,7 +576,7 @@ describe("coordinator startup", () => {
       const output = await runCoordinatorUntil(
         sandbox,
         async () => (await cardsInColumn(sandbox, "Ready to Merge")).length > 0,
-        { tag: "second", promptSubdir: "run2" },
+        { tag: "second", promptSubdirectory: "run2" },
       );
 
       expect(output).toContain("resumed");
@@ -606,7 +611,7 @@ describe("a provider that is down", () => {
       // pause outlives this coordinator.
       await runCoordinatorUntil(sandbox, () => hasPaused(sandbox), {
         stubMode: "usage-limit",
-        promptSubdir: "down",
+        promptSubdirectory: "down",
       });
 
       const paused = (await readEvents(sandbox)).filter((event) => event.type === "harness_paused");
@@ -624,7 +629,7 @@ describe("a provider that is down", () => {
         async () =>
           (await readEvents(sandbox)).filter((event) => event.type === "harness_paused").length >
           pausesBefore,
-        { stubMode: "usage-limit", promptSubdir: "down-again" },
+        { stubMode: "usage-limit", promptSubdirectory: "down-again" },
       );
       expect(await cardsInColumn(sandbox, "In Progress")).toEqual(["- [ ] Fix the parser"]);
       expect(await cardsInColumn(sandbox, "Blocked")).toEqual([]);
@@ -634,7 +639,7 @@ describe("a provider that is down", () => {
       await runCoordinatorUntil(
         sandbox,
         async () => (await cardsInColumn(sandbox, "Ready to Merge")).length > 0,
-        { tag: "healthy", promptSubdir: "healthy" },
+        { tag: "healthy", promptSubdirectory: "healthy" },
       );
       expect(await cardsInColumn(sandbox, "Ready to Merge")).toEqual(["- [ ] Fix the parser"]);
       expect(await cardsInColumn(sandbox, "Blocked")).toEqual([]);
@@ -645,9 +650,9 @@ describe("a provider that is down", () => {
   );
 
   /** How many sessions the stub was asked for, across every run in a sandbox. */
-  async function spawnCount(sandbox: Sandbox, subdir: string): Promise<number> {
+  async function spawnCount(sandbox: Sandbox, subdirectory: string): Promise<number> {
     const log = await fs
-      .readFile(path.join(sandbox.promptDir, subdir, "spawns.log"), "utf8")
+      .readFile(path.join(sandbox.promptDirectory, subdirectory, "spawns.log"), "utf8")
       .catch(() => "");
     return log.split("\n").filter(Boolean).length;
   }
@@ -661,7 +666,7 @@ describe("a provider that is down", () => {
 
       await runCoordinatorUntil(sandbox, () => hasPaused(sandbox), {
         stubMode: "needs-human",
-        promptSubdir: "login",
+        promptSubdirectory: "login",
       });
 
       // No reset time to offer and no retry worth making: the banner names the
@@ -680,7 +685,7 @@ describe("a provider that is down", () => {
       await runCoordinatorUntil(
         sandbox,
         async () => (await cardsInColumn(sandbox, "Ready to Merge")).length > 0,
-        { tag: "repaired", promptSubdir: "repaired" },
+        { tag: "repaired", promptSubdirectory: "repaired" },
       );
       expect(await cardsInColumn(sandbox, "Ready to Merge")).toEqual(["- [ ] Fix the parser"]);
       expect((await readEvents(sandbox)).filter((event) => event.type === "blocked")).toEqual([]);
@@ -699,7 +704,7 @@ describe("a provider that is down", () => {
       await initProject(sandbox);
       const run = spawnCli(sandbox, ["run", "Fix the parser"], {
         stubMode: "needs-human",
-        promptSubdir: "held-run",
+        promptSubdirectory: "held-run",
       });
       try {
         await waitUntil(
@@ -735,7 +740,7 @@ describe("a provider that is down", () => {
     "lets the process exit again once the pause it was holding has resumed",
     async () => {
       const script = `
-        const { PauseController } = await import(${JSON.stringify(path.join(repoRoot, "dist", "pause.js"))});
+        const { PauseController } = await import(${JSON.stringify(path.join(projectRoot, "dist", "pause.js"))});
         const pause = new PauseController({ emit: () => undefined }, {
           outageStageRetryMs: [],
           probeMs: [${RESUME_SOON_MS}],
@@ -768,7 +773,7 @@ describe("a provider that is down", () => {
 
       const result = await runCli(sandbox, ["run", "Fix the parser"], {
         stubMode: "outage-once",
-        promptSubdir: "run1",
+        promptSubdirectory: "run1",
       });
       expect(`${result.code} ${result.stderr}`).toBe("0 ");
 

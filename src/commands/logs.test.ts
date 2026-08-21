@@ -2,11 +2,11 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runsDir } from "../pipeline.js";
+import { runsDirectory } from "../pipeline.js";
 import { buildContext } from "./context.js";
 import { logsCommand } from "./logs.js";
 
-vi.mock("../pipeline.js", () => ({ runsDir: vi.fn() }));
+vi.mock("../pipeline.js", () => ({ runsDirectory: vi.fn() }));
 vi.mock("./context.js", () => ({ buildContext: vi.fn() }));
 
 const sandboxRoots: string[] = [];
@@ -32,9 +32,9 @@ describe("logsCommand", () => {
     await fs.writeFile(path.join(round, "implementation.verdict.json"), "ignored");
 
     vi.mocked(buildContext).mockResolvedValue({
-      stateDir: sandboxRoot,
+      stateDirectory: sandboxRoot,
     } as Awaited<ReturnType<typeof buildContext>>);
-    vi.mocked(runsDir).mockReturnValue(runBase);
+    vi.mocked(runsDirectory).mockReturnValue(runBase);
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     await expect(logsCommand("ticket")).resolves.toBe(0);

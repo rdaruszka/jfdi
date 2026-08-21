@@ -2,7 +2,7 @@ import * as path from "node:path";
 import { findTicketCard, moveCardSafe } from "../cards.js";
 import { branchExists, ticketBranch } from "../git.js";
 import { integrateTicket } from "../integrate.js";
-import { type PipelineContext, worktreesDir } from "../pipeline.js";
+import { type PipelineContext, worktreesDirectory } from "../pipeline.js";
 import { isCorruptReport, loadReport, recordCorruptReport } from "../report.js";
 import { ensureTicketNote, resolveTicket } from "../tickets.js";
 import { fileExists } from "../util/fsx.js";
@@ -10,7 +10,7 @@ import { attachInlinePrinter, buildContext } from "./context.js";
 
 export interface MergeOptions {
   cwd?: string;
-  stateDir?: string;
+  stateDirectory?: string;
 }
 
 /**
@@ -37,22 +37,22 @@ async function moveTicketCard(
  * for a running coordinator's sweep to notice later.
  */
 export async function mergeCommand(ticketId: string, options: MergeOptions = {}): Promise<number> {
-  const context = await buildContext(options.cwd, options.stateDir);
+  const context = await buildContext(options.cwd, options.stateDirectory);
   const detach = attachInlinePrinter(context.log);
   try {
-    const ticketsDirectory = path.join(context.repoRoot, context.config.ticketsDirectory);
+    const ticketsDirectory = path.join(context.projectRoot, context.config.ticketsDirectory);
     const notePath = path.join(ticketsDirectory, `${ticketId}.md`);
     const ticket = (await fileExists(notePath))
       ? await resolveTicket(`[[${ticketId}]]`, ticketsDirectory)
       : {
           id: ticketId,
           cardText: ticketId,
-          spec: ticketId,
+          description: ticketId,
           notePath: null,
           links: [],
           mode: "default" as const,
         };
-    const savedReport = await loadReport(context.stateDir, ticketId);
+    const savedReport = await loadReport(context.stateDirectory, ticketId);
     if (savedReport && isCorruptReport(savedReport)) {
       const ensuredNotePath = await ensureTicketNote(ticket, ticketsDirectory);
       const reason = await recordCorruptReport(context, ticketId, ensuredNotePath, savedReport);
@@ -62,12 +62,12 @@ export async function mergeCommand(ticketId: string, options: MergeOptions = {})
     }
 
     const branch = ticketBranch(ticketId);
-    if (!(await branchExists(context.repoRoot, branch))) {
+    if (!(await branchExists(context.projectRoot, branch))) {
       console.error(`no branch ${branch} — nothing to merge for ticket "${ticketId}"`);
       return 1;
     }
 
-    const worktreePath = path.join(worktreesDir(context.jfdiDir), ticketId);
+    const worktreePath = path.join(worktreesDirectory(context.jfdiDirectory), ticketId);
     const outcome = await integrateTicket(context, ticket, { path: worktreePath, branch });
     const columns = context.config.board.columns;
     if (outcome.status === "blocked") {

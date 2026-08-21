@@ -3,7 +3,7 @@ import * as path from "node:path";
 import type { JfdiConfig } from "./config.js";
 import type { EventLog, StageName } from "./events.js";
 import { formatGateFailure, formatGatePass, type GateResult, runGate } from "./gate.js";
-import { createWorktree, git, hasStagedChanges, revParse, type Worktree } from "./git.js";
+import { createWorktree, git, hasStagedChanges, parseRevision, type Worktree } from "./git.js";
 import type {
   HarnessEvent,
   HarnessResult,
@@ -50,7 +50,7 @@ import {
 } from "./transitions.js";
 import { resolveUsageModel, type UsageRegistry, type UsageRow } from "./usage.js";
 import { todayIsoDate } from "./util/dates.js";
-import { ensureDir, fileExists, readIfExists } from "./util/fsx.js";
+import { ensureDirectory, fileExists, readIfExists } from "./util/fsx.js";
 import {
   agentVerdictPath,
   collectVerdict,
@@ -63,11 +63,11 @@ import {
 type MeasuredHarnessResult = HarnessResult & { usage: SessionUsage };
 
 export interface PipelineContext {
-  repoRoot: string;
+  projectRoot: string;
   /** Absolute path to .jfdi/ — versioned setup (config, prompts, sandbox) + worktrees. */
-  jfdiDir: string;
+  jfdiDirectory: string;
   /** Absolute path to ~/.jfdi/projects/<project-key>/ — runs, events, state snapshot. */
-  stateDir: string;
+  stateDirectory: string;
   config: JfdiConfig;
   /** One harness per `stages` entry, as the config selected them. */
   harnesses: SessionHarnesses;
@@ -117,15 +117,15 @@ export type PipelineOutcome =
   | { status: "blocked"; reason: string; observations: string[] }
   | { status: "failed"; reason: string; observations: string[] };
 
-export function worktreesDir(jfdiDir: string): string {
-  return path.join(jfdiDir, "worktrees");
+export function worktreesDirectory(jfdiDirectory: string): string {
+  return path.join(jfdiDirectory, "worktrees");
 }
 
-export function runsDir(stateDir: string, ticketId: string): string {
-  return path.join(stateDir, "runs", ticketId);
+export function runsDirectory(stateDirectory: string, ticketId: string): string {
+  return path.join(stateDirectory, "runs", ticketId);
 }
 
-interface RunDirs {
+interface RunDirectories {
   /** This dispatch's run-<k> directory. */
   current: string;
   /** The previous dispatch's directory, or null if this is the ticket's first run. */
@@ -134,9 +134,9 @@ interface RunDirs {
 }
 
 /** Next run-<k> directory under runs/<ticket>/ (history is kept across dispatches). */
-async function nextRunDir(stateDir: string, ticketId: string): Promise<RunDirs> {
-  const base = runsDir(stateDir, ticketId);
-  await ensureDir(base);
+async function nextRunDirectory(stateDirectory: string, ticketId: string): Promise<RunDirectories> {
+  const base = runsDirectory(stateDirectory, ticketId);
+  await ensureDirectory(base);
   const entries = await fs.readdir(base);
   const runNumbers = entries.flatMap((entry) => {
     const match = /^run-(\d+)$/.exec(entry);
@@ -361,12 +361,12 @@ async function runStageSession(
   worktree: Worktree,
   stage: StageName,
   prompt: string,
-  roundDir: string,
+  roundDirectory: string,
   preSessionHead: string,
   continueSessionId?: string,
 ): Promise<StageOutcome> {
-  const verdictPath = path.join(roundDir, `${stage}.verdict.json`);
-  const logPath = path.join(roundDir, `${stage}.log.jsonl`);
+  const verdictPath = path.join(roundDirectory, `${stage}.verdict.json`);
+  const logPath = path.join(roundDirectory, `${stage}.log.jsonl`);
   context.log.emit("stage_start", ticket.id, {
     stage,
     ...sessionSelectionFields(context.config, stage),
@@ -393,7 +393,7 @@ async function runStageSession(
   };
 }
 
-interface ContinuationSpec {
+interface ContinuationSpecification {
   sessionId: string;
   prompt: string;
 }
@@ -409,13 +409,13 @@ async function runStageWithFallback(
   ticket: Ticket,
   worktree: Worktree,
   stage: StageName,
-  roundDir: string,
+  roundDirectory: string,
   freshPrompt: () => Promise<string>,
-  continuation: ContinuationSpec | null,
+  continuation: ContinuationSpecification | null,
 ): Promise<StageOutcome> {
   // One reset target for the whole stage: a fallback session inherits whatever
   // the continuation left, and both are folded into the same handoff commit.
-  const preSessionHead = await revParse(worktree.path, "HEAD");
+  const preSessionHead = await parseRevision(worktree.path, "HEAD");
   if (continuation) {
     const outcome = await runStageSession(
       context,
@@ -423,7 +423,7 @@ async function runStageWithFallback(
       worktree,
       stage,
       continuation.prompt,
-      roundDir,
+      roundDirectory,
       preSessionHead,
       continuation.sessionId,
     );
@@ -438,7 +438,7 @@ async function runStageWithFallback(
     worktree,
     stage,
     await freshPrompt(),
-    roundDir,
+    roundDirectory,
     preSessionHead,
   );
 }
@@ -461,12 +461,12 @@ async function runVerdictCorrectionAttempt(
   ticket: Ticket,
   worktree: Worktree,
   stage: StageName,
-  attemptDir: string,
+  attemptDirectory: string,
   prompt: string,
   preSessionHead: string,
   sessionId: string | undefined,
 ): Promise<StageOutcome> {
-  await ensureDir(attemptDir);
+  await ensureDirectory(attemptDirectory);
   if (sessionId) {
     const outcome = await runStageSession(
       context,
@@ -474,7 +474,7 @@ async function runVerdictCorrectionAttempt(
       worktree,
       stage,
       prompt,
-      attemptDir,
+      attemptDirectory,
       preSessionHead,
       sessionId,
     );
@@ -483,7 +483,15 @@ async function runVerdictCorrectionAttempt(
       text: `${stage}: verdict correction continuation failed; restarting fresh`,
     });
   }
-  return runStageSession(context, ticket, worktree, stage, prompt, attemptDir, preSessionHead);
+  return runStageSession(
+    context,
+    ticket,
+    worktree,
+    stage,
+    prompt,
+    attemptDirectory,
+    preSessionHead,
+  );
 }
 
 function verdictCorrectionPrompt(error: string, verdictPath: string): string {
@@ -505,7 +513,7 @@ async function readStageVerdictWithCorrections<Verdict>(
   ticket: Ticket,
   worktree: Worktree,
   stage: StageName,
-  roundDir: string,
+  roundDirectory: string,
   initialOutcome: StageOutcome,
   readVerdict: StageVerdictReader<Verdict>,
 ): Promise<StageVerdictResult<Verdict>> {
@@ -529,7 +537,7 @@ async function readStageVerdictWithCorrections<Verdict>(
       ticket,
       worktree,
       stage,
-      path.join(roundDir, `verdict-fix-${correctionAttempt}`),
+      path.join(roundDirectory, `verdict-fix-${correctionAttempt}`),
       verdictCorrectionPrompt(error, reportedPath),
       initialOutcome.preSessionHead,
       sessionId,
@@ -570,11 +578,11 @@ async function stagePrompt(
   name: PromptName,
   variables: Record<string, string>,
 ): Promise<string> {
-  const template = await loadPrompt(context.jfdiDir, name);
+  const template = await loadPrompt(context.jfdiDirectory, name);
   return renderPrompt(template, variables);
 }
 
-function commonVars(
+function commonVariables(
   context: PipelineContext,
   ticket: Ticket,
   worktree: Worktree,
@@ -582,7 +590,7 @@ function commonVars(
 ): Record<string, string> {
   return {
     TICKET_ID: ticket.id,
-    SPEC: ticket.spec,
+    SPEC: ticket.description,
     BRANCH: worktree.branch,
     TARGET_BRANCH: context.config.integration.targetBranch,
     GATE_COMMANDS: formatGateCommands(context.config.gate),
@@ -661,7 +669,7 @@ async function recordEscalation(
 interface HandoffCommitInput {
   worktree: Worktree;
   notePath: string;
-  roundDir: string;
+  roundDirectory: string;
   /** What the session did and where the run went — the message's status line. */
   handoff: SessionHandoff;
   /** HEAD before the session ran, from its `StageOutcome`. */
@@ -688,7 +696,7 @@ async function renderHandoffMessage(
   const prompt = await stagePrompt(
     context,
     "commit-message",
-    scribeVariables(ticket.id, ticket.spec, input.handoff, commitContext),
+    scribeVariables(ticket.id, ticket.description, input.handoff, commitContext),
   );
   const result = await runHeldSession(
     context,
@@ -697,7 +705,7 @@ async function renderHandoffMessage(
     prompt,
     {
       cwd: input.worktree.path,
-      logPath: path.join(input.roundDir, `${input.handoff.stage}.commit-message.log.jsonl`),
+      logPath: path.join(input.roundDirectory, `${input.handoff.stage}.commit-message.log.jsonl`),
     },
     (event) => narrateSessionActivity(context, ticket.id, "commit-message", event),
   );
@@ -726,7 +734,7 @@ async function prepareSessionHandoff(
   input: HandoffCommitInput,
 ): Promise<boolean> {
   const { worktree, preSessionHead, handoff } = input;
-  if ((await revParse(worktree.path, "HEAD")) !== preSessionHead) {
+  if ((await parseRevision(worktree.path, "HEAD")) !== preSessionHead) {
     await git(worktree.path, "reset", "--soft", preSessionHead);
     context.log.emit("session_activity", ticket.id, {
       text: `${handoff.stage}: session committed; folding its commits into the pipeline's`,
@@ -745,7 +753,7 @@ async function commitPreparedSessionHandoff(
   const { worktree, handoff } = input;
   const message = await renderHandoffMessage(context, ticket, input);
   await git(worktree.path, "commit", "-m", message);
-  const sha = await revParse(worktree.path, "HEAD");
+  const sha = await parseRevision(worktree.path, "HEAD");
   context.log.emit("session_activity", ticket.id, {
     text: `${handoff.stage}: committed ${shortSha(sha)}`,
   });
@@ -779,24 +787,24 @@ export async function runQaStage(
   context: PipelineContext,
   ticket: Ticket,
   worktree: Worktree,
-  roundDir: string,
+  roundDirectory: string,
   notePath: string,
   options: QaStageOptions = {},
 ): Promise<StageVerdictResult<ReviewVerdict>> {
   const target = context.config.integration.targetBranch;
-  const vars = {
-    ...commonVars(context, ticket, worktree, agentVerdictPath(worktree.path, "qa")),
+  const variables = {
+    ...commonVariables(context, ticket, worktree, agentVerdictPath(worktree.path, "qa")),
     NOTE_PATH: notePath,
     GATE_RESULT: options.gateSummary ?? "",
   };
-  const continuation = await buildQaContinuation(context, worktree, vars, options);
+  const continuation = await buildQaContinuation(context, worktree, variables, options);
   const freshPrompt = async () => {
     const sandbox =
-      (await readIfExists(path.join(context.jfdiDir, "sandbox.md"))) ??
+      (await readIfExists(path.join(context.jfdiDirectory, "sandbox.md"))) ??
       "(no sandbox contract found — exercise the artifact as best you can and say so in your feedback)";
     const change = await collectChangeContext(worktree.path, target);
     return stagePrompt(context, "qa", {
-      ...vars,
+      ...variables,
       SANDBOX: sandbox,
       COMMIT_LOG: change.commitLog,
       DIFF_STAT: change.diffStat,
@@ -807,7 +815,7 @@ export async function runQaStage(
     ticket,
     worktree,
     "qa",
-    roundDir,
+    roundDirectory,
     freshPrompt,
     continuation,
   );
@@ -816,7 +824,7 @@ export async function runQaStage(
     ticket,
     worktree,
     "qa",
-    roundDir,
+    roundDirectory,
     initialOutcome,
     (verdictPath, reportedPath) =>
       readReviewVerdict(verdictPath, { isEscalateAllowed: true, reportedPath }),
@@ -833,18 +841,18 @@ export async function runQaStage(
 async function buildQaContinuation(
   context: PipelineContext,
   worktree: Worktree,
-  vars: Record<string, string>,
+  variables: Record<string, string>,
   options: QaStageOptions,
-): Promise<ContinuationSpec | null> {
+): Promise<ContinuationSpecification | null> {
   const { previousSession, previousFailure } = options;
   if (!previousSession?.sessionId || !previousSession.lastSeenCommit || !previousFailure)
     return null;
   const delta = await collectStageDelta(worktree.path, previousSession.lastSeenCommit);
-  const headCommit = await revParse(worktree.path, "HEAD");
+  const headCommit = await parseRevision(worktree.path, "HEAD");
   return {
     sessionId: previousSession.sessionId,
     prompt: await stagePrompt(context, "qa-continue", {
-      ...vars,
+      ...variables,
       LAST_SEEN_COMMIT: previousSession.lastSeenCommit,
       HEAD_COMMIT: headCommit,
       PROVENANCE: formatQaProvenance(previousFailure),
@@ -861,7 +869,7 @@ type ImplementationStep =
   | { kind: "escalate"; question: string; recommendation: string; observations: string[] };
 
 interface ImplementationStageInput {
-  roundDir: string;
+  roundDirectory: string;
   history: FeedbackItem[];
   resume: ResumeState | null;
   previousSession: StageSessionMemory | undefined;
@@ -878,8 +886,8 @@ async function runImplementationStage(
   preSessionHead: string;
   usage: SessionUsage;
 }> {
-  const { roundDir, history, resume } = input;
-  const vars = commonVars(
+  const { roundDirectory, history, resume } = input;
+  const variables = commonVariables(
     context,
     ticket,
     worktree,
@@ -891,14 +899,14 @@ async function runImplementationStage(
       ? {
           sessionId: input.previousSession.sessionId,
           prompt: await stagePrompt(context, "implementation-continue", {
-            ...vars,
+            ...variables,
             FEEDBACK: formatContinuationFeedback(previousFailure),
           }),
         }
       : null;
   const freshPrompt = () =>
     stagePrompt(context, "implementation", {
-      ...vars,
+      ...variables,
       RESUME_SECTION: formatResumeSection(
         resume,
         worktree.branch,
@@ -911,7 +919,7 @@ async function runImplementationStage(
     ticket,
     worktree,
     "implementation",
-    roundDir,
+    roundDirectory,
     freshPrompt,
     continuation,
   );
@@ -920,7 +928,7 @@ async function runImplementationStage(
     ticket,
     worktree,
     "implementation",
-    roundDir,
+    roundDirectory,
     initialOutcome,
     (verdictPath, reportedPath) => readImplementationVerdict(verdictPath, { reportedPath }),
   );
@@ -969,7 +977,7 @@ type CodeReviewStep =
   | { kind: "blocked"; reason: string; observations: string[] };
 
 interface CodeReviewStageInput {
-  roundDir: string;
+  roundDirectory: string;
   notePath: string;
   round: number;
   /** The gate result that admitted this commit to review, quoted into the prompt. */
@@ -1058,8 +1066,8 @@ async function runCodeReviewStage(
   input: CodeReviewStageInput,
 ): Promise<{ step: CodeReviewStep; sessionId: string | undefined }> {
   const target = context.config.integration.targetBranch;
-  const vars = {
-    ...commonVars(context, ticket, worktree, agentVerdictPath(worktree.path, "code-review")),
+  const variables = {
+    ...commonVariables(context, ticket, worktree, agentVerdictPath(worktree.path, "code-review")),
     NOTE_PATH: input.notePath,
     GATE_RESULT: formatGatePass(input.gate),
   };
@@ -1069,7 +1077,7 @@ async function runCodeReviewStage(
       ? {
           sessionId: previousSession.sessionId,
           prompt: await stagePrompt(context, "code-review-continue", {
-            ...vars,
+            ...variables,
             LAST_SEEN_COMMIT: previousSession.lastSeenCommit,
             HEAD_COMMIT: input.headCommit,
             PROVENANCE: formatReviewProvenance(previousFailure),
@@ -1082,7 +1090,7 @@ async function runCodeReviewStage(
   const freshPrompt = async () => {
     const change = await collectChangeContext(worktree.path, target);
     return stagePrompt(context, "code-review", {
-      ...vars,
+      ...variables,
       COMMIT_LOG: change.commitLog,
       DIFF_STAT: change.diffStat,
       DIFF_SECTION: change.diffSection,
@@ -1093,7 +1101,7 @@ async function runCodeReviewStage(
     ticket,
     worktree,
     "code-review",
-    input.roundDir,
+    input.roundDirectory,
     freshPrompt,
     continuation,
   );
@@ -1102,7 +1110,7 @@ async function runCodeReviewStage(
     ticket,
     worktree,
     "code-review",
-    input.roundDir,
+    input.roundDirectory,
     initialOutcome,
     (verdictPath, reportedPath) =>
       readReviewVerdict(verdictPath, { isEscalateAllowed: false, reportedPath }),
@@ -1160,7 +1168,7 @@ async function runGateStage(
 }
 
 interface RoundInput {
-  roundDir: string;
+  roundDirectory: string;
   notePath: string;
   round: number;
   runNumber: number;
@@ -1226,8 +1234,8 @@ async function implementationExitStep(
  * round directory itself for the round's first session, a gate-fix subdirectory
  * for each fix session after it — so no session overwrites another's files.
  */
-function cycleSessionDir(roundDir: string, fixSession: number): string {
-  return fixSession === 0 ? roundDir : path.join(roundDir, `gate-fix-${fixSession}`);
+function cycleSessionDirectory(roundDirectory: string, fixSession: number): string {
+  return fixSession === 0 ? roundDirectory : path.join(roundDirectory, `gate-fix-${fixSession}`);
 }
 
 interface ImplementationPhaseRecord {
@@ -1328,12 +1336,12 @@ async function runImplementationGateIteration(
   implementationSession: StageSessionMemory,
   previousSummary: string | undefined,
 ): Promise<ImplementationIterationResult> {
-  const { roundDir, notePath, round, history, resume } = input;
+  const { roundDirectory, notePath, round, history, resume } = input;
   const maxRounds = context.config.pipeline.maxRounds;
-  const sessionDir = cycleSessionDir(roundDir, fixSession);
-  await ensureDir(sessionDir);
+  const sessionDirectory = cycleSessionDirectory(roundDirectory, fixSession);
+  await ensureDirectory(sessionDirectory);
   const implementation = await runImplementationStage(context, ticket, worktree, {
-    roundDir: sessionDir,
+    roundDirectory: sessionDirectory,
     history: [...history, ...gateFailures],
     resume: fixSession === 0 ? resume : null,
     previousSession: implementationSession,
@@ -1343,7 +1351,7 @@ async function runImplementationGateIteration(
   const preparedInput = {
     worktree,
     notePath,
-    roundDir: sessionDir,
+    roundDirectory: sessionDirectory,
     handoff: implementationHandoff(implementation.step, round, maxRounds, implementation.usage),
     preSessionHead: implementation.preSessionHead,
   };
@@ -1370,7 +1378,7 @@ async function runImplementationGateIteration(
     context,
     ticket,
     worktree,
-    path.join(roundDir, `gate-implementation-${fixSession + 1}.log`),
+    path.join(roundDirectory, `gate-implementation-${fixSession + 1}.log`),
   );
   const handoff = implementationHandoff(
     implementation.step,
@@ -1446,7 +1454,7 @@ async function runImplementationGateCycle(
     if (iteration.gate.ok) {
       // The sign-offs bind to the pipeline's own handoff commit; only a cycle
       // that committed nothing (an unchanged tree) reviews the branch as it stood.
-      const headCommit = lastHandoffCommit ?? (await revParse(worktree.path, "HEAD"));
+      const headCommit = lastHandoffCommit ?? (await parseRevision(worktree.path, "HEAD"));
       await recordImplementationPhase(notePath, phaseRecords);
       return { kind: "proceed", ...collected(), gate: iteration.gate, headCommit };
     }
@@ -1475,7 +1483,7 @@ async function runRound(
   worktree: Worktree,
   input: RoundInput,
 ): Promise<RoundResult> {
-  const { roundDir, notePath, round, history } = input;
+  const { roundDirectory, notePath, round, history } = input;
   const memory: SessionMemory = { ...input.memory };
   const previousFailure = history.at(-1);
 
@@ -1487,7 +1495,7 @@ async function runRound(
   if (cycle.kind === "exit") return { decisions, observations, summary, memory, step: cycle.step };
   const { gate, headCommit } = cycle;
   const review = await runCodeReviewStage(context, ticket, worktree, {
-    roundDir,
+    roundDirectory,
     notePath,
     round,
     gate,
@@ -1519,7 +1527,7 @@ async function runRound(
   decisions.push(...review.step.decisions);
 
   const qa = await runQaPhase(context, ticket, worktree, {
-    roundDir,
+    roundDirectory,
     notePath,
     round,
     gateSummary: formatGatePass(gate),
@@ -1534,7 +1542,7 @@ async function runRound(
 }
 
 interface QaPhaseInput {
-  roundDir: string;
+  roundDirectory: string;
   notePath: string;
   round: number;
   gateSummary: string;
@@ -1565,7 +1573,7 @@ async function runQaPhase(
 ): Promise<QaPhaseResult> {
   const { notePath, round } = input;
   const maxRounds = context.config.pipeline.maxRounds;
-  const qa = await runQaStage(context, ticket, worktree, input.roundDir, notePath, {
+  const qa = await runQaStage(context, ticket, worktree, input.roundDirectory, notePath, {
     gateSummary: input.gateSummary,
     previousSession: input.previousSession,
     previousFailure: input.previousFailure,
@@ -1584,7 +1592,7 @@ async function runQaPhase(
   const handoffInput = {
     worktree,
     notePath,
-    roundDir: input.roundDir,
+    roundDirectory: input.roundDirectory,
     handoff: initialHandoff,
     preSessionHead: qa.outcome.preSessionHead,
   };
@@ -1595,7 +1603,7 @@ async function runQaPhase(
       context,
       ticket,
       worktree,
-      path.join(input.roundDir, "gate-post-qa-1.log"),
+      path.join(input.roundDirectory, "gate-post-qa-1.log"),
     );
     if (!postQaGate.ok)
       step = {
@@ -1804,12 +1812,12 @@ export async function runPipeline(
   ticket: Ticket,
 ): Promise<PipelineOutcome> {
   const target = context.config.integration.targetBranch;
-  await ensureJfdiGitignore(context.jfdiDir);
+  await ensureJfdiGitignore(context.jfdiDirectory);
   const notePath = await ensureTicketNote(
     ticket,
-    path.join(context.repoRoot, context.config.ticketsDirectory),
+    path.join(context.projectRoot, context.config.ticketsDirectory),
   );
-  const runDirs = await nextRunDir(context.stateDir, ticket.id);
+  const runDirectories = await nextRunDirectory(context.stateDirectory, ticket.id);
 
   // Why the previous run failed. A malformed tool-owned file is an impossible
   // state, so stop before creating or sanitizing the worktree or dispatching. The
@@ -1817,7 +1825,7 @@ export async function runPipeline(
   // same file is the only way a re-dispatch can proceed.
   let priorHistory: FeedbackItem[] = [];
   try {
-    if (runDirs.previous) priorHistory = await loadFeedbackHistory(runDirs.previous);
+    if (runDirectories.previous) priorHistory = await loadFeedbackHistory(runDirectories.previous);
   } catch (error) {
     if (!(error instanceof FeedbackHistoryError)) throw error;
     const warning = malformedFeedbackHistoryWarning(error);
@@ -1834,12 +1842,12 @@ export async function runPipeline(
   }
 
   const worktree = await createWorktree(
-    context.repoRoot,
-    worktreesDir(context.jfdiDir),
+    context.projectRoot,
+    worktreesDirectory(context.jfdiDirectory),
     ticket.id,
     target,
   );
-  await ensureDir(runDirs.current);
+  await ensureDirectory(runDirectories.current);
   // A fresh tally per run, and the clock the ticket-level elapsed measures from.
   context.usage.start(ticket.id);
   const runStartedMs = nowMs(context);
@@ -1872,14 +1880,14 @@ export async function runPipeline(
   let memory: SessionMemory = {};
   for (let round = 1; round <= maxRounds; round++) {
     context.log.emit("round_start", ticket.id, { round });
-    const roundDir = path.join(runDirs.current, `round-${round}`);
-    await ensureDir(roundDir);
+    const roundDirectory = path.join(runDirectories.current, `round-${round}`);
+    await ensureDirectory(roundDirectory);
 
     const result = await runRound(context, ticket, worktree, {
-      roundDir,
+      roundDirectory,
       notePath,
       round,
-      runNumber: runDirs.runNumber,
+      runNumber: runDirectories.runNumber,
       history: [...priorHistory, ...history],
       // Only the first session of the run inherits an interrupted state; later
       // rounds work on top of commits this run made itself.
@@ -1893,19 +1901,19 @@ export async function runPipeline(
 
     if (result.step.kind === "retry") {
       history.push({
-        run: runDirs.runNumber,
+        run: runDirectories.runNumber,
         round,
         source: result.step.source,
         feedback: result.step.feedback,
       });
-      await saveFeedbackHistory(runDirs.current, [...priorHistory, ...history]);
+      await saveFeedbackHistory(runDirectories.current, [...priorHistory, ...history]);
       continue;
     }
     if (result.step.kind === "blocked") {
       // A blocked run concluded nothing: the session saw the inherited feedback
       // but stopped on a question instead of answering it. So the inherited
       // items stay unanswered business too and are carried forward.
-      await saveFeedbackHistory(runDirs.current, [...priorHistory, ...history]);
+      await saveFeedbackHistory(runDirectories.current, [...priorHistory, ...history]);
       return {
         status: "blocked",
         reason: result.step.reason,
@@ -1915,8 +1923,8 @@ export async function runPipeline(
 
     // The run finished: earlier rounds' feedback was addressed, so it is no
     // longer unfinished business for a later dispatch to inherit.
-    await saveFeedbackHistory(runDirs.current, []);
-    const finalCommit = await revParse(worktree.path, "HEAD");
+    await saveFeedbackHistory(runDirectories.current, []);
+    const finalCommit = await parseRevision(worktree.path, "HEAD");
     return {
       status: "passed",
       worktree,
@@ -1958,7 +1966,7 @@ async function recordRoundsExhausted(
       "",
       historyMarkdown,
       "",
-      `_Full logs: ${runsDir(context.stateDir, ticket.id)}/. Adjust the ticket and move it back to "${context.config.board.columns.begin}" to retry._`,
+      `_Full logs: ${runsDirectory(context.stateDirectory, ticket.id)}/. Adjust the ticket and move it back to "${context.config.board.columns.begin}" to retry._`,
     ].join("\n"),
   );
   context.log.emit("blocked", ticket.id, { reason: `retries exhausted after ${maxRounds} rounds` });

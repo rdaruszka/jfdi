@@ -1,14 +1,14 @@
 import * as path from "node:path";
-import { JFDI_DIR, migrateLegacyConfigKeys, parseConfigJson } from "../config.js";
-import { repoRoot } from "../git.js";
+import { JFDI_DIRECTORY, migrateLegacyConfigKeys, parseConfigJson } from "../config.js";
+import { projectRoot } from "../git.js";
 import { atomicWrite, readIfExists } from "../util/fsx.js";
 
-const CONFIG_RELATIVE_PATH = path.join(JFDI_DIR, "config.json");
+const CONFIG_RELATIVE_PATH = path.join(JFDI_DIRECTORY, "config.json");
 
 /** `jfdi update-config` — mechanically rewrite legacy config keys in place. */
 export async function updateConfigCommand(cwd: string = process.cwd()): Promise<number> {
-  const root = await repoRoot(cwd);
-  const configPath = path.join(root, CONFIG_RELATIVE_PATH);
+  const resolvedProjectRoot = await projectRoot(cwd);
+  const configPath = path.join(resolvedProjectRoot, CONFIG_RELATIVE_PATH);
   const content = await readIfExists(configPath);
   if (content === null) {
     console.log(`${CONFIG_RELATIVE_PATH} does not exist; nothing to update`);
