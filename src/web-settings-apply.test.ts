@@ -144,6 +144,7 @@ describe("web settings save applied to the live coordinator", () => {
       log: context.log,
       boardName: "board.md",
       targetBranch: context.config.integration.targetBranch,
+      integrationMode: context.config.integration.mode,
       settings: liveSettings(coordinator, context.projectRoot),
     });
     frontEnds.push(frontEnd);
@@ -232,6 +233,7 @@ describe("web settings save applied to the live coordinator", () => {
       log: context.log,
       boardName: "board.md",
       targetBranch: context.config.integration.targetBranch,
+      integrationMode: context.config.integration.mode,
       settings: liveSettings(coordinator, context.projectRoot),
     });
     frontEnds.push(frontEnd);

@@ -17,8 +17,8 @@
  *     settings control; a POST to any other route is rejected.
  *   - A card seeded in the begin column is dispatched, run, and merged while the
  *     coordinator works, and every transition streams live to a connected client
- *     over Server-Sent Events with no manual refresh — the same picture the TUI
- *     renders (board name, target branch, per-ticket status).
+ *     over Server-Sent Events with no manual refresh (board name, target branch,
+ *     and kanban column).
  *   - Stopping `jfdi start` (SIGINT / SIGTERM) stops the web server, exits with
  *     the signal's conventional code, and frees the port it was bound to.
  *
@@ -177,6 +177,32 @@ async function seedReadyCard(sandbox: Sandbox): Promise<void> {
   await fs.writeFile(sandbox.boardPath, board.replace("## Ready\n", `## Ready\n\n${CARD_LINE}\n`));
 }
 
+/** Rewrite the whole board file (a human co-editing it in Obsidian). */
+async function writeBoard(sandbox: Sandbox, content: string): Promise<void> {
+  await fs.writeFile(sandbox.boardPath, content);
+}
+
+/** Drop every card line naming this ticket — a human removing the card. */
+async function removeCard(sandbox: Sandbox, ticketId: string): Promise<void> {
+  const board = await fs.readFile(sandbox.boardPath, "utf8");
+  const kept = board
+    .split("\n")
+    .filter((line) => !line.includes(`[[${ticketId}]]`))
+    .join("\n");
+  await fs.writeFile(sandbox.boardPath, kept);
+}
+
+async function writeNote(sandbox: Sandbox, id: string, frontmatter: string): Promise<void> {
+  await fs.writeFile(
+    path.join(sandbox.projectRoot, ".jfdi", "tickets", `${id}.md`),
+    `---\n${frontmatter}\n---\n\n# ${id}\n\nWork for ${id}.\n`,
+  );
+}
+
+function anyColumnHasTicket(payload: WebPayload, ticketId: string): boolean {
+  return payload.columns.some((column) => column.cards.some((card) => card.id === ticketId));
+}
+
 /**
  * Launch the built CLI with plain pipes — no TTY presented to the child, exactly
  * the headless case the web front end must serve. Captures stdout so a test can
@@ -217,9 +243,15 @@ async function waitForUrl(stdout: () => string): Promise<string> {
 interface WebPayload {
   boardName: string;
   targetBranch: string;
-  view: {
-    state: { tickets: Record<string, { status: string; stage: string | null; round: number }> };
-  };
+  columns: Array<{ name: string; cards: Array<{ id: string; title: string }> }>;
+}
+
+function columnHasTicket(payload: WebPayload, columnName: string, ticketId: string): boolean {
+  return (
+    payload.columns
+      .find((column) => column.name === columnName)
+      ?.cards.some((card) => card.id === ticketId) ?? false
+  );
 }
 
 /**
@@ -378,15 +410,20 @@ describe("jfdi start --front-end web (built CLI)", () => {
       });
 
       await waitFor(
-        () => stream.payloads.some((p) => p.view.state.tickets[TICKET_ID]?.status === "running"),
+        () =>
+          stream.payloads.some((payload) =>
+            ["Implementation", "Code Review", "QA", "Integration"].some((column) =>
+              columnHasTicket(payload, column, TICKET_ID),
+            ),
+          ),
         {
           timeoutMs: WAIT_TIMEOUT_MS,
           intervalMs: POLL_INTERVAL_MS,
-          describe: () => `a streamed payload showing ${TICKET_ID} running`,
+          describe: () => `a streamed payload showing ${TICKET_ID} in a running column`,
         },
       );
       await waitFor(
-        () => stream.payloads.some((p) => p.view.state.tickets[TICKET_ID]?.status === "done"),
+        () => stream.payloads.some((payload) => columnHasTicket(payload, "Done", TICKET_ID)),
         {
           timeoutMs: WAIT_TIMEOUT_MS,
           intervalMs: POLL_INTERVAL_MS,
@@ -445,6 +482,146 @@ describe("jfdi start --front-end web (built CLI)", () => {
         intervalMs: POLL_INTERVAL_MS,
         describe: () => `port ${port} to be free after shutdown`,
       });
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
+    "surfaces an undispatched begin-column card in Ready, then holds it in Ready to Merge until a human approves (on-approval mode)",
+    async () => {
+      // Default integration mode is on-approval — no setAutoMerge here.
+      const sandbox = await makeSandbox();
+
+      const { child, stdout } = startCli(sandbox, ["start", "--front-end", "web"]);
+      const url = await waitForUrl(stdout);
+
+      // Connect the live feed BEFORE any card exists, so the Ready surfacing must
+      // arrive by stream alone — proving the begin-column card is visible in
+      // derived state without the front end ever reading board.md (invariant 1).
+      const stream = followEventStream(url);
+
+      // On-approval mode presents the Ready to Merge column.
+      await waitFor(
+        () =>
+          stream.payloads.some((payload) =>
+            payload.columns.some((column) => column.name === "Ready to Merge"),
+          ),
+        {
+          timeoutMs: WAIT_TIMEOUT_MS,
+          intervalMs: POLL_INTERVAL_MS,
+          describe: () => "a payload exposing the Ready to Merge column in on-approval mode",
+        },
+      );
+
+      // Add the card now, with a client already listening.
+      await seedReadyCard(sandbox);
+
+      // It shows in Ready before it ever runs — the coordinator surfaced the
+      // begin-column card through the event stream.
+      await waitFor(
+        () => stream.payloads.some((payload) => columnHasTicket(payload, "Ready", TICKET_ID)),
+        {
+          timeoutMs: WAIT_TIMEOUT_MS,
+          intervalMs: POLL_INTERVAL_MS,
+          describe: () => `a streamed payload showing ${TICKET_ID} in Ready before dispatch`,
+        },
+      );
+
+      // It runs through the pipeline and, in on-approval mode, comes to rest in
+      // Ready to Merge rather than auto-merging.
+      await waitFor(
+        () =>
+          stream.payloads.some((payload) => columnHasTicket(payload, "Ready to Merge", TICKET_ID)),
+        {
+          timeoutMs: WAIT_TIMEOUT_MS,
+          intervalMs: POLL_INTERVAL_MS,
+          describe: () => `a streamed payload showing ${TICKET_ID} waiting in Ready to Merge`,
+        },
+      );
+
+      // At rest in Ready to Merge, it has NOT reached Done — it is genuinely
+      // waiting for a human, unlike the auto-mode run above.
+      const waitingPayload = stream.payloads[stream.payloads.length - 1];
+      expect(waitingPayload && columnHasTicket(waitingPayload, "Done", TICKET_ID)).toBe(false);
+
+      // A human approves by removing the card (merged by hand); the coordinator's
+      // approval sweep marks the ticket done and the view moves it to Done.
+      await removeCard(sandbox, TICKET_ID);
+      await waitFor(
+        () => stream.payloads.some((payload) => columnHasTicket(payload, "Done", TICKET_ID)),
+        {
+          timeoutMs: WAIT_TIMEOUT_MS,
+          intervalMs: POLL_INTERVAL_MS,
+          describe: () => `a streamed payload showing ${TICKET_ID} in Done after approval`,
+        },
+      );
+
+      await stream.stop();
+      const exit = waitForExit(child);
+      child.kill("SIGINT");
+      await exit;
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
+    "keeps a blocked-by begin-column card in Ready and drops it when the card leaves the board",
+    async () => {
+      const sandbox = await makeSandbox();
+      const BlockedId = "needs-blocker";
+      const BlockerId = "the-blocker";
+      await writeNote(sandbox, BlockedId, `blocked-by:\n  - "[[${BlockerId}]]"`);
+      await writeNote(sandbox, BlockerId, "id: the-blocker");
+
+      const { child, stdout } = startCli(sandbox, ["start", "--front-end", "web"]);
+      const url = await waitForUrl(stdout);
+      const stream = followEventStream(url);
+
+      // A begin-column card whose blocker is not Done never dispatches, but it is
+      // still awaiting dispatch — so it belongs in Ready, not Blocked. The blocker
+      // sits in a non-begin column (Backlog), so it is not itself surfaced.
+      await writeBoard(
+        sandbox,
+        `---\n\nkanban-plugin: board\n\n---\n\n## Ready\n\n- [ ] blocked work [[${BlockedId}]]\n\n## In Progress\n\n## Done\n\n## Blocked\n\n## Ready to Merge\n\n## Backlog\n\n- [ ] the blocker [[${BlockerId}]]\n\n## Inbox\n`,
+      );
+
+      await waitFor(
+        () => stream.payloads.some((payload) => columnHasTicket(payload, "Ready", BlockedId)),
+        {
+          timeoutMs: WAIT_TIMEOUT_MS,
+          intervalMs: POLL_INTERVAL_MS,
+          describe: () => `a streamed payload showing ${BlockedId} waiting in Ready`,
+        },
+      );
+
+      // It never dispatched: a blocked card stays out of every running column.
+      const seenPayload = stream.payloads[stream.payloads.length - 1];
+      for (const runningColumn of ["Implementation", "Code Review", "QA", "Integration"]) {
+        expect(seenPayload && columnHasTicket(seenPayload, runningColumn, BlockedId)).toBe(false);
+      }
+
+      // Remove the still-undispatched card from the board; it must vanish from the
+      // view (ready_removed drops it from derived state). Assert on the LATEST
+      // payload — a plain `.some(absent)` is trivially true of the initial empty
+      // payload and would prove nothing.
+      await removeCard(sandbox, BlockedId);
+      await waitFor(
+        () => {
+          const latest = stream.payloads[stream.payloads.length - 1];
+          return latest !== undefined && !anyColumnHasTicket(latest, BlockedId);
+        },
+        {
+          timeoutMs: WAIT_TIMEOUT_MS,
+          intervalMs: POLL_INTERVAL_MS,
+          describe: () =>
+            `the latest streamed payload no longer showing ${BlockedId} in any column`,
+        },
+      );
+
+      await stream.stop();
+      const exit = waitForExit(child);
+      child.kill("SIGINT");
+      await exit;
     },
     SCENARIO_TIMEOUT_MS,
   );

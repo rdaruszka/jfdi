@@ -7,6 +7,8 @@ import { atomicWrite, ensureDirectory, readIfExists } from "./util/fsx.js";
 export type StageName = "implementation" | "code-review" | "qa" | "integration";
 
 export type EventType =
+  | "ready"
+  | "ready_removed"
   | "dispatch"
   | "resumed"
   | "stage_start"
@@ -52,6 +54,7 @@ export interface JfdiEvent {
 }
 
 export type TicketStatus =
+  | "ready"
   | "running"
   /** Held at dispatch for unresolved blocked-by tickets; never ran this run. */
   | "waiting"
@@ -206,6 +209,8 @@ function narrate(event: JfdiEvent, ticket: TicketState): string {
     // narrating cases above would quietly re-emit the previous line instead of
     // getting a wording decision. With no `default`, tsc (TS2366) agrees.
     case "dispatch":
+    case "ready":
+    case "ready_removed":
     case "round_start":
     case "blocked_by":
     case "unblocked":
@@ -238,6 +243,12 @@ function applyTicketEvent(
   event: JfdiEvent,
 ): void {
   switch (event.type) {
+    case "ready":
+      ticket.status = "ready";
+      ticket.stage = null;
+      ticket.title = stringField(event.data, "title") ?? id;
+      ticket.lastActivity = "awaiting dispatch";
+      break;
     case "dispatch":
       ticket.status = "running";
       ticket.title = stringField(event.data, "title") ?? id;
@@ -329,6 +340,7 @@ function applyTicketEvent(
     // pause says nothing about any one ticket's status, only that every
     // ticket's next session is waiting.
     case "card_moved":
+    case "ready_removed":
     case "observation":
     case "harness_paused":
     case "harness_resumed":
@@ -346,6 +358,11 @@ export function reduceEvent(state: CoordinatorState, event: JfdiEvent): Coordina
   };
   const id = event.ticketId;
   if (!id) return next;
+  if (event.type === "ready_removed") {
+    const ticket = next.tickets[id];
+    if (ticket?.status === "ready" || ticket?.status === "waiting") delete next.tickets[id];
+    return next;
+  }
   const ticket: TicketState = {
     ...(next.tickets[id] ?? newTicketState(id, event.ts)),
     lastEventTs: event.ts,

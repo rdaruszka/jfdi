@@ -115,6 +115,7 @@ async function startWithWebFrontEnd(context: PipelineContext): Promise<number> {
     log: context.log,
     boardName: path.basename(context.config.board.path),
     targetBranch: context.config.integration.targetBranch,
+    integrationMode: context.config.integration.mode,
     settings: {
       load: () => loadSettings(context.projectRoot),
       save: async (staged, revision) => {

@@ -71,11 +71,13 @@ queue, and presents the selected live front end. A begin-column card whose ticke
 skipped over — left in place, re-checked each scan, and dispatched once its
 blockers reach Done.
 
-Both front ends show the board name and target branch, active tickets with their
-current stage and round and running cost/agent-time, tickets needing attention
-(blocked / ready to merge / queued), the integration queue, settled tickets, and
-a tail of recent events. Both update directly from the event stream as dispatch,
-stage, round, integration, pause, and resume events arrive.
+The terminal front end shows active tickets with their current stage, round, and
+running cost/agent-time, tickets needing attention, the integration queue,
+settled tickets, and a tail of recent events. The web front end instead shows a
+read-only kanban view with Ready, Implementation, Code Review, QA, Integration,
+Blocked, and Done columns. On-approval mode adds Ready to Merge. Each card shows
+only its board card content. Both front ends show the board name, target branch,
+and pause banner, and both update directly from the event stream.
 
 With no option, [`frontEnd`](configuration.md#frontend) chooses the project
 default and itself defaults to `terminal`; `--front-end terminal|web` overrides

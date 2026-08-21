@@ -1,15 +1,9 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { ConfigError } from "../config.js";
+import { ConfigError, type JfdiConfig } from "../config.js";
 import type { EventLog, TicketState } from "../events.js";
-import {
-  initialLiveView,
-  type LiveView,
-  reduceLiveView,
-  ticketGroups,
-} from "../renderers/live-view.js";
+import { initialLiveView, type LiveView, reduceLiveView } from "../renderers/live-view.js";
 import { type SettingsSnapshot, SettingsStaleError } from "../settings.js";
-import { formatRunningTotals } from "../usage.js";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const ASSIGNED_PORT = 0;
@@ -31,6 +25,7 @@ export interface WebFrontEndOptions {
   log: EventLog;
   boardName: string;
   targetBranch: string;
+  integrationMode: JfdiConfig["integration"]["mode"];
   settings: WebSettingsSurface;
 }
 
@@ -40,31 +35,102 @@ export interface WebFrontEnd {
   waitUntilExit(): Promise<void>;
 }
 
-interface WebTicket extends TicketState {
-  runningTotals: string;
+interface KanbanCard {
+  id: string;
+  title: string;
 }
 
-function webTicket(ticket: TicketState): WebTicket {
-  return {
-    ...ticket,
-    runningTotals:
-      ticket.totalAgentMs > 0
-        ? formatRunningTotals(ticket.totalCostUsd, ticket.totalAgentMs, ticket.totalTokens)
-        : "",
-  };
+type KanbanColumnName =
+  | "Ready"
+  | "Implementation"
+  | "Code Review"
+  | "QA"
+  | "Integration"
+  | "Blocked"
+  | "Ready to Merge"
+  | "Done";
+
+interface KanbanColumn {
+  name: KanbanColumnName;
+  cards: KanbanCard[];
 }
 
-function payload(options: WebFrontEndOptions, view: LiveView): string {
-  const groups = ticketGroups(view.state);
+const AUTO_COLUMN_NAMES: KanbanColumnName[] = [
+  "Ready",
+  "Implementation",
+  "Code Review",
+  "QA",
+  "Integration",
+  "Blocked",
+  "Done",
+];
+
+const ON_APPROVAL_COLUMN_NAMES: KanbanColumnName[] = [
+  ...AUTO_COLUMN_NAMES.slice(0, -1),
+  "Ready to Merge",
+  "Done",
+];
+
+function runningColumn(ticket: TicketState): KanbanColumnName {
+  switch (ticket.stage) {
+    case null:
+    case "implementation":
+      return "Implementation";
+    case "code-review":
+      return "Code Review";
+    case "qa":
+      return "QA";
+    case "integration":
+      return "Integration";
+  }
+}
+
+function ticketColumn(
+  ticket: TicketState,
+  integrationMode: JfdiConfig["integration"]["mode"],
+): KanbanColumnName {
+  switch (ticket.status) {
+    case "ready":
+    case "waiting":
+      return "Ready";
+    case "running":
+      return runningColumn(ticket);
+    case "merge-queued":
+    case "merging":
+      return "Integration";
+    case "blocked":
+    case "failed":
+      return "Blocked";
+    case "merge-ready":
+      return integrationMode === "on-approval" ? "Ready to Merge" : "Integration";
+    case "done":
+      return "Done";
+  }
+}
+
+function kanbanColumns(
+  tickets: Record<string, TicketState>,
+  integrationMode: JfdiConfig["integration"]["mode"],
+): KanbanColumn[] {
+  const names = integrationMode === "auto" ? AUTO_COLUMN_NAMES : ON_APPROVAL_COLUMN_NAMES;
+  return names.map((name) => ({
+    name,
+    cards: Object.values(tickets)
+      .filter((ticket) => ticketColumn(ticket, integrationMode) === name)
+      .map((ticket) => ({ id: ticket.id, title: ticket.title })),
+  }));
+}
+
+function payload(
+  options: WebFrontEndOptions,
+  view: LiveView,
+  integrationMode: JfdiConfig["integration"]["mode"],
+): string {
   return JSON.stringify({
     boardName: options.boardName,
     targetBranch: options.targetBranch,
-    view,
-    groups: {
-      active: groups.active.map(webTicket),
-      waiting: groups.waiting.map(webTicket),
-      settled: groups.settled.map(webTicket),
-    },
+    pause: view.pause,
+    columns: kanbanColumns(view.state.tickets, integrationMode),
   });
 }
 
@@ -78,7 +144,7 @@ const PAGE = `<!doctype html>
     :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #0b0d10; color: #edf1f7; }
     * { box-sizing: border-box; }
     body { margin: 0; background: radial-gradient(circle at top right, #19243a 0, #0b0d10 36rem); min-height: 100vh; }
-    main { width: min(1100px, calc(100% - 2rem)); margin: 0 auto; padding: 2rem 0 4rem; }
+    main { width: calc(100% - 2rem); margin: 0 auto; padding: 2rem 0 4rem; }
     header { display: flex; align-items: baseline; gap: .8rem; margin-bottom: 1.5rem; }
     .brand { background: #edf1f7; color: #0b0d10; font-weight: 900; padding: .25rem .55rem; letter-spacing: .08em; }
     .route { color: #aab5c5; }
@@ -99,34 +165,22 @@ const PAGE = `<!doctype html>
     #settings-message { min-height: 1.3rem; margin: .8rem 0 0; color: #e5b567; }
     #settings-message.success { color: #63d392; }
     #pause { display: none; margin-bottom: 1.25rem; padding: .8rem 1rem; border: 1px solid #e5b567; background: #2b2418; color: #ffd58c; }
-    section { margin: 0 0 1.35rem; }
     h2 { margin: 0 0 .55rem; color: #aab5c5; font-size: .78rem; letter-spacing: .12em; text-transform: uppercase; }
-    .ticket { display: grid; grid-template-columns: minmax(12rem, 1.2fr) minmax(12rem, 1fr) minmax(10rem, 2fr) auto; gap: .8rem; align-items: baseline; padding: .7rem .8rem; border-top: 1px solid #252b34; background: rgba(18, 22, 28, .78); }
-    .ticket:last-child { border-bottom: 1px solid #252b34; }
-    .ticket-id { font-weight: 700; overflow-wrap: anywhere; }
-    .status { color: #78dce8; }
-    .status.blocked, .status.failed { color: #ff6188; }
-    .status.done, .status.merge-ready { color: #63d392; }
-    .status.merge-queued, .status.waiting { color: #e5b567; }
-    .status.merging { color: #ab9df2; }
-    .activity, .totals, .empty, .event { color: #8893a3; }
-    .totals { white-space: nowrap; font-size: .82rem; }
-    .queue { padding: .7rem .8rem; border: 1px solid #3b3349; color: #c6b7ef; }
-    .event { display: grid; grid-template-columns: 5rem minmax(0, 1fr); gap: .7rem; padding: .22rem 0; font-size: .86rem; }
-    .event span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .kanban { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(15rem, 1fr); gap: .8rem; overflow-x: auto; align-items: start; padding-bottom: 1rem; }
+    .column { min-height: 12rem; padding: .75rem; border: 1px solid #29313d; background: rgba(14, 18, 24, .82); }
+    .column h2 { display: flex; justify-content: space-between; gap: .5rem; margin-bottom: .75rem; }
+    .count { color: #657184; }
+    .cards { display: grid; gap: .55rem; }
+    .card { min-height: 3.6rem; padding: .75rem; border: 1px solid #343e4d; border-radius: .2rem; background: #171d26; line-height: 1.4; overflow-wrap: anywhere; box-shadow: 0 .2rem .7rem rgba(0, 0, 0, .22); }
     [hidden] { display: none !important; }
-    @media (max-width: 760px) { .ticket { grid-template-columns: 1fr; gap: .25rem; } .totals { white-space: normal; } header { flex-wrap: wrap; } .live { margin-left: 0; } .settings-button { margin-left: auto; } }
+    @media (max-width: 760px) { header { flex-wrap: wrap; } .live { margin-left: 0; } .settings-button { margin-left: auto; } }
   </style>
 </head>
 <body>
   <main>
     <header><span class="brand">JFDI</span><span class="route"><span id="board"></span> → <strong id="branch"></strong></span><span class="live">LIVE STATUS</span><button class="settings-button" id="settings-open" type="button">Settings</button></header>
     <aside id="pause"></aside>
-    <section><h2 id="active-title">Active (0)</h2><div id="active"><div class="empty">waiting for cards in the begin column…</div></div></section>
-    <section id="waiting-section" hidden><h2>Needs attention / queued</h2><div id="waiting"></div></section>
-    <section id="queue-section" hidden><h2>Integration queue</h2><div class="queue" id="queue"></div></section>
-    <section id="settled-section" hidden><h2>Settled</h2><div id="settled"></div></section>
-    <section><h2>Events</h2><div id="events"><div class="empty">No recent events.</div></div></section>
+    <div class="kanban" id="kanban" aria-label="Ticket states"></div>
   </main>
   <aside class="settings-panel" id="settings-panel" hidden>
     <div class="settings-card" role="dialog" aria-modal="true" aria-labelledby="settings-title">
@@ -145,24 +199,15 @@ const PAGE = `<!doctype html>
   <script>
     const element = (id) => document.getElementById(id);
     const text = (tag, className, value) => { const node = document.createElement(tag); node.className = className; node.textContent = value; return node; };
-    function ticketRow(ticket) {
-      const row = document.createElement("div"); row.className = "ticket";
-      const progress = ticket.status + (ticket.stage ? " " + ticket.stage : "") + (ticket.round > 0 ? " r" + ticket.round : "");
-      row.append(text("span", "ticket-id", ticket.id), text("span", "status " + ticket.status, progress), text("span", "activity", ticket.lastActivity), text("span", "totals", ticket.runningTotals));
-      return row;
-    }
-    function ticketList(id, tickets, emptyText) {
-      const container = element(id); container.replaceChildren();
-      if (tickets.length === 0 && emptyText) container.append(text("div", "empty", emptyText));
-      for (const ticket of tickets) container.append(ticketRow(ticket));
-    }
-    function eventText(event) {
-      return (event.ticketId ? "[" + event.ticketId + "] " : "") + event.type + (event.data?.stage ? " " + event.data.stage : "") + (event.data?.verdict ? " → " + event.data.verdict : "") + (event.data?.reason ? ": " + event.data.reason : "");
-    }
-    function renderEvents(recent) {
-      const container = element("events"); container.replaceChildren();
-      if (recent.length === 0) container.append(text("div", "empty", "No recent events."));
-      for (const entry of recent) { const row = document.createElement("div"); row.className = "event"; row.append(text("span", "", entry.event.ts.slice(11, 19)), text("span", "", eventText(entry.event))); container.append(row); }
+    function renderColumns(columns) {
+      const board = element("kanban"); board.replaceChildren();
+      for (const column of columns) {
+        const section = document.createElement("section"); section.className = "column";
+        const heading = document.createElement("h2"); heading.append(text("span", "", column.name), text("span", "count", String(column.cards.length)));
+        const cards = document.createElement("div"); cards.className = "cards";
+        for (const card of column.cards) cards.append(text("div", "card", card.title));
+        section.append(heading, cards); board.append(section);
+      }
     }
     function pauseText(pause) {
       if (pause.resumesAt === null) return "Harness needs attention: " + pause.detail;
@@ -171,13 +216,8 @@ const PAGE = `<!doctype html>
     }
     function render(payload) {
       element("board").textContent = payload.boardName; element("branch").textContent = payload.targetBranch;
-      element("active-title").textContent = "Active (" + payload.groups.active.length + ")";
-      ticketList("active", payload.groups.active, "waiting for cards in the begin column…");
-      ticketList("waiting", payload.groups.waiting, ""); element("waiting-section").hidden = payload.groups.waiting.length === 0;
-      ticketList("settled", payload.groups.settled, ""); element("settled-section").hidden = payload.groups.settled.length === 0;
-      element("queue").textContent = payload.view.state.integrationQueue.join(" → "); element("queue-section").hidden = payload.view.state.integrationQueue.length === 0;
-      const pause = element("pause"); pause.style.display = payload.view.pause === null ? "none" : "block"; pause.textContent = payload.view.pause === null ? "" : pauseText(payload.view.pause);
-      renderEvents(payload.view.recent);
+      renderColumns(payload.columns);
+      const pause = element("pause"); pause.style.display = payload.pause === null ? "none" : "block"; pause.textContent = payload.pause === null ? "" : pauseText(payload.pause);
     }
     let settingsRevision = "";
     function settingsMessage(message, isSuccess = false) {
@@ -277,6 +317,7 @@ class RunningWebFrontEnd implements WebFrontEnd {
   private readonly unsubscribe: () => void;
   private closePromise: Promise<void> | null = null;
   private readonly exitPromise: Promise<void>;
+  private integrationMode: JfdiConfig["integration"]["mode"];
 
   constructor(
     private readonly server: Server,
@@ -284,6 +325,7 @@ class RunningWebFrontEnd implements WebFrontEnd {
     address: AddressInfo,
   ) {
     this.url = `http://${LOOPBACK_HOST}:${address.port}/`;
+    this.integrationMode = options.integrationMode;
     this.view = initialLiveView(options.log.snapshot());
     this.unsubscribe = options.log.on((event, state) => {
       this.view = reduceLiveView(this.view, event, state);
@@ -329,7 +371,10 @@ class RunningWebFrontEnd implements WebFrontEnd {
       }
       if (request.method === "POST") {
         const { staged, revision } = settingsSaveInput(await readSettingsBody(request));
-        jsonResponse(response, HTTP_OK, await this.options.settings.save(staged, revision));
+        const snapshot = await this.options.settings.save(staged, revision);
+        this.integrationMode = snapshot.config.integration.mode;
+        jsonResponse(response, HTTP_OK, snapshot);
+        this.broadcast();
         return;
       }
       response.writeHead(HTTP_METHOD_NOT_ALLOWED, { allow: "GET, HEAD, POST" });
@@ -370,7 +415,8 @@ class RunningWebFrontEnd implements WebFrontEnd {
   }
 
   private writePayload(response: ServerResponse): void {
-    if (!response.write(`data: ${payload(this.options, this.view)}\n\n`)) response.end();
+    if (!response.write(`data: ${payload(this.options, this.view, this.integrationMode)}\n\n`))
+      response.end();
   }
 
   private broadcast(): void {

@@ -15,6 +15,7 @@ const ISO_TIME_START = 11;
 const ISO_TIME_END = 19;
 
 const STATUS_COLOR: Record<TicketState["status"], string> = {
+  ready: "gray",
   running: "cyan",
   waiting: "gray",
   blocked: "red",
