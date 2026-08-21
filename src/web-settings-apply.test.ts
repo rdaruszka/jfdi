@@ -142,6 +142,8 @@ describe("web settings save applied to the live coordinator", () => {
     coordinators.push(coordinator);
     const frontEnd = await startWebFrontEnd({
       log: context.log,
+      projectRoot: context.projectRoot,
+      ticketsDirectory: context.config.ticketsDirectory,
       boardName: "board.md",
       targetBranch: context.config.integration.targetBranch,
       integrationMode: context.config.integration.mode,
@@ -231,6 +233,8 @@ describe("web settings save applied to the live coordinator", () => {
     coordinators.push(coordinator);
     const frontEnd = await startWebFrontEnd({
       log: context.log,
+      projectRoot: context.projectRoot,
+      ticketsDirectory: context.config.ticketsDirectory,
       boardName: "board.md",
       targetBranch: context.config.integration.targetBranch,
       integrationMode: context.config.integration.mode,

@@ -113,6 +113,8 @@ async function startWithWebFrontEnd(context: PipelineContext): Promise<number> {
   const coordinator = new Coordinator(context);
   const frontEnd = await startWebFrontEnd({
     log: context.log,
+    projectRoot: context.projectRoot,
+    ticketsDirectory: context.config.ticketsDirectory,
     boardName: path.basename(context.config.board.path),
     targetBranch: context.config.integration.targetBranch,
     integrationMode: context.config.integration.mode,
