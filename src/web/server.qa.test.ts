@@ -29,6 +29,7 @@ function memorySettings(): WebSettingsSurface {
     revision: "initial",
   };
   return {
+    frontEndInEffect: () => "terminal",
     load: () => Promise.resolve(snapshot),
     save: (staged) => {
       snapshot = {
