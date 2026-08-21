@@ -96,6 +96,8 @@ describe("web front end", () => {
   it("uses the window scrollbars and stretches line-separated columns", async () => {
     frontEnd = await startWebFrontEnd({
       log: new EventLog("unused", false),
+      projectRoot: "unused",
+      ticketsDirectory: ".jfdi/tickets",
       boardName: "board.md",
       targetBranch: "main",
       integrationMode: "auto",

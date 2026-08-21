@@ -55,6 +55,8 @@ function styleDeclarations(pageMarkup: string, selector: string): string {
 async function servedPage(): Promise<string> {
   frontEnd = await startWebFrontEnd({
     log: new EventLog("unused", false),
+    projectRoot: "unused",
+    ticketsDirectory: ".jfdi/tickets",
     boardName: "board.md",
     targetBranch: "main",
     integrationMode: "auto",
