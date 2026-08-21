@@ -13,8 +13,8 @@
  *     web front end for a real coordinator, and the CLI path prints its URL.
  *   - The URL binds loopback only (`127.0.0.1`), so the server is reachable only
  *     from the local machine by default.
- *   - The served page is read-only: a POST is rejected and the markup carries no
- *     button/form/input control.
+ *   - The status surface remains read-only while the page exposes its dedicated
+ *     settings control; a POST to any other route is rejected.
  *   - A card seeded in the begin column is dispatched, run, and merged while the
  *     coordinator works, and every transition streams live to a connected client
  *     over Server-Sent Events with no manual refresh — the same picture the TUI
@@ -295,7 +295,7 @@ afterEach(async () => {
 
 describe("jfdi start --front-end web (built CLI)", () => {
   it(
-    "serves a read-only loopback page, streams a live run, and frees the port on SIGINT",
+    "serves a loopback page, streams a live run, and frees the port on SIGINT",
     async () => {
       const sandbox = await makeSandbox();
       await setAutoMerge(sandbox);
@@ -309,20 +309,74 @@ describe("jfdi start --front-end web (built CLI)", () => {
       expect(new URL(url).hostname).toBe("127.0.0.1");
       const port = Number(new URL(url).port);
 
-      // The page is served and read-only: it names JFDI and carries no control.
+      // The page names JFDI and exposes only the dedicated settings write surface.
       const page = await fetch(url);
       expect(page.status).toBe(200);
       const markup = await page.text();
       expect(markup).toContain("JFDI");
-      expect(markup).not.toMatch(/<(?:button|form|input)\b/);
+      expect(markup).toContain('id="settings-open"');
+      expect(markup).toContain('id="settings-save"');
 
-      // A write attempt is rejected — the surface offers no actions.
+      // Every route outside the settings panel remains read-only.
       const writeAttempt = await fetch(url, { method: "POST" });
       expect(writeAttempt.status).toBe(405);
 
       // Follow the live feed and watch the seeded card go from dispatched to
       // merged while the coordinator works — no refresh, one open connection.
       const stream = followEventStream(url);
+
+      const loadedResponse = await fetch(new URL("settings", url));
+      const loaded = (await loadedResponse.json()) as {
+        config: Record<string, unknown>;
+        revision: string;
+      };
+      const beforeInvalidSave = await fs.readFile(sandbox.configPath, "utf8");
+      const invalidResponse = await fetch(new URL("settings", url), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          config: { ...loaded.config, maxConcurrent: 0 },
+          revision: loaded.revision,
+        }),
+      });
+      expect(invalidResponse.status).toBe(400);
+      expect((await invalidResponse.json()) as { error: string }).toMatchObject({
+        error: "maxConcurrent must be a positive integer",
+      });
+      expect(await fs.readFile(sandbox.configPath, "utf8")).toBe(beforeInvalidSave);
+
+      const externalConfig = { ...loaded.config, maxConcurrent: 5 };
+      await fs.writeFile(sandbox.configPath, `${JSON.stringify(externalConfig, null, 2)}\n`);
+      const staleResponse = await fetch(new URL("settings", url), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          config: { ...loaded.config, maxConcurrent: 3 },
+          revision: loaded.revision,
+        }),
+      });
+      expect(staleResponse.status).toBe(409);
+      expect((await staleResponse.json()) as { error: string }).toMatchObject({
+        error: expect.stringContaining("changed on disk"),
+      });
+      expect(JSON.parse(await fs.readFile(sandbox.configPath, "utf8"))).toMatchObject({
+        maxConcurrent: 5,
+      });
+
+      const reloaded = (await (await fetch(new URL("settings", url))).json()) as typeof loaded;
+      const savedResponse = await fetch(new URL("settings", url), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          config: { ...reloaded.config, maxConcurrent: 3 },
+          revision: reloaded.revision,
+        }),
+      });
+      expect(savedResponse.status).toBe(200);
+      expect(JSON.parse(await fs.readFile(sandbox.configPath, "utf8"))).toMatchObject({
+        maxConcurrent: 3,
+      });
+
       await waitFor(
         () => stream.payloads.some((p) => p.view.state.tickets[TICKET_ID]?.status === "running"),
         {

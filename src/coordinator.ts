@@ -17,8 +17,10 @@ import {
   parseBoard,
 } from "./board.js";
 import { boardPath, moveCardSafe } from "./cards.js";
+import type { JfdiConfig } from "./config.js";
 import { type IntegrationRecord, integrationRecords } from "./events.js";
 import { branchExists, isAncestor, parseRevision, ticketBranch } from "./git.js";
+import { createSessionHarnesses } from "./harness/index.js";
 import { IntegrationQueue, integrateTicket } from "./integrate.js";
 import type { PipelineContext, RunReport } from "./pipeline.js";
 import { runPipeline, worktreesDirectory } from "./pipeline.js";
@@ -57,6 +59,27 @@ interface BlockingCardNode {
 
 /** How often the mtime poll runs when `fs.watch` misses (or is unavailable). */
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
+
+function hasAgentSettingsChanged(previous: JfdiConfig, next: JfdiConfig): boolean {
+  if (previous.permissions.mode !== next.permissions.mode) return true;
+  return Object.keys(previous.stages).some((sessionKind) => {
+    const previousStage = previous.stages[sessionKind as keyof JfdiConfig["stages"]];
+    const nextStage = next.stages[sessionKind as keyof JfdiConfig["stages"]];
+    return (
+      previousStage.harness !== nextStage.harness ||
+      previousStage.model !== nextStage.model ||
+      previousStage.effort !== nextStage.effort
+    );
+  });
+}
+
+function hasBoardSettingsChanged(previous: JfdiConfig, next: JfdiConfig): boolean {
+  if (previous.board.path !== next.board.path) return true;
+  return Object.keys(previous.board.columns).some((columnKind) => {
+    const key = columnKind as keyof JfdiConfig["board"]["columns"];
+    return previous.board.columns[key] !== next.board.columns[key];
+  });
+}
 
 /**
  * Multi-ticket mode: watches the board, dispatches cards from the begin column
@@ -117,11 +140,7 @@ export class Coordinator {
     // are never dispatched — only a human moves them out.
     await ensureColumns(this.boardPath, [columns.blocked, columns.readyToMerge, columns.inbox]);
 
-    try {
-      this.watcher = watch(this.boardPath, { persistent: false }, () => this.requestScan());
-    } catch {
-      // fs.watch unavailable — polling below covers it.
-    }
+    this.watchBoard();
     await this.context.log.followFromEnd();
     this.pollTimer = setInterval(() => {
       void this.poll();
@@ -129,6 +148,38 @@ export class Coordinator {
     this.pollTimer.unref();
 
     await this.scan();
+  }
+
+  /** Adopt saved settings at safe boundaries; selecting a front end remains a startup choice. */
+  async applyConfig(config: JfdiConfig): Promise<void> {
+    const previousBoardPath = this.boardPath;
+    const previousConfig = this.context.config;
+    const liveConfig = { ...config, frontEnd: this.context.config.frontEnd };
+    this.context.config = liveConfig;
+    if (hasAgentSettingsChanged(previousConfig, liveConfig))
+      this.context.harnesses = createSessionHarnesses(liveConfig);
+    if (this.boardPath !== previousBoardPath) this.watchBoard();
+    if (hasBoardSettingsChanged(previousConfig, liveConfig) && (await fileExists(this.boardPath))) {
+      const columns = liveConfig.board.columns;
+      try {
+        await ensureColumns(this.boardPath, [columns.blocked, columns.readyToMerge, columns.inbox]);
+      } catch (error) {
+        this.context.log.emit("error", undefined, {
+          message: `could not prepare the saved board settings: ${(error as Error).message}`,
+        });
+      }
+    }
+    this.requestScan();
+  }
+
+  private watchBoard(): void {
+    this.watcher?.close();
+    this.watcher = null;
+    try {
+      this.watcher = watch(this.boardPath, { persistent: false }, () => this.requestScan());
+    } catch {
+      // fs.watch unavailable — polling below covers it.
+    }
   }
 
   /** Stop watching, kill live sessions. In-flight pipelines settle in the background. */

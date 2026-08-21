@@ -4,6 +4,7 @@ import { createElement } from "react";
 import type { FrontEnd, JfdiConfig } from "../config.js";
 import { Coordinator } from "../coordinator.js";
 import type { PipelineContext } from "../pipeline.js";
+import { loadSettings, saveSettings } from "../settings.js";
 import { App } from "../tui/App.js";
 import { EXIT_SIGINT, EXIT_SIGTERM } from "../util/exit-codes.js";
 import { startWebFrontEnd } from "../web/server.js";
@@ -114,6 +115,14 @@ async function startWithWebFrontEnd(context: PipelineContext): Promise<number> {
     log: context.log,
     boardName: path.basename(context.config.board.path),
     targetBranch: context.config.integration.targetBranch,
+    settings: {
+      load: () => loadSettings(context.projectRoot),
+      save: async (staged, revision) => {
+        const saved = await saveSettings(context.projectRoot, staged, revision);
+        await coordinator.applyConfig(saved.config);
+        return saved;
+      },
+    },
   });
   let signalExitCode = 0;
   const handleSignal = (exitCode: number) => {

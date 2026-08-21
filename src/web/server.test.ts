@@ -1,9 +1,22 @@
 import { createServer } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
+import { defaultConfig } from "../config.js";
 import { EventLog } from "../events.js";
-import { startWebFrontEnd, type WebFrontEnd } from "./server.js";
+import type { SettingsSnapshot } from "../settings.js";
+import { startWebFrontEnd, type WebFrontEnd, type WebSettingsSurface } from "./server.js";
 
 let frontEnd: WebFrontEnd | null = null;
+
+function memorySettings(): WebSettingsSurface {
+  let snapshot: SettingsSnapshot = { config: defaultConfig(), revision: "initial" };
+  return {
+    load: async () => snapshot,
+    save: async (staged) => {
+      snapshot = { config: staged as SettingsSnapshot["config"], revision: "saved" };
+      return snapshot;
+    },
+  };
+}
 
 afterEach(async () => {
   await frontEnd?.close();
@@ -44,12 +57,13 @@ async function bindPort(port: number): Promise<void> {
 }
 
 describe("web front end", () => {
-  it("serves a read-only page from loopback and streams the same live view", async () => {
+  it("serves the live view and a settings panel from loopback", async () => {
     const log = new EventLog("unused", false);
     frontEnd = await startWebFrontEnd({
       log,
       boardName: "board.md",
       targetBranch: "main",
+      settings: memorySettings(),
     });
 
     expect(new URL(frontEnd.url).hostname).toBe("127.0.0.1");
@@ -57,7 +71,11 @@ describe("web front end", () => {
     expect(page.status).toBe(200);
     const pageMarkup = await page.text();
     expect(pageMarkup).toContain("JFDI");
-    expect(pageMarkup).not.toMatch(/<(?:button|form|input)\b/);
+    expect(pageMarkup).toContain('id="settings-open"');
+    expect(pageMarkup).toContain('id="settings-save"');
+    expect(pageMarkup).toContain('id="settings-cancel"');
+    expect(pageMarkup).toContain('id="settings-reload"');
+    expect(pageMarkup).toContain("switching front ends requires a restart");
 
     const writeAttempt = await fetch(frontEnd.url, { method: "POST" });
     expect(writeAttempt.status).toBe(405);
@@ -96,11 +114,45 @@ describe("web front end", () => {
     await reader.cancel();
   });
 
+  it("loads settings and sends staged values only on Save", async () => {
+    const saves: unknown[] = [];
+    frontEnd = await startWebFrontEnd({
+      log: new EventLog("unused", false),
+      boardName: "board.md",
+      targetBranch: "main",
+      settings: {
+        load: async () => ({ config: defaultConfig(), revision: "disk-version" }),
+        save: async (staged, revision) => {
+          saves.push({ staged, revision });
+          return { config: staged as SettingsSnapshot["config"], revision: "saved-version" };
+        },
+      },
+    });
+
+    const loaded = await fetch(new URL("settings", frontEnd.url));
+    expect(await loaded.json()).toMatchObject({
+      config: { maxConcurrent: 2, frontEnd: "terminal" },
+      revision: "disk-version",
+    });
+    expect(saves).toEqual([]);
+
+    const staged = { ...defaultConfig(), maxConcurrent: 4 };
+    const saved = await fetch(new URL("settings", frontEnd.url), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ config: staged, revision: "disk-version" }),
+    });
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toMatchObject({ revision: "saved-version" });
+    expect(saves).toEqual([{ staged, revision: "disk-version" }]);
+  });
+
   it("frees its assigned port when closed", async () => {
     frontEnd = await startWebFrontEnd({
       log: new EventLog("unused", false),
       boardName: "board.md",
       targetBranch: "main",
+      settings: memorySettings(),
     });
     const port = Number(new URL(frontEnd.url).port);
 

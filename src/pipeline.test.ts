@@ -66,6 +66,94 @@ describe("runHeldSession", () => {
 });
 
 describe("runPipeline", () => {
+  it("locks a stage agent at first fire while later stages adopt saved settings", async () => {
+    let context: PipelineContext;
+    let implementationCalls = 0;
+    let reviewCalls = 0;
+    const replacementImplementation = new FakeHarness(async () => {
+      throw new Error("replacement implementation must not take over an active run");
+    });
+    const replacementReview = new FakeHarness(async (prompt) => {
+      reviewCalls += 1;
+      await writeVerdict(
+        prompt,
+        reviewCalls === 1
+          ? { verdict: "fail", feedback: "adjust the implementation" }
+          : { verdict: "pass" },
+      );
+      return { ok: true, text: "", sessionId: "replacement-review" };
+    });
+    const originalImplementation = new FakeHarness(async (prompt, options) => {
+      implementationCalls += 1;
+      await fs.writeFile(
+        path.join(options.cwd, "impl.txt"),
+        `implementation ${implementationCalls}\n`,
+      );
+      await writeVerdict(prompt, { status: "done", summary: "implemented" });
+      if (implementationCalls === 1) {
+        context.config = {
+          ...context.config,
+          stages: {
+            ...context.config.stages,
+            implementation: { harness: "codex", model: "replacement-implementation" },
+            "code-review": { harness: "claude", model: "replacement-review" },
+          },
+        };
+        context.harnesses = {
+          ...context.harnesses,
+          implementation: replacementImplementation,
+          "code-review": replacementReview,
+        };
+      }
+      return { ok: true, text: "", sessionId: "original-implementation" };
+    });
+    const originalReview = new FakeHarness(async () => {
+      throw new Error("the not-yet-fired review should adopt replacement settings");
+    });
+    const qa = new FakeHarness(async (prompt) => {
+      await writeVerdict(prompt, { verdict: "pass" });
+      return { ok: true, text: "" };
+    });
+    context = fixture.context(() => Promise.resolve({ ok: true, text: "" }));
+    context.config = {
+      ...context.config,
+      pipeline: { maxRounds: 2 },
+      stages: {
+        ...context.config.stages,
+        implementation: { harness: "claude", model: "original-implementation" },
+        "code-review": { harness: "codex", model: "original-review" },
+      },
+    };
+    context.harnesses = {
+      ...context.harnesses,
+      implementation: originalImplementation,
+      "code-review": originalReview,
+      qa,
+    };
+    const starts: JfdiEvent[] = [];
+    context.log.on((event) => {
+      if (event.type === "stage_start") starts.push(event);
+    });
+
+    const ticket = await resolveTicket("Lock stage settings", fixture.ticketsDirectory);
+    expect((await runPipeline(context, ticket)).status).toBe("passed");
+
+    expect(originalImplementation.calls).toHaveLength(2);
+    expect(replacementImplementation.calls).toHaveLength(0);
+    expect(originalReview.calls).toHaveLength(0);
+    expect(replacementReview.calls).toHaveLength(2);
+    expect(
+      starts
+        .filter((event) => event.data?.stage === "implementation")
+        .map((event) => event.data?.model),
+    ).toEqual(["original-implementation", "original-implementation"]);
+    expect(
+      starts
+        .filter((event) => event.data?.stage === "code-review")
+        .map((event) => event.data?.model),
+    ).toEqual(["replacement-review", "replacement-review"]);
+  });
+
   it("happy path: implementation → gate → code review → QA → passed", async () => {
     const stages: string[] = [];
     const context = fixture.context(async (prompt, options) => {

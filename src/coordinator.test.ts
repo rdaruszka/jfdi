@@ -349,6 +349,49 @@ async function runToMergeReady(stages: string[]): Promise<Coordinator> {
 }
 
 describe("Coordinator", () => {
+  it("fills newly raised concurrent capacity without interrupting active work", async () => {
+    fixture.config.maxConcurrent = 1;
+    fixture.config.integration.mode = "on-approval";
+    const alphaRelease = deferred();
+    const betaRelease = deferred();
+    const startedImplementations: string[] = [];
+    const context = fixture.context(async (prompt, options) => {
+      const stage = sessionKindOf(prompt);
+      if (stage === "implementation") {
+        const name = featureName(prompt);
+        startedImplementations.push(name);
+        if (name === "alpha") await alphaRelease.promise;
+        if (name === "beta") await betaRelease.promise;
+        await commitFile(options.cwd, `${name}.txt`, `${name}\n`, `implement ${name}`);
+        await writeVerdict(prompt, { status: "done", summary: `built ${name}` });
+      } else {
+        await writeVerdict(prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "" };
+    });
+    const coordinator = new Coordinator(context, { pollMs: 60_000 });
+    await startCoordinator(coordinator);
+
+    try {
+      await waitUntil(() => startedImplementations.length === 1);
+      expect(startedImplementations).toEqual(["alpha"]);
+
+      await coordinator.applyConfig({ ...context.config, maxConcurrent: 2, frontEnd: "web" });
+      await waitUntil(() => startedImplementations.length === 2);
+
+      expect(startedImplementations).toEqual(["alpha", "beta"]);
+      expect(coordinator.activeCount()).toBe(2);
+      expect(context.config.frontEnd).toBe("terminal");
+
+      await coordinator.applyConfig({ ...context.config, maxConcurrent: 1 });
+      expect(coordinator.activeCount()).toBe(2);
+    } finally {
+      alphaRelease.resolve();
+      betaRelease.resolve();
+      await coordinator.drain();
+    }
+  });
+
   it("blocks a corrupt report with an unblock recipe and never dispatches", async () => {
     await fs.writeFile(boardPath(), SINGLE_CARD_BOARD);
     const ticketId = ticketIdFromCard(ALPHA_TEXT);

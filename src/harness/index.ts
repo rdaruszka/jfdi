@@ -33,14 +33,13 @@ export function createHarness(
   }
 }
 
-/** One harness per `stages` entry, held for the life of the process. */
+/** One harness per `stages` entry; a settings save may replace this live set. */
 export type SessionHarnesses = Record<SessionKind, Harness>;
 
 /**
- * The whole of per-entry selection: each session kind's harness is fixed at
- * context construction, which is also what makes continuations safe — a session
- * id is only meaningful to the harness that minted it, and a stage always
- * re-enters its own.
+ * The whole of per-entry selection. The pipeline locks a stage to the selected
+ * instance at its first fire, because a continuation id is meaningful only to
+ * the harness that minted it.
  */
 export function createSessionHarnesses(config: JfdiConfig): SessionHarnesses {
   const permissionMode = config.permissions.mode;

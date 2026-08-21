@@ -83,9 +83,14 @@ it for one invocation. The terminal front end is unchanged: `q` quits (as do
 Ctrl-C / SIGTERM, exit codes 130/143), `R` retries a paused harness immediately,
 and redirected stdout is refused because Ink requires a TTY. The web front end
 works without a TTY, prints the URL to open, binds only to `127.0.0.1` on an
-operating-system-assigned port, and is strictly read-only. Its pause banner
-reports the reason and scheduled resume but offers no retry or other action.
-Stopping `jfdi start` closes the server and connected event streams.
+operating-system-assigned port. Its run status remains a read-only rendering of
+the event stream. The Settings button is the page's only write surface: it
+stages edits to every config option and provides Save, Cancel, and Reload.
+Save validates and atomically rewrites `.jfdi/config.json`, refuses a stale edit,
+then applies the saved values to the running coordinator at safe boundaries;
+switching `frontEnd` still requires a restart. Its pause banner reports the
+reason and scheduled resume but offers no retry action. Stopping `jfdi start`
+closes the server and connected event streams.
 
 On startup the coordinator:
 

@@ -168,14 +168,21 @@ Older projects may contain the legacy spellings \`cmd\`, \`ticketsDir\`,
   assume \`main\`), \`integration.mode\` (\`on-approval\` holds merges for a human,
   \`auto\` lands them), \`integration.remote\` (opt-in fetch-before/push-after);
   \`permissions.mode\` (\`auto\` = sandboxed autonomous, default; \`bypass\` =
-  opt-in full access); \`frontEnd\` (\`terminal\` by default, or read-only local
-  \`web\`; \`jfdi start --front-end\` overrides it for one invocation);
+  opt-in full access); \`frontEnd\` (\`terminal\` by default, or local \`web\`;
+  \`jfdi start --front-end\` overrides it for one invocation);
   \`maxConcurrent\`; per-stage \`stages\` entries
   (harness, model, effort per stage plus the scribe).
   Setup does not require this file to be valid: when it cannot load, the setup
   command warns, runs its session with sandboxed \`auto\` permissions, and puts
   the load error in the opening message so you can repair the file. A config
   that still cannot load after the session fails the gate epilogue.
+  The web front end's Settings panel is the only browser write surface. It
+  stages the complete config until Save; Cancel discards, and Reload re-reads
+  disk without applying. Save uses the normal whole-config validation, refuses
+  when the file changed since load, writes atomically, and then applies values
+  to the running coordinator. Capacity and gate changes take effect at the next
+  dispatch or gate boundary. Each stage locks its agent selection when it first
+  fires in a run, and \`frontEnd\` changes require a restart.
 - **\`.jfdi/prompts/*.md\`** — the stage prompt templates, seeded as generic
   defaults at setup. Setup builds every one of them into this project's own
   prompt: each carries what its stage needs to know about *this* project —

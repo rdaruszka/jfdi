@@ -16,8 +16,9 @@ configured gates or on genuine hard blocks.
 
 It is deliberately a **thin orchestrator**: agents run as headless subprocesses
 of an existing coding-agent CLI (Claude Code or Codex), state is flat files, the
-merge target is local git, and the UI is a pure renderer. Each of those choices
-is an extension seam, not a ceiling — see [Extension seams](#extension-seams).
+merge target is local git, and run-status UI is a pure renderer. Each of those
+choices is an extension seam, not a ceiling — see
+[Extension seams](#extension-seams).
 
 ## Components
 
@@ -59,6 +60,8 @@ flowchart TB
     INT -->|emit| EV
     EV -->|reduce| SNAP
     EV -->|render| UI
+    UI -->|validated atomic settings save| CONFIG
+    UI -->|apply saved config| COORD
     PIPE --> RUNS
 ```
 
@@ -122,11 +125,14 @@ flowchart TB
   `events.jsonl` stream, the pure reducer that derives `state.json`, and the
   cross-process tail-following; see [Events & State](events-and-state.md).
 - **Renderers** — the Ink TUI ([src/tui/App.tsx](../../src/tui/App.tsx)), the
-  read-only local web front end ([src/web/server.ts](../../src/web/server.ts)),
+  local web front end ([src/web/server.ts](../../src/web/server.ts)),
   and the inline ANSI printer ([src/commands/context.ts](../../src/commands/context.ts)).
   The live front ends share one bounded view fold
   ([src/renderers/live-view.ts](../../src/renderers/live-view.ts)); all three
-  render only the event stream/snapshot.
+  render run status only from the event stream/snapshot. The web front end's
+  separate settings path reads and atomically writes `config.json`, then hands a
+  successful save to the coordinator; no configuration state lives only in the
+  browser.
 
 ## Anatomy of a run
 
@@ -183,10 +189,12 @@ These are architectural requirements, not preferences. They are stated here
 once; [AGENTS.md](../../AGENTS.md) carries the same list for agents working on
 this repo.
 
-1. **Renderer separation.** All UI renders `events.jsonl`/`state.json` only.
-   Pipeline and coordinator logic never talk to a UI directly, and no state
-   exists only in the UI. The coordinator therefore runs identically whichever
-   front end `jfdi start` selects.
+1. **Renderer separation.** All run status renders from `events.jsonl`/
+   `state.json` only. Pipeline and coordinator logic never talk to a UI directly,
+   and no state exists only in the UI. The web settings write path is separate:
+   disk remains authoritative, and only a successful atomic save is applied to
+   the coordinator. The coordinator therefore runs identically whichever front
+   end `jfdi start` selects.
 2. **Harness abstraction.** Pipeline logic never touches provider-specific
    details; everything goes through the harness interface. Provider-specific
    accelerations (the Claude format hook) live inside the matching harness
@@ -265,7 +273,7 @@ src/
   harness/                the provider abstraction (see harness.md)
   renderers/live-view.ts  shared bounded live renderer view
   tui/App.tsx             the Ink TUI
-  web/server.ts           read-only loopback HTTP front end
+  web/server.ts           loopback HTTP status + settings front end
   guidelines.ts           GENERATED from docs/coding-guidelines.md
   ticket-format.ts        GENERATED from docs/ticket-format.md
   fixture-project.ts      test-fixture factory (see ../development.md)
