@@ -757,7 +757,10 @@ describe("trust boundaries", () => {
 
       const removedRoundConfig = JSON.stringify({ pipeline: { maxRounds: 3 }, stages: STAGES });
       await fs.writeFile(configPath, removedRoundConfig);
-      for (const args of [["run", "Removed round config"], ["start"]]) {
+      for (const args of [
+        ["run", "Removed round config"],
+        ["start", "--front-end", "web"],
+      ]) {
         const result = await runCli(sandbox, args);
         expect(result.code, args.join(" ")).toBe(1);
         expect(result.stderr).toContain("pipeline.maxRounds is no longer supported");
