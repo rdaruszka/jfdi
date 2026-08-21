@@ -28,6 +28,9 @@ A successful Save updates the running coordinator at safe boundaries:
 - `frontEnd` is written to the file but takes effect only after restarting
   `jfdi start`.
 
+The successful Save confirmation mentions that restart only when the saved
+`frontEnd` differs from the front end currently in effect.
+
 A complete example (this is also what `jfdi init` writes, minus the gate, which
 init fills in for your repo):
 

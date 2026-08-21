@@ -28,6 +28,7 @@ const HTTP_INTERNAL_SERVER_ERROR = 500;
 const HTTP_SERVICE_UNAVAILABLE = 503;
 
 export interface WebSettingsSurface {
+  frontEndInEffect(): JfdiConfig["frontEnd"];
   load(): Promise<SettingsSnapshot>;
   save(staged: unknown, revision: string): Promise<SettingsSnapshot>;
 }
@@ -557,7 +558,7 @@ const PAGE = `<!doctype html>
         if (!response.ok) { if (body.field) pointAtSettingsField(body.field, body.error); throw new Error(body.error || "Could not save settings"); }
         settingsRevision = body.revision;
         renderSettings(body.editableConfig);
-        settingsMessage("Saved and applied. Switching front ends still requires a restart.", true);
+        settingsMessage(body.hasPendingFrontEndChange ? "Saved and applied. The new front end takes effect only after restarting jfdi start." : "Saved and applied.", true);
       } catch (error) { settingsMessage(error.message); }
     }
     setSelectOptions(settingsField("integration.mode"), settingsChoices.integrationModes);
@@ -695,10 +696,14 @@ class RunningWebFrontEnd implements WebFrontEnd {
       }
       if (request.method === "POST") {
         const { staged, revision } = settingsSaveInput(await readSettingsBody(request));
+        const frontEndBeforeSave = this.options.settings.frontEndInEffect();
         const snapshot = await this.options.settings.save(staged, revision);
         this.integrationMode = snapshot.config.integration.mode;
         this.ticketsDirectory = snapshot.config.ticketsDirectory;
-        jsonResponse(response, HTTP_OK, snapshot);
+        jsonResponse(response, HTTP_OK, {
+          ...snapshot,
+          hasPendingFrontEndChange: snapshot.config.frontEnd !== frontEndBeforeSave,
+        });
         this.broadcast();
         return;
       }
