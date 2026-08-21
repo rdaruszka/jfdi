@@ -22,8 +22,8 @@ import { describe, expect, it } from "vitest";
  * legitimately read without a matching write in the tree.
  */
 describe("stub env-var contract stays connected", () => {
-  const read = /process\.env\.(STUB_[A-Z0-9_]+)/g;
-  const provided = /\b(STUB_[A-Z0-9_]+)\s*[:=]/g;
+  const readPattern = /process\.env\.(STUB_[A-Z0-9_]+)/g;
+  const providedPattern = /\b(STUB_[A-Z0-9_]+)\s*[:=]/g;
 
   const walk = (directory: string): string[] =>
     fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -31,23 +31,31 @@ describe("stub env-var contract stays connected", () => {
       return entry.isDirectory() ? walk(full) : [full];
     });
 
-  it("provides every STUB_* env var a stub reads", () => {
-    const sourceRoot = import.meta.dirname;
-    const files = walk(sourceRoot).filter((file) => file.endsWith(".ts") || file.endsWith(".tsx"));
+  const matchingNames = (text: string, pattern: RegExp): string[] =>
+    Array.from(text.matchAll(pattern), (match) => match[1]).filter(
+      (name): name is string => name !== undefined,
+    );
 
+  const collectContract = (
+    files: string[],
+    sourceRoot: string,
+  ): { reads: Map<string, string>; providedNames: Set<string> } => {
     const reads = new Map<string, string>();
     const providedNames = new Set<string>();
     for (const file of files) {
       const text = fs.readFileSync(file, "utf8");
-      for (const [, name] of text.matchAll(read)) {
-        if (name !== undefined && !reads.has(name))
-          reads.set(name, path.relative(sourceRoot, file));
+      for (const name of matchingNames(text, readPattern)) {
+        if (!reads.has(name)) reads.set(name, path.relative(sourceRoot, file));
       }
-      for (const [, name] of text.matchAll(provided)) {
-        if (name !== undefined) providedNames.add(name);
-      }
+      for (const name of matchingNames(text, providedPattern)) providedNames.add(name);
     }
+    return { reads, providedNames };
+  };
 
+  it("provides every STUB_* env var a stub reads", () => {
+    const sourceRoot = import.meta.dirname;
+    const files = walk(sourceRoot).filter((file) => file.endsWith(".ts") || file.endsWith(".tsx"));
+    const { reads, providedNames } = collectContract(files, sourceRoot);
     const severed = Array.from(reads)
       .filter(([name]) => !providedNames.has(name))
       .map(([name, file]) => `${name} (read in ${file}) is never set — broken stub env contract`);
