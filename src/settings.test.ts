@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { defaultConfig } from "./config.js";
-import { loadSettings, saveSettings, SettingsStaleError } from "./settings.js";
+import { loadSettings, SettingsStaleError, saveSettings } from "./settings.js";
 
 let projectRoot: string;
 let configPath: string;

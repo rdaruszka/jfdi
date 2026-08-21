@@ -10,10 +10,10 @@ let frontEnd: WebFrontEnd | null = null;
 function memorySettings(): WebSettingsSurface {
   let snapshot: SettingsSnapshot = { config: defaultConfig(), revision: "initial" };
   return {
-    load: async () => snapshot,
-    save: async (staged) => {
+    load: () => Promise.resolve(snapshot),
+    save: (staged) => {
       snapshot = { config: staged as SettingsSnapshot["config"], revision: "saved" };
-      return snapshot;
+      return Promise.resolve(snapshot);
     },
   };
 }
@@ -121,10 +121,13 @@ describe("web front end", () => {
       boardName: "board.md",
       targetBranch: "main",
       settings: {
-        load: async () => ({ config: defaultConfig(), revision: "disk-version" }),
-        save: async (staged, revision) => {
+        load: () => Promise.resolve({ config: defaultConfig(), revision: "disk-version" }),
+        save: (staged, revision) => {
           saves.push({ staged, revision });
-          return { config: staged as SettingsSnapshot["config"], revision: "saved-version" };
+          return Promise.resolve({
+            config: staged as SettingsSnapshot["config"],
+            revision: "saved-version",
+          });
         },
       },
     });

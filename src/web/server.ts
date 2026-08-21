@@ -8,8 +8,8 @@ import {
   reduceLiveView,
   ticketGroups,
 } from "../renderers/live-view.js";
-import { formatRunningTotals } from "../usage.js";
 import { type SettingsSnapshot, SettingsStaleError } from "../settings.js";
+import { formatRunningTotals } from "../usage.js";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const ASSIGNED_PORT = 0;

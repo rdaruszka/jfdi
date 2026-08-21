@@ -5,8 +5,8 @@ import type { EventLog, StageName } from "./events.js";
 import { formatGateFailure, formatGatePass, type GateResult, runGate } from "./gate.js";
 import { createWorktree, git, hasStagedChanges, parseRevision, type Worktree } from "./git.js";
 import type {
-  HarnessEvent,
   Harness,
+  HarnessEvent,
   HarnessResult,
   SessionHarnesses,
   SessionKind,

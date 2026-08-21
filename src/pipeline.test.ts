@@ -70,7 +70,7 @@ describe("runPipeline", () => {
     let context: PipelineContext;
     let implementationCalls = 0;
     let reviewCalls = 0;
-    const replacementImplementation = new FakeHarness(async () => {
+    const replacementImplementation = new FakeHarness(() => {
       throw new Error("replacement implementation must not take over an active run");
     });
     const replacementReview = new FakeHarness(async (prompt) => {
@@ -107,7 +107,7 @@ describe("runPipeline", () => {
       }
       return { ok: true, text: "", sessionId: "original-implementation" };
     });
-    const originalReview = new FakeHarness(async () => {
+    const originalReview = new FakeHarness(() => {
       throw new Error("the not-yet-fired review should adopt replacement settings");
     });
     const qa = new FakeHarness(async (prompt) => {

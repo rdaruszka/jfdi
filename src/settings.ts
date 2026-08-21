@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import * as path from "node:path";
 import {
   defaultConfig,
-  type JfdiConfig,
   JFDI_DIRECTORY,
+  type JfdiConfig,
   parseConfig,
   parseConfigJson,
 } from "./config.js";
@@ -46,15 +46,15 @@ export async function loadSettings(projectRoot: string): Promise<SettingsSnapsho
 }
 
 /** Validate, reject a stale edit, then atomically replace config.json. */
-export async function saveSettings(
+export function saveSettings(
   projectRoot: string,
   staged: unknown,
   expectedRevision: string,
 ): Promise<SettingsSnapshot> {
-  const config = parseConfig(staged);
   const filePath = configPath(projectRoot);
-  const content = `${JSON.stringify(config, null, 2)}\n`;
   return withPathLock(filePath, async () => {
+    const config = parseConfig(staged);
+    const content = `${JSON.stringify(config, null, 2)}\n`;
     const loaded = await readIfExists(filePath);
     if (revisionOf(loaded) !== expectedRevision) throw new SettingsStaleError();
     const reread = await readIfExists(filePath);
