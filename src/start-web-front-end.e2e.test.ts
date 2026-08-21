@@ -684,7 +684,13 @@ describe("jfdi start --front-end web (built CLI)", () => {
       // entry — not merely a message line.
       const refusals: Array<[Record<string, unknown>, string]> = [
         [{ ...loaded.editableConfig, maxConcurrent: 0 }, "maxConcurrent"],
-        [{ ...loaded.editableConfig, pipeline: { maxRounds: 0 } }, "pipeline.maxRounds"],
+        [
+          {
+            ...loaded.editableConfig,
+            pipeline: { maxRejections: { "code-review": -1, qa: 1 } },
+          },
+          "pipeline.maxRejections.code-review",
+        ],
         [
           {
             ...loaded.editableConfig,

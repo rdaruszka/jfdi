@@ -16,7 +16,12 @@
     { "name": "test", "command": "pnpm test" },
     { "name": "lint", "command": "pnpm lint" }
   ],
-  "pipeline": { "maxRounds": 3 },
+  "pipeline": {
+    "maxRejections": {
+      "code-review": 2,
+      "qa": 1
+    }
+  },
   "integration": { "targetBranch": "main", "mode": "on-approval" },
   "maxConcurrent": 2,
   "stages": {

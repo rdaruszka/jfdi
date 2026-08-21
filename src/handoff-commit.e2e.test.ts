@@ -209,7 +209,7 @@ async function runCli(
 const ANSI_STYLE_RE = new RegExp(`${ESCAPE}\\[[0-9;]*m`, "g");
 
 /**
- * The CLI styles its own activity lines, so a phrase like "resuming 3 commits"
+ * The CLI styles its own activity lines, so a phrase like "resuming 4 commits"
  * arrives split by escape sequences. Strip them, and assert on what a human
  * reads rather than on where the colour happened to start.
  */
@@ -263,12 +263,12 @@ describe("handoff commit messages, as git reads them", () => {
       // off a commit with git, and [[cost-reporting]] adds JFDI-Duration and
       // JFDI-Cost to the same block. Asserting on the message text instead
       // would pass even when git sees no trailer block at all.
-      expect(await trailerValue(sandbox.projectRoot, branch, "JFDI-Round")).toBe("1/3");
+      expect(await trailerValue(sandbox.projectRoot, branch, "JFDI-Round")).toBe("1/4");
 
       // …and the human-facing half of the same block is still there.
       const message = await git(sandbox.projectRoot, "log", "-1", "--format=%B", branch);
       expect(message).toContain("JFDI Implementation complete — gate green, moving to Code Review");
-      expect(message).toContain("JFDI-Round: 1/3");
+      expect(message).toContain("JFDI-Round: 1/4");
     },
     PIPELINE_TIMEOUT_MS,
   );
@@ -299,7 +299,7 @@ describe("handoff commit messages, as git reads them", () => {
       const qaMessage = await git(sandbox.projectRoot, "log", "-1", "--format=%B", branch);
       expect(qaMessage).toContain("JFDI QA PASSED — sign-off on commit");
       expect(qaMessage).toContain("gate green, queued for approval before integration");
-      expect(await trailerValue(sandbox.projectRoot, branch, "JFDI-Round")).toBe("1/3");
+      expect(await trailerValue(sandbox.projectRoot, branch, "JFDI-Round")).toBe("1/4");
 
       // Same text on the other surface, verbatim, quoted as note entries are.
       const note = await readNote(sandbox, ticketId);
@@ -319,7 +319,7 @@ describe("handoff commit messages, as git reads them", () => {
       const sandbox = await makeSandbox();
       await initProject(sandbox);
       const run = await runCli(sandbox, ["run", "Add a greeting"], { stubMode: "impl-dies" });
-      // Every round's session dies, so the run exhausts its rounds: exit 2.
+      // Every round's session dies, so the run reaches its derived ceiling: exit 2.
       expect(run.code).toBe(2);
       const ticketId = ticketIdOf(run);
       const branch = `jfdi/${ticketId}`;
@@ -329,13 +329,13 @@ describe("handoff commit messages, as git reads them", () => {
       const subjects = (
         await git(sandbox.projectRoot, "log", "--format=%s", `main..${branch}`)
       ).split("\n");
-      expect(subjects).toHaveLength(3);
+      expect(subjects).toHaveLength(4);
       for (const subject of subjects) expect(subject).toContain(`${ticketId}: WIP — `);
       expect(await git(sandbox.projectRoot, "log", "--format=%s", `main..${branch}`)).not.toContain(
         "AGENT SELF COMMIT",
       );
       // The round each partial commit belongs to is machine-readable too.
-      expect(await trailerValue(sandbox.projectRoot, branch, "JFDI-Round")).toBe("3/3");
+      expect(await trailerValue(sandbox.projectRoot, branch, "JFDI-Round")).toBe("4/4");
       expect(await git(sandbox.projectRoot, "log", "-1", "--format=%B", branch)).toContain(
         "moving to Blocked for human review",
       );
@@ -343,7 +343,7 @@ describe("handoff commit messages, as git reads them", () => {
       // A re-dispatch of the same ticket finds that work and says how much.
       const resumed = await runCli(sandbox, ["run", "Add a greeting"], { stubMode: "impl-dies" });
       expect(ticketIdOf(resumed)).toBe(ticketId);
-      expect(resumed.stdout).toContain("resuming 3 commits of prior work");
+      expect(resumed.stdout).toContain("resuming 4 commits of prior work");
     },
     PIPELINE_TIMEOUT_MS,
   );
@@ -365,7 +365,7 @@ describe("handoff commit messages, as git reads them", () => {
         deathText,
       });
       // The assert on the one-line invariant did not fire: assembly succeeded,
-      // the run exhausted its rounds cleanly, and the WIP work was committed.
+      // the run reached its derived ceiling cleanly, and the WIP work was committed.
       expect(run.code).toBe(2);
       const branch = `jfdi/${ticketIdOf(run)}`;
 
@@ -390,7 +390,7 @@ describe("handoff commit messages, as git reads them", () => {
       expect(message).not.toContain(ESCAPE);
       // The trailer block below the status line is still machine-readable, so
       // the status line did not bleed into it.
-      expect(await trailerValue(sandbox.projectRoot, branch, "JFDI-Round")).toBe("3/3");
+      expect(await trailerValue(sandbox.projectRoot, branch, "JFDI-Round")).toBe("4/4");
     },
     PIPELINE_TIMEOUT_MS,
   );
@@ -438,7 +438,7 @@ describe("handoff commit messages, as git reads them", () => {
       expect(message).not.toContain("\r");
       // The trailer block below stays machine-readable: the outcome did not
       // bleed a stray newline into it.
-      expect(await trailerValue(sandbox.projectRoot, branch, "JFDI-Round")).toBe("3/3");
+      expect(await trailerValue(sandbox.projectRoot, branch, "JFDI-Round")).toBe("4/4");
     },
     PIPELINE_TIMEOUT_MS,
   );
@@ -539,7 +539,7 @@ describe("handoff commit messages, as git reads them", () => {
           "JFDI Implementation complete — gate green, moving to Code Review",
         );
         expect(await trailerValue(sandbox.projectRoot, branch, "JFDI-Round"), testCase.name).toBe(
-          "1/3",
+          "1/4",
         );
 
         // The note still parses as one trail: every entry the run wrote is
@@ -588,7 +588,7 @@ describe("handoff commit messages, as git reads them", () => {
       const message = await git(sandbox.projectRoot, "log", "-1", "--format=%B", branch);
       expect(message).not.toContain(`\n\n${firstLine}`);
       expect(message).toContain(body);
-      expect(await trailerValue(sandbox.projectRoot, branch, "JFDI-Round")).toBe("1/3");
+      expect(await trailerValue(sandbox.projectRoot, branch, "JFDI-Round")).toBe("1/4");
 
       // The 72-char figure survives only where the ticket allows it: as guidance
       // in the scribe's prompt, never as a threshold the code enforces.

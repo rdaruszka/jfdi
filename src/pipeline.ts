@@ -1,6 +1,12 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { JfdiConfig, SessionConfig } from "./config.js";
+import {
+  derivedRoundCeiling,
+  type JfdiConfig,
+  type RejectionBudgets,
+  type ReviewStageName,
+  type SessionConfig,
+} from "./config.js";
 import type { EventLog, StageName } from "./events.js";
 import { formatGateFailure, formatGatePass, type GateResult, runGate } from "./gate.js";
 import { createWorktree, git, hasStagedChanges, parseRevision, type Worktree } from "./git.js";
@@ -1089,6 +1095,14 @@ async function runImplementationStage(
 type CodeReviewStep =
   | { kind: "pass"; decisions: string[]; observations: string[] }
   | { kind: "retry"; feedback: string; decisions: string[]; observations: string[] }
+  | {
+      kind: "rejected";
+      feedback: string;
+      count: number;
+      budget: number;
+      decisions: string[];
+      observations: string[];
+    }
   | { kind: "blocked"; reason: string; observations: string[] };
 
 interface CodeReviewStageInput {
@@ -1100,6 +1114,17 @@ interface CodeReviewStageInput {
   headCommit: string;
   previousSession: StageSessionMemory | undefined;
   previousFailure: FeedbackItem | undefined;
+  rejectionCount: number;
+  rejectionBudget: number;
+}
+
+function reviewerLabel(reviewer: ReviewStageName): string {
+  return reviewer === "code-review" ? "Code Review" : "QA";
+}
+
+function rejectionReason(reviewer: ReviewStageName, count: number, budget: number): string {
+  const countLabel = count === 1 ? "time" : "times";
+  return `${reviewerLabel(reviewer)} rejected ${count} ${countLabel} (budget ${budget})`;
 }
 
 function codeReviewFailureFeedback(verdict: ReviewVerdict | null, outcome: StageOutcome): string {
@@ -1117,14 +1142,14 @@ interface CodeReviewJudgment {
 function judgeCodeReview(
   result: StageVerdictResult<ReviewVerdict>,
   input: CodeReviewStageInput,
-  maxRounds: number,
+  roundCeiling: number,
 ): CodeReviewJudgment {
   const { verdict, outcome } = result;
   const decisions = verdict?.decisions ?? [];
   const handoffBase = {
     stage: "code-review" as const,
     round: input.round,
-    maxRounds,
+    maxRounds: roundCeiling,
     decisions,
     usage: outcome.usage,
   };
@@ -1142,22 +1167,46 @@ function judgeCodeReview(
       step: { kind: "blocked", reason, observations: [] },
     };
   }
-  if (!verdict || verdict.verdict === "fail") {
+  if (!verdict) {
     const feedback = codeReviewFailureFeedback(verdict, outcome);
     return {
       handoff: {
         ...handoffBase,
-        outcome: verdict === null ? `interrupted: ${firstLine(feedback)}` : "FAILED",
-        routing: retryRouting(input.round, maxRounds),
+        outcome: `interrupted: ${firstLine(feedback)}`,
+        routing: retryRouting(input.round, roundCeiling),
         summary: feedback,
-        isInterrupted: verdict === null,
+        isInterrupted: true,
       },
       detail: feedback,
       step: {
         kind: "retry",
         feedback,
         decisions,
-        observations: verdict?.observations ?? [],
+        observations: [],
+      },
+    };
+  }
+  if (verdict.verdict === "fail") {
+    const feedback = codeReviewFailureFeedback(verdict, outcome);
+    const count = input.rejectionCount + 1;
+    const reason = rejectionReason("code-review", count, input.rejectionBudget);
+    const isBudgetExceeded = count > input.rejectionBudget;
+    return {
+      handoff: {
+        ...handoffBase,
+        outcome: "FAILED",
+        routing: isBudgetExceeded ? BLOCKED_ROUTING : retryRouting(input.round, roundCeiling),
+        summary: feedback,
+        isInterrupted: false,
+      },
+      detail: `${feedback}\n\n${reason}.`,
+      step: {
+        kind: "rejected",
+        feedback,
+        count,
+        budget: input.rejectionBudget,
+        decisions,
+        observations: verdict.observations ?? [],
       },
     };
   }
@@ -1240,7 +1289,11 @@ async function runCodeReviewStage(
     verdict: verdict?.verdict ?? (outcome.ok ? "invalid-verdict" : "session-failed"),
     ...stageUsageFields(context, ticket.id, "code-review", outcome.usage, outcome.agent.config),
   });
-  const judgment = judgeCodeReview(result, input, context.config.pipeline.maxRounds);
+  const judgment = judgeCodeReview(
+    result,
+    input,
+    derivedRoundCeiling(context.config.pipeline.maxRejections),
+  );
   await recordStagePhase(
     input.notePath,
     judgment.handoff,
@@ -1251,7 +1304,14 @@ async function runCodeReviewStage(
 
 type RoundStep =
   | { kind: "retry"; source: FeedbackItem["source"]; feedback: string }
-  | { kind: "blocked"; reason: string }
+  | {
+      kind: "rejected";
+      reviewer: ReviewStageName;
+      feedback: string;
+      count: number;
+      budget: number;
+    }
+  | { kind: "blocked"; reason: string; outcome?: string }
   | { kind: "passed"; testsAdded: string };
 
 interface RoundResult {
@@ -1291,14 +1351,15 @@ interface RoundInput {
   history: FeedbackItem[];
   resume: ResumeState | null;
   memory: SessionMemory;
+  rejectionCounts: RejectionBudgets;
 }
 
 /**
- * How many gate-fix sessions one round pays for before the gate failure is
- * allowed to consume the round. Gate fixes can get complicated, so this is
- * provisioned generously — the round cap still bounds the run as a whole.
+ * How many fix sessions a red gate gets before the fourth failed attempt blocks.
+ * Implementation and QA use the same constant.
  */
-const MAX_GATE_FIX_SESSIONS_PER_ROUND = 10;
+const MAX_GATE_FIX_SESSIONS = 3;
+const MAX_GATE_ATTEMPTS = MAX_GATE_FIX_SESSIONS + 1;
 
 /** Spec-invalid verdict corrections stay inside their current round. */
 const MAX_VERDICT_CORRECTION_ATTEMPTS = 2;
@@ -1431,17 +1492,12 @@ type ImplementationIterationResult =
   | ({ kind: "exit"; step: RoundStep } & ImplementationIterationBase)
   | ({ kind: "gated"; gate: GateResult; feedback: string } & ImplementationIterationBase);
 
-function implementationGateRouting(
-  gate: GateResult,
-  fixSession: number,
-  round: number,
-  maxRounds: number,
-): string {
+function implementationGateRouting(gate: GateResult, fixSession: number): string {
   if (gate.ok) return gateGreenRouting(gate, "moving to Code Review");
   const failedStep = gate.results.at(-1)?.name ?? "unknown step";
-  if (fixSession >= MAX_GATE_FIX_SESSIONS_PER_ROUND)
-    return `gate failed at \`${failedStep}\`, ${retryRouting(round, maxRounds)}`;
-  return `gate failed at \`${failedStep}\`, continuing with gate fix ${fixSession + 1} of ${MAX_GATE_FIX_SESSIONS_PER_ROUND}`;
+  if (fixSession >= MAX_GATE_FIX_SESSIONS)
+    return `gate failed at \`${failedStep}\` after ${MAX_GATE_ATTEMPTS} attempts, ${BLOCKED_ROUTING}`;
+  return `gate failed at \`${failedStep}\`, continuing with gate fix ${fixSession + 1} of ${MAX_GATE_FIX_SESSIONS}`;
 }
 
 async function runImplementationGateIteration(
@@ -1455,7 +1511,7 @@ async function runImplementationGateIteration(
   previousSummary: string | undefined,
 ): Promise<ImplementationIterationResult> {
   const { roundDirectory, notePath, round, history, resume } = input;
-  const maxRounds = context.config.pipeline.maxRounds;
+  const maxRounds = derivedRoundCeiling(context.config.pipeline.maxRejections);
   const sessionDirectory = cycleSessionDirectory(roundDirectory, fixSession);
   await ensureDirectory(sessionDirectory);
   const implementation = await runImplementationStage(context, ticket, worktree, {
@@ -1498,7 +1554,7 @@ async function runImplementationGateIteration(
     round,
     maxRounds,
     implementation.usage,
-    implementationGateRouting(gate, fixSession, round, maxRounds),
+    implementationGateRouting(gate, fixSession),
   );
   return {
     kind: "gated",
@@ -1519,9 +1575,8 @@ async function runImplementationGateIteration(
  * The Implementation-gate cycle: sessions until the gate is green. A gate
  * failure stays inside the round — it returns to the same Implementation
  * session as feedback and the gate reruns, up to
- * MAX_GATE_FIX_SESSIONS_PER_ROUND fix sessions — because rounds mean moving on
- * to other agents, not iterating with the machine. Only a gate still red after
- * those fixes leaves as a round-consuming retry step.
+ * MAX_GATE_FIX_SESSIONS fix sessions — because rounds mean moving on to other
+ * agents, not iterating with the machine. A fourth red attempt blocks directly.
  */
 async function runImplementationGateCycle(
   context: PipelineContext,
@@ -1571,12 +1626,15 @@ async function runImplementationGateCycle(
       await recordGateFixPhase(notePath, phaseRecords, "implementation");
       return { kind: "proceed", ...collected(), gate: iteration.gate, headCommit };
     }
-    if (fixSession >= MAX_GATE_FIX_SESSIONS_PER_ROUND) {
+    if (fixSession >= MAX_GATE_FIX_SESSIONS) {
       await recordGateFixPhase(notePath, phaseRecords, "implementation");
+      const failedStep = failedGateStep(iteration.gate);
+      const reason = `Mechanical gate failed at \`${failedStep}\` after ${MAX_GATE_ATTEMPTS} attempts`;
+      context.log.emit("blocked", ticket.id, { reason });
       return {
         kind: "exit",
         ...collected(),
-        step: { kind: "retry", source: "gate", feedback: iteration.feedback },
+        step: { kind: "blocked", reason, outcome: "gate exhausted" },
       };
     }
     gateFailures.push({ run: runNumber, round, source: "gate", feedback: iteration.feedback });
@@ -1615,6 +1673,8 @@ async function runRound(
     headCommit,
     previousSession: memory["code-review"],
     previousFailure,
+    rejectionCount: input.rejectionCounts["code-review"],
+    rejectionBudget: context.config.pipeline.maxRejections["code-review"],
   });
   memory["code-review"] = {
     sessionId: review.sessionId,
@@ -1641,6 +1701,22 @@ async function runRound(
       step: { kind: "retry", source: "code-review", feedback },
     };
   }
+  if (review.step.kind === "rejected") {
+    decisions.push(...review.step.decisions);
+    return {
+      decisions,
+      observations,
+      summary,
+      memory,
+      step: {
+        kind: "rejected",
+        reviewer: "code-review",
+        feedback: review.step.feedback,
+        count: review.step.count,
+        budget: review.step.budget,
+      },
+    };
+  }
   decisions.push(...review.step.decisions);
 
   const qa = await runQaPhase(context, ticket, worktree, {
@@ -1651,6 +1727,8 @@ async function runRound(
     headCommit,
     previousSession: memory.qa,
     previousFailure,
+    rejectionCount: input.rejectionCounts.qa,
+    rejectionBudget: context.config.pipeline.maxRejections.qa,
   });
   memory.qa = qa.memory;
   decisions.push(...qa.decisions);
@@ -1667,6 +1745,8 @@ interface QaPhaseInput {
   headCommit: string;
   previousSession: StageSessionMemory | undefined;
   previousFailure: FeedbackItem | undefined;
+  rejectionCount: number;
+  rejectionBudget: number;
 }
 
 interface QaPhaseResult {
@@ -1700,7 +1780,7 @@ function qaGateFixRedRouting(gate: GateResult, fixSession: number): string {
   const failedStep = failedGateStep(gate);
   const fixLabel = fixSession === 1 ? "gate fix" : "gate fixes";
   const completedFixes = fixSession === 0 ? "" : ` after ${fixSession} ${fixLabel}`;
-  return `gate failed at \`${failedStep}\` over QA's tests${completedFixes}, continuing with gate fix ${fixSession + 1} of ${MAX_GATE_FIX_SESSIONS_PER_ROUND}`;
+  return `gate failed at \`${failedStep}\` over QA's tests${completedFixes}, continuing with gate fix ${fixSession + 1} of ${MAX_GATE_FIX_SESSIONS}`;
 }
 
 function qaGateFixGreenRouting(
@@ -1753,7 +1833,7 @@ async function routeQaGate(
     return {
       ...unchanged,
       step: { kind: "retry", source: "gate", feedback },
-      routingOverride: `${feedback} ${retryRouting(input.round, context.config.pipeline.maxRounds)}`,
+      routingOverride: `${feedback} ${retryRouting(input.round, derivedRoundCeiling(context.config.pipeline.maxRejections))}`,
     };
   }
   if (step.kind !== "passed" || (!hasChanges && fixSession === 0)) return unchanged;
@@ -1779,7 +1859,7 @@ async function routeQaGate(
   }
 
   const firstFailure = firstGateFailure ?? postQaGate;
-  if (fixSession < MAX_GATE_FIX_SESSIONS_PER_ROUND)
+  if (fixSession < MAX_GATE_FIX_SESSIONS)
     return {
       ...unchanged,
       postQaGate,
@@ -1788,14 +1868,18 @@ async function routeQaGate(
       firstGateFailure: firstFailure,
       latestGateFailure: postQaGate,
     };
+  const failedStep = failedGateStep(postQaGate);
+  const reason = `Mechanical gate failed at \`${failedStep}\` after ${MAX_GATE_ATTEMPTS} attempts`;
+  context.log.emit("blocked", ticket.id, { reason });
   return {
     ...unchanged,
     step: {
-      kind: "retry",
-      source: "gate",
-      feedback: `The mechanical gate failed after QA committed its tests.\n\n${formatGateFailure(postQaGate)}`,
+      kind: "blocked",
+      reason,
+      outcome: "gate exhausted",
     },
     postQaGate,
+    routingOverride: `gate failed at \`${failedStep}\` after ${MAX_GATE_ATTEMPTS} attempts, ${BLOCKED_ROUTING}`,
     firstGateFailure: firstFailure,
     latestGateFailure: postQaGate,
   };
@@ -1834,12 +1918,19 @@ async function runQaGateIteration(
       ? { gateFix: { failure: latestGateFailure, allowedPaths } }
       : {}),
   });
-  const judgedStep = await judgeQa(context, ticket, input.notePath, qa);
+  const judgedStep = await judgeQa(
+    context,
+    ticket,
+    input.notePath,
+    qa,
+    input.rejectionCount,
+    input.rejectionBudget,
+  );
   const initialHandoff = qaHandoff(
     judgedStep,
     qa.verdict,
     input.round,
-    context.config.pipeline.maxRounds,
+    derivedRoundCeiling(context.config.pipeline.maxRejections),
     qa.outcome.usage,
     input.headCommit,
     null,
@@ -1873,7 +1964,7 @@ async function runQaGateIteration(
     step,
     qa.verdict,
     input.round,
-    context.config.pipeline.maxRounds,
+    derivedRoundCeiling(context.config.pipeline.maxRejections),
     qa.outcome.usage,
     input.headCommit,
     routing.postQaGate,
@@ -1885,7 +1976,9 @@ async function runQaGateIteration(
     ticket,
     { ...handoffInput, handoff },
     hasChanges,
-    qa.verdict?.verdict === "fail" ? (qa.verdict.feedback ?? "") : "",
+    qa.verdict?.verdict === "fail"
+      ? `${qa.verdict.feedback ?? ""}\n\n${rejectionReason("qa", input.rejectionCount + 1, input.rejectionBudget)}.`
+      : "",
   );
   return {
     ...routing,
@@ -2009,6 +2102,50 @@ function qaSignedOffRouting(signedOffCommit: string, destination: string): strin
   return `sign-off on commit \`${shortSha(signedOffCommit)}\`, ${destination}`;
 }
 
+type QaRetryStep = Exclude<RoundStep, { kind: "passed" } | { kind: "blocked" }>;
+type QaHandoffBase = Omit<SessionHandoff, "outcome" | "routing" | "summary" | "isInterrupted">;
+
+function qaRetryHandoff(
+  step: QaRetryStep,
+  verdict: ReviewVerdict | null,
+  base: QaHandoffBase,
+  round: number,
+  maxRounds: number,
+  signedOffCommit: string,
+  postQaGate: GateResult | null,
+  routingOverride: string | undefined,
+): SessionHandoff {
+  if (
+    verdict?.verdict === "pass" &&
+    (routingOverride !== undefined || (postQaGate !== null && !postQaGate.ok))
+  )
+    return {
+      ...base,
+      outcome: "PASSED",
+      routing: qaSignedOffRouting(
+        signedOffCommit,
+        routingOverride ?? `gate failed over the new tests, ${retryRouting(round, maxRounds)}`,
+      ),
+      summary: step.feedback,
+      isInterrupted: false,
+    };
+  if (step.kind === "rejected")
+    return {
+      ...base,
+      outcome: "FAILED",
+      routing: step.count > step.budget ? BLOCKED_ROUTING : retryRouting(round, maxRounds),
+      summary: step.feedback,
+      isInterrupted: false,
+    };
+  return {
+    ...base,
+    outcome: verdict === null ? `interrupted: ${firstLine(step.feedback)}` : "interrupted",
+    routing: retryRouting(round, maxRounds),
+    summary: step.feedback,
+    isInterrupted: true,
+  };
+}
+
 /** The same, for QA — which commits when it wrote acceptance tests, and only then. */
 function qaHandoff(
   step: RoundStep,
@@ -2047,42 +2184,21 @@ function qaHandoff(
   if (step.kind === "blocked")
     return {
       ...base,
-      outcome: "escalated",
-      routing: BLOCKED_ROUTING,
+      outcome: step.outcome ?? "escalated",
+      routing: routingOverride ?? BLOCKED_ROUTING,
       summary: step.reason,
       isInterrupted: true,
     };
-  if (
-    verdict?.verdict === "pass" &&
-    (routingOverride !== undefined || (postQaGate !== null && !postQaGate.ok))
-  )
-    return {
-      ...base,
-      outcome: "PASSED",
-      routing: qaSignedOffRouting(
-        signedOffCommit,
-        routingOverride ?? `gate failed over the new tests, ${retryRouting(round, maxRounds)}`,
-      ),
-      summary: step.feedback,
-      isInterrupted: false,
-    };
-  // A QA session that produced no verdict did not finish; one that failed the
-  // work did, and its tests are complete even though the round is not.
-  return verdict === null
-    ? {
-        ...base,
-        outcome: `interrupted: ${firstLine(step.feedback)}`,
-        routing: retryRouting(round, maxRounds),
-        summary: step.feedback,
-        isInterrupted: true,
-      }
-    : {
-        ...base,
-        outcome: "FAILED",
-        routing: retryRouting(round, maxRounds),
-        summary: step.feedback,
-        isInterrupted: false,
-      };
+  return qaRetryHandoff(
+    step,
+    verdict,
+    base,
+    round,
+    maxRounds,
+    signedOffCommit,
+    postQaGate,
+    routingOverride,
+  );
 }
 
 /** Turn a QA outcome into the round's verdict, recording an escalation if that's what it is. */
@@ -2091,6 +2207,8 @@ async function judgeQa(
   ticket: Ticket,
   notePath: string,
   qa: StageVerdictResult<ReviewVerdict>,
+  rejectionCount: number,
+  rejectionBudget: number,
 ): Promise<RoundStep> {
   if (qa.invalidVerdictFailure) return { kind: "blocked", reason: qa.invalidVerdictFailure };
   if (qa.verdict?.verdict === "escalate") {
@@ -2102,27 +2220,137 @@ async function judgeQa(
     });
     return { kind: "blocked", reason: question };
   }
-  if (!qa.verdict || qa.verdict.verdict === "fail") {
+  if (!qa.verdict) {
     return {
       kind: "retry",
       source: "qa",
-      feedback:
-        qa.verdict?.feedback ??
-        `QA session did not produce a valid verdict${qa.outcome.ok ? "" : `: ${qa.outcome.resultText}`}.`,
+      feedback: `QA session did not produce a valid verdict${qa.outcome.ok ? "" : `: ${qa.outcome.resultText}`}.`,
     };
   }
+  if (qa.verdict.verdict === "fail")
+    return {
+      kind: "rejected",
+      reviewer: "qa",
+      feedback: qa.verdict.feedback ?? "QA failed without specific feedback.",
+      count: rejectionCount + 1,
+      budget: rejectionBudget,
+    };
   return { kind: "passed", testsAdded: qa.verdict.testsAdded ?? "" };
 }
 
 function startedCommentBody(config: JfdiConfig, branch: string): string {
-  const maxRounds = config.pipeline.maxRounds;
+  const { maxRejections } = config.pipeline;
+  const maxRounds = derivedRoundCeiling(maxRejections);
   const roundLabel = maxRounds === 1 ? "round" : "rounds";
   const target = config.integration.targetBranch;
   const mergePlan =
     config.integration.mode === "auto"
       ? `will merge to \`${target}\``
       : `will queue for approval before merging to \`${target}\``;
-  return `Run started — ${maxRounds} ${roundLabel} max. Working branch \`${branch}\`, ${mergePlan}.`;
+  return `Run started — ${maxRounds} ${roundLabel} max. Code Review may reject ${maxRejections["code-review"]}×, QA ${maxRejections.qa}×. Working branch \`${branch}\`, ${mergePlan}.`;
+}
+
+type PriorHistoryResult =
+  | { history: FeedbackItem[] }
+  | { outcome: Extract<PipelineOutcome, { status: "blocked" }> };
+
+async function loadPriorHistoryForRun(
+  context: PipelineContext,
+  ticket: Ticket,
+  notePath: string,
+  previousRunDirectory: string | null,
+): Promise<PriorHistoryResult> {
+  try {
+    return {
+      history: previousRunDirectory ? await loadFeedbackHistory(previousRunDirectory) : [],
+    };
+  } catch (error) {
+    if (!(error instanceof FeedbackHistoryError)) throw error;
+    const warning = malformedFeedbackHistoryWarning(error);
+    await recordTransition(notePath, "resume", 1, warning);
+    context.log.emit("error", ticket.id, {
+      message: error.message,
+      filePath: error.filePath,
+      failure: error.failure,
+    });
+    context.log.emit("blocked", ticket.id, { reason: error.message });
+    return {
+      outcome: { status: "blocked", reason: error.message, observations: [] },
+    };
+  }
+}
+
+async function passedPipelineOutcome(
+  context: PipelineContext,
+  ticket: Ticket,
+  worktree: Worktree,
+  runDirectory: string,
+  round: number,
+  runStartedMs: number,
+  summary: string,
+  decisions: string[],
+  observations: string[],
+  testsAdded: string,
+): Promise<PipelineOutcome> {
+  await saveFeedbackHistory(runDirectory, []);
+  const finalCommit = await parseRevision(worktree.path, "HEAD");
+  return {
+    status: "passed",
+    worktree,
+    report: {
+      summary,
+      decisions,
+      observations,
+      testsAdded,
+      rounds: round,
+      commit: finalCommit,
+      usageRows: context.usage.of(ticket.id).snapshot(),
+      elapsedMs: nowMs(context) - runStartedMs,
+    },
+  };
+}
+
+interface StartedPipelineRun {
+  worktree: Worktree;
+  resume: ResumeState | null;
+  runStartedMs: number;
+  maxRounds: number;
+}
+
+async function startPipelineRun(
+  context: PipelineContext,
+  ticket: Ticket,
+  notePath: string,
+  runDirectory: string,
+): Promise<StartedPipelineRun> {
+  const target = context.config.integration.targetBranch;
+  const worktree = await createWorktree(
+    context.projectRoot,
+    worktreesDirectory(context.jfdiDirectory),
+    ticket.id,
+    target,
+  );
+  await ensureDirectory(runDirectory);
+  context.usage.start(ticket.id);
+  const runStartedMs = nowMs(context);
+  const maxRounds = derivedRoundCeiling(context.config.pipeline.maxRejections);
+  context.log.emit("dispatch", ticket.id, { title: ticket.cardText, branch: worktree.branch });
+  await recordPhase(
+    notePath,
+    "JFDI started",
+    "dispatch",
+    0,
+    startedCommentBody(context.config, worktree.branch),
+  );
+  reportUnresolvedLinks(context, ticket);
+  const resume = await prepareResume(worktree.path, target, ticket.id);
+  if (resume)
+    context.log.emit("resumed", ticket.id, {
+      commitCount: resume.commitCount,
+      hasCheckpointedChanges: resume.hasCheckpointedChanges,
+      hasAbortedMerge: resume.hasAbortedMerge,
+    });
+  return { worktree, resume, runStartedMs, maxRounds };
 }
 
 /**
@@ -2136,7 +2364,6 @@ export async function runPipeline(
   context: PipelineContext,
   ticket: Ticket,
 ): Promise<PipelineOutcome> {
-  const target = context.config.integration.targetBranch;
   await ensureJfdiGitignore(context.jfdiDirectory);
   const notePath = await ensureTicketNote(
     ticket,
@@ -2148,54 +2375,21 @@ export async function runPipeline(
   // state, so stop before creating or sanitizing the worktree or dispatching. The
   // next run directory is deliberately not created: fixing or deleting this
   // same file is the only way a re-dispatch can proceed.
-  let priorHistory: FeedbackItem[] = [];
-  try {
-    if (runDirectories.previous) priorHistory = await loadFeedbackHistory(runDirectories.previous);
-  } catch (error) {
-    if (!(error instanceof FeedbackHistoryError)) throw error;
-    const warning = malformedFeedbackHistoryWarning(error);
-    await recordTransition(notePath, "resume", 1, warning);
-    context.log.emit("error", ticket.id, {
-      message: error.message,
-      filePath: error.filePath,
-      failure: error.failure,
-    });
-    context.log.emit("blocked", ticket.id, {
-      reason: error.message,
-    });
-    return { status: "blocked", reason: error.message, observations: [] };
-  }
-
-  const worktree = await createWorktree(
-    context.projectRoot,
-    worktreesDirectory(context.jfdiDirectory),
-    ticket.id,
-    target,
-  );
-  await ensureDirectory(runDirectories.current);
-  // A fresh tally per run, and the clock the ticket-level elapsed measures from.
-  context.usage.start(ticket.id);
-  const runStartedMs = nowMs(context);
-  const maxRounds = context.config.pipeline.maxRounds;
-  context.log.emit("dispatch", ticket.id, { title: ticket.cardText, branch: worktree.branch });
-  await recordPhase(
+  const loadedPriorHistory = await loadPriorHistoryForRun(
+    context,
+    ticket,
     notePath,
-    "JFDI started",
-    "dispatch",
-    0,
-    startedCommentBody(context.config, worktree.branch),
+    runDirectories.previous,
   );
-  reportUnresolvedLinks(context, ticket);
+  if ("outcome" in loadedPriorHistory) return loadedPriorHistory.outcome;
+  const priorHistory = loadedPriorHistory.history;
 
-  // A re-dispatched ticket may carry partial work and a half-finished git
-  // state from a run that died; sanitize both before any session sees them.
-  const resume = await prepareResume(worktree.path, target, ticket.id);
-  if (resume)
-    context.log.emit("resumed", ticket.id, {
-      commitCount: resume.commitCount,
-      hasCheckpointedChanges: resume.hasCheckpointedChanges,
-      hasAbortedMerge: resume.hasAbortedMerge,
-    });
+  const { worktree, resume, runStartedMs, maxRounds } = await startPipelineRun(
+    context,
+    ticket,
+    notePath,
+    runDirectories.current,
+  );
 
   // `history` is this run's own; `priorHistory` was recovered before sanitizing.
   const history: FeedbackItem[] = [];
@@ -2203,6 +2397,7 @@ export async function runPipeline(
   const allObservations = new Set<string>();
   let summary = "";
   let memory: SessionMemory = {};
+  let rejectionCounts: RejectionBudgets = { "code-review": 0, qa: 0 };
   for (let round = 1; round <= maxRounds; round++) {
     context.log.emit("round_start", ticket.id, { round });
     const roundDirectory = path.join(runDirectories.current, `round-${round}`);
@@ -2218,66 +2413,84 @@ export async function runPipeline(
       // rounds work on top of commits this run made itself.
       resume: round === 1 ? resume : null,
       memory,
+      rejectionCounts,
     });
     memory = result.memory;
     allDecisions.push(...result.decisions);
     for (const observation of result.observations) allObservations.add(observation);
     summary = result.summary ?? summary;
 
-    if (result.step.kind === "retry") {
-      history.push({
-        run: runDirectories.runNumber,
-        round,
-        source: result.step.source,
-        feedback: result.step.feedback,
-      });
-      await saveFeedbackHistory(runDirectories.current, [...priorHistory, ...history]);
-      continue;
+    switch (result.step.kind) {
+      case "retry":
+        history.push({
+          run: runDirectories.runNumber,
+          round,
+          source: result.step.source,
+          feedback: result.step.feedback,
+        });
+        await saveFeedbackHistory(runDirectories.current, [...priorHistory, ...history]);
+        continue;
+      case "rejected":
+        rejectionCounts = { ...rejectionCounts, [result.step.reviewer]: result.step.count };
+        history.push({
+          run: runDirectories.runNumber,
+          round,
+          source: result.step.reviewer,
+          feedback: result.step.feedback,
+        });
+        await saveFeedbackHistory(runDirectories.current, [...priorHistory, ...history]);
+        if (result.step.count <= result.step.budget) continue;
+        return recordRejectionBudgetExhausted(
+          context,
+          ticket,
+          notePath,
+          result.step.reviewer,
+          result.step.count,
+          result.step.budget,
+          history,
+          [...allObservations],
+        );
+      case "blocked":
+        // The session stopped without answering inherited feedback, so carry it forward.
+        await saveFeedbackHistory(runDirectories.current, [...priorHistory, ...history]);
+        return {
+          status: "blocked",
+          reason: result.step.reason,
+          observations: [...allObservations],
+        };
+      case "passed":
+        return passedPipelineOutcome(
+          context,
+          ticket,
+          worktree,
+          runDirectories.current,
+          round,
+          runStartedMs,
+          summary,
+          allDecisions,
+          [...allObservations],
+          result.step.testsAdded,
+        );
     }
-    if (result.step.kind === "blocked") {
-      // A blocked run concluded nothing: the session saw the inherited feedback
-      // but stopped on a question instead of answering it. So the inherited
-      // items stay unanswered business too and are carried forward.
-      await saveFeedbackHistory(runDirectories.current, [...priorHistory, ...history]);
-      return {
-        status: "blocked",
-        reason: result.step.reason,
-        observations: [...allObservations],
-      };
-    }
-
-    // The run finished: earlier rounds' feedback was addressed, so it is no
-    // longer unfinished business for a later dispatch to inherit.
-    await saveFeedbackHistory(runDirectories.current, []);
-    const finalCommit = await parseRevision(worktree.path, "HEAD");
-    return {
-      status: "passed",
-      worktree,
-      report: {
-        summary,
-        decisions: allDecisions,
-        observations: [...allObservations],
-        testsAdded: result.step.testsAdded,
-        rounds: round,
-        commit: finalCommit,
-        usageRows: context.usage.of(ticket.id).snapshot(),
-        elapsedMs: nowMs(context) - runStartedMs,
-      },
-    };
   }
 
-  return recordRoundsExhausted(context, ticket, notePath, history, maxRounds, [...allObservations]);
+  const reason = `Derived round ceiling of ${maxRounds} reached without sign-off`;
+  context.log.emit("blocked", ticket.id, { reason });
+  return { status: "blocked", reason, observations: [...allObservations] };
 }
 
-/** Rounds exhausted → Blocked, with the accumulated round history in the note. */
-async function recordRoundsExhausted(
+/** A reviewer exceeded its rejection budget → Blocked, with the round history in Questions. */
+async function recordRejectionBudgetExhausted(
   context: PipelineContext,
   ticket: Ticket,
   notePath: string,
+  reviewer: ReviewStageName,
+  count: number,
+  budget: number,
   history: FeedbackItem[],
-  maxRounds: number,
   observations: string[],
 ): Promise<PipelineOutcome> {
+  const reason = rejectionReason(reviewer, count, budget);
   const historyMarkdown = history
     .map((h) => `- **round ${h.round} (${h.source}):** ${h.feedback.split("\n")[0]}`)
     .join("\n");
@@ -2285,19 +2498,19 @@ async function recordRoundsExhausted(
     notePath,
     "Questions",
     [
-      `### ${todayIsoDate()} — retries exhausted`,
+      `### ${todayIsoDate()} — rejection budget exhausted`,
       "",
-      `All ${maxRounds} rounds failed. Round history:`,
+      `${reason}. Round history:`,
       "",
       historyMarkdown,
       "",
       `_Full logs: ${runsDirectory(context.stateDirectory, ticket.id)}/. Adjust the ticket and move it back to "${context.config.board.columns.begin}" to retry._`,
     ].join("\n"),
   );
-  context.log.emit("blocked", ticket.id, { reason: `retries exhausted after ${maxRounds} rounds` });
+  context.log.emit("blocked", ticket.id, { reason });
   return {
     status: "blocked",
-    reason: `retries exhausted after ${maxRounds} rounds`,
+    reason,
     observations,
   };
 }

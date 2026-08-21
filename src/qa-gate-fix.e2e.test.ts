@@ -299,7 +299,7 @@ describe("QA fixes its own gate-breaking tests in-stage", () => {
           "--format=%(trailers:key=JFDI-Round,valueonly)",
           branch,
         ),
-      ).toBe("1/3");
+      ).toBe("1/4");
 
       // Exactly one QA comment for the round, folding both sessions' messages:
       // the initial red status, the gate-fix session marker, both gate-fix

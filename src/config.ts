@@ -34,6 +34,9 @@ export const SESSION_KINDS: readonly SessionKind[] = [
   "integration",
   "commit-message",
 ];
+export const REVIEW_STAGE_NAMES = ["code-review", "qa"] as const;
+export type ReviewStageName = (typeof REVIEW_STAGE_NAMES)[number];
+export type RejectionBudgets = Record<ReviewStageName, number>;
 
 export interface IntegrationRemoteConfig {
   fetchBefore: boolean;
@@ -56,7 +59,7 @@ export interface JfdiConfig {
   board: { path: string; columns: ColumnMap };
   ticketsDirectory: string;
   gate: GateCommand[];
-  pipeline: { maxRounds: number };
+  pipeline: { maxRejections: RejectionBudgets };
   integration: {
     targetBranch: string;
     mode: IntegrationMode;
@@ -86,7 +89,7 @@ export function defaultConfig(): JfdiConfig {
     },
     ticketsDirectory: `${JFDI_DIRECTORY}/tickets`,
     gate: [],
-    pipeline: { maxRounds: 3 },
+    pipeline: { maxRejections: { "code-review": 2, qa: 1 } },
     integration: {
       targetBranch: "main",
       mode: "on-approval",
@@ -138,6 +141,13 @@ export interface LegacyConfigKeyRename {
 export interface ConfigKeyMigration {
   raw: unknown;
   renames: LegacyConfigKeyRename[];
+  removals: LegacyConfigKeyRemoval[];
+}
+
+export interface LegacyConfigKeyRemoval {
+  legacyKey: string;
+  legacyPath: string;
+  replacementPath: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -201,8 +211,9 @@ function continueKeyMigration(
  * through JfdiConfig, whose typed shape omits them.
  */
 export function migrateLegacyConfigKeys(raw: unknown): ConfigKeyMigration {
-  if (!isRecord(raw)) return { raw, renames: [] };
+  if (!isRecord(raw)) return { raw, renames: [], removals: [] };
   let configMigration = renameLegacyKey(raw, "ticketsDirectory", "ticketsDir", "config");
+  const removals: LegacyConfigKeyRemoval[] = [];
 
   if (Array.isArray(configMigration.entry.gate)) {
     const gateMigrations = configMigration.entry.gate.map((entry, index) =>
@@ -217,15 +228,19 @@ export function migrateLegacyConfigKeys(raw: unknown): ConfigKeyMigration {
   }
 
   if (isRecord(configMigration.entry.pipeline)) {
-    const pipelineMigration = renameLegacyKey(
-      configMigration.entry.pipeline,
-      "maxRounds",
-      "max_rounds",
-      "pipeline",
-    );
+    const pipeline = { ...configMigration.entry.pipeline };
+    for (const legacyKey of ["maxRounds", "max_rounds"]) {
+      if (!Object.hasOwn(pipeline, legacyKey)) continue;
+      delete pipeline[legacyKey];
+      removals.push({
+        legacyKey,
+        legacyPath: `pipeline.${legacyKey}`,
+        replacementPath: "pipeline.maxRejections",
+      });
+    }
     configMigration = {
-      entry: { ...configMigration.entry, pipeline: pipelineMigration.entry },
-      renames: [...configMigration.renames, ...pipelineMigration.renames],
+      entry: { ...configMigration.entry, pipeline },
+      renames: configMigration.renames,
     };
   }
 
@@ -266,7 +281,7 @@ export function migrateLegacyConfigKeys(raw: unknown): ConfigKeyMigration {
     "max_concurrent",
     "config",
   );
-  return { raw: configMigration.entry, renames: configMigration.renames };
+  return { raw: configMigration.entry, renames: configMigration.renames, removals };
 }
 
 /** Parse config JSON with the path-bearing error shared by load and migration. */
@@ -296,6 +311,37 @@ function positiveInteger(value: unknown, fallback: number, where: string): numbe
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1)
     throw new ConfigError(`${where} must be a positive integer`);
   return value;
+}
+
+function nonNegativeInteger(value: unknown, fallback: number, where: string): number {
+  if (value === undefined) return fallback;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0)
+    throw new ConfigError(`${where} must be a non-negative integer`);
+  return value;
+}
+
+function parseRejectionBudgets(raw: unknown, defaults: RejectionBudgets): RejectionBudgets {
+  if (raw === undefined) return defaults;
+  if (!isRecord(raw)) throw new ConfigError("pipeline.maxRejections must be an object");
+  for (const key of Object.keys(raw)) {
+    if (!REVIEW_STAGE_NAMES.some((stage) => stage === key))
+      throw new ConfigError(
+        `pipeline.maxRejections has an unknown reviewer "${key}"; the reviewers are ${REVIEW_STAGE_NAMES.join(", ")}`,
+      );
+  }
+  return {
+    "code-review": nonNegativeInteger(
+      raw["code-review"],
+      defaults["code-review"],
+      "pipeline.maxRejections.code-review",
+    ),
+    qa: nonNegativeInteger(raw.qa, defaults.qa, "pipeline.maxRejections.qa"),
+  };
+}
+
+/** The explicit round-loop cap derived from the two reviewer rejection budgets. */
+export function derivedRoundCeiling(maxRejections: RejectionBudgets): number {
+  return 1 + maxRejections["code-review"] + maxRejections.qa;
 }
 
 function booleanOrDefault(value: unknown, fallback: boolean, where: string): boolean {
@@ -463,6 +509,10 @@ export function parseConfig(raw: unknown): JfdiConfig {
   }
 
   const pipeline = isRecord(raw.pipeline) ? raw.pipeline : {};
+  if (Object.hasOwn(pipeline, "maxRounds") || Object.hasOwn(pipeline, "max_rounds"))
+    throw new ConfigError(
+      "pipeline.maxRounds is no longer supported; run `jfdi update-config` to remove it, then configure pipeline.maxRejections",
+    );
   const permissions = isRecord(raw.permissions) ? raw.permissions : {};
   const permissionMode = stringOrDefault(
     permissions.mode,
@@ -484,11 +534,7 @@ export function parseConfig(raw: unknown): JfdiConfig {
     ),
     gate,
     pipeline: {
-      maxRounds: positiveInteger(
-        aliasedValue(pipeline, "maxRounds", "max_rounds", "pipeline"),
-        defaults.pipeline.maxRounds,
-        "pipeline.maxRounds",
-      ),
+      maxRejections: parseRejectionBudgets(pipeline.maxRejections, defaults.pipeline.maxRejections),
     },
     integration: parseIntegrationConfig(raw.integration, defaults.integration),
     permissions: { mode: permissionMode },

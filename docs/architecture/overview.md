@@ -81,12 +81,13 @@ flowchart TB
 - **Pipeline** ([src/pipeline.ts](../../src/pipeline.ts)) — one ticket's trip:
   worktree setup (serialized per repo — `git worktree add` reads the entries a
   sibling `add` is still writing, so concurrent dispatches would otherwise kill
-  one another's run), resume sanitization, then up to `maxRounds` rounds of
-  Implementation → gate → Code Review → QA, with session continuation between
+  one another's run), resume sanitization, then Implementation → gate → Code
+  Review → QA feedback rounds capped by one plus the two reviewer rejection
+  budgets (`pipeline.maxRejections`), with session continuation between
   rounds and within gate-fix cycles. The gate is pipeline-run and its failures
   stay inside the round —
-  they return to the session whose handoff made it red, up to 10 fix sessions,
-  before a still-red gate may consume the round. A post-QA fix must stay within
+  they return to the session whose handoff made it red, up to 3 fix sessions;
+  a fourth red attempt blocks directly. A post-QA fix must stay within
   the paths QA's initial handoff touched; widening that scope consumes the round
   so both reviews repeat. Spec-invalid verdicts likewise
   return to their authoring stage inside the round for up to two corrections,
@@ -155,8 +156,8 @@ sequenceDiagram
     C->>C: move card → In Progress
     C->>P: dispatch (worktree jfdi/<id>)
     P->>P: resume sanitization (if prior work)
-    loop up to maxRounds
-        loop until gate green (≤10 fixes, same round)
+    loop up to derived round ceiling
+        loop until gate green (≤3 fixes, same round; fourth red attempt blocks)
             P->>A: Implementation (fresh, then continued)
             P->>A: scribe (commit message)
             P->>P: commit the handoff + comment on the note
@@ -164,7 +165,7 @@ sequenceDiagram
         end
         P->>A: Code Review (gates QA)
         P->>A: QA (sandbox + regression tests)
-        loop while post-QA gate red (≤10 same-path fixes, same round)
+        loop while post-QA gate red (≤3 same-path fixes, same round; fourth red attempt blocks)
             P->>P: post-QA gate
             P->>A: QA continuation with gate failure
         end

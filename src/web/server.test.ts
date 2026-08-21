@@ -106,7 +106,10 @@ describe("web front end", () => {
     expect(pageMarkup).toContain('id="settings-reload"');
     expect(pageMarkup).toContain("switching front ends requires a restart");
     expect(pageMarkup).not.toContain("<textarea");
-    expect(pageMarkup).toContain('data-config-path="pipeline.maxRounds" type="number"');
+    expect(pageMarkup).toContain(
+      'data-config-path="pipeline.maxRejections.code-review" type="number"',
+    );
+    expect(pageMarkup).toContain('data-config-path="pipeline.maxRejections.qa" type="number"');
     expect(pageMarkup).toContain(
       'data-config-path="integration.remote.fetchBefore" type="checkbox"',
     );
@@ -484,7 +487,9 @@ describe("web front end", () => {
             revision: "disk-version",
           }),
         save: () =>
-          Promise.reject(new ConfigError("pipeline.maxRounds must be a positive integer")),
+          Promise.reject(
+            new ConfigError("pipeline.maxRejections.qa must be a non-negative integer"),
+          ),
       },
     });
 
@@ -496,8 +501,8 @@ describe("web front end", () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
-      error: "pipeline.maxRounds must be a positive integer",
-      field: "pipeline.maxRounds",
+      error: "pipeline.maxRejections.qa must be a non-negative integer",
+      field: "pipeline.maxRejections.qa",
     });
   });
 
