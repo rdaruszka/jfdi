@@ -35,6 +35,7 @@ init fills in for your repo):
     "remote": { "fetchBefore": false, "pushAfter": false }
   },
   "permissions": { "mode": "auto" },
+  "frontEnd": "terminal",
   "maxConcurrent": 2,
   "stages": {
     "implementation": { "harness": "claude", "model": "claude-opus-4-8", "effort": "high" },
@@ -152,6 +153,21 @@ working directories) with the Bash tool allowed, the documented spelling for an
 autonomous headless session that can still run builds, tests, and git;
 interactive `jfdi init` keeps `auto`, where the human at the terminal answers
 the classifier.
+
+### `frontEnd`
+
+| Type | Default | Values |
+|---|---|---|
+| string | `terminal` | `"terminal"` or `"web"` |
+
+The front end `jfdi start` presents by default. `terminal` is the existing live
+Ink TUI and requires a TTY. `web` starts a read-only HTTP server on the local
+machine, prints its URL, and streams updates to connected pages without a
+refresh. The server asks the operating system for a free port and binds only to
+`127.0.0.1`; it stops and frees that port when `jfdi start` stops.
+
+`jfdi start --front-end terminal|web` selects a front end for one invocation
+and overrides this setting.
 
 ### `maxConcurrent`
 

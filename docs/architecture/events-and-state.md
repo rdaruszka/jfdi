@@ -3,8 +3,8 @@
 Every significant transition in JFDI — dispatch, stage change, gate result,
 escalation, merge — is an event appended to a per-project `events.jsonl`.
 Everything else is derived: `state.json` is a snapshot produced by a pure
-reducer over the stream, the TUI and inline printer are renderers over it, and
-`jfdi status` just prints it. No database, no daemon protocol — rebuildable,
+reducer over the stream; the terminal/web front ends and inline printer are
+renderers over it; and `jfdi status` just prints it. No database, no daemon protocol — rebuildable,
 greppable flat files.
 
 Source: [src/events.ts](../../src/events.ts),
@@ -89,7 +89,8 @@ One JSON object per line:
 The two `harness_*` events are the only ticket-less ones, and they fold into no
 ticket state: a pause says nothing about any one ticket's status, only that
 every ticket's next session is waiting. Renderers read them directly from the
-stream — that is what the TUI banner is. They are never written to disk as
+stream — that is what the live front-end pause banners are. They are never
+written to disk as
 state, deliberately: see
 [When the provider goes down](../guide/pipeline.md#when-the-provider-goes-down).
 
@@ -152,7 +153,7 @@ sequenceDiagram
     participant M as jfdi merge (terminal 2)
     participant F as events.jsonl
     participant C as jfdi start (coordinator)
-    participant T as TUI
+    participant R as live front end
 
     C->>F: followFromEnd() — remember EOF offset
     M->>F: append merge_start / merged (origin B)
@@ -160,7 +161,7 @@ sequenceDiagram
         C->>F: read appended lines since offset
         F-->>C: lines (skip origin == self)
         C->>C: reduce into state, rescan board
-        C->>T: render
+        C->>R: render
     end
 ```
 
@@ -176,6 +177,6 @@ Mechanics that make this safe:
 - Foreign events also trigger a board rescan, so work done elsewhere (a merge,
   a close) reaches the coordinator's board bookkeeping without a restart.
 
-This is also the renderer-separation invariant in action: the TUI subscribes to
-the event log and renders snapshots — it holds no state of its own, and a future
-web UI is just another consumer of the same stream.
+This is also the renderer-separation invariant in action: both live front ends
+subscribe to the event log and render snapshots plus a bounded recent-event
+tail. Neither reads coordinator or pipeline internals.

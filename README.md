@@ -9,7 +9,7 @@ You write tickets. JFDI supervises the agents — and only escalates to you when
 a run genuinely needs a human.
 
 ```
-board.md (Obsidian Kanban)              $ jfdi start  (live TUI)
+board.md (Obsidian Kanban)              $ jfdi start  (terminal or web)
 
 ## Ready
 - [ ] Add a category filter    ──►      filter-by-category   running · qa
@@ -76,7 +76,8 @@ jfdi init      # scaffold .jfdi/ (including the ticket format), then tune the
 
 jfdi run add a --version flag    # one ticket, no board needed
 
-jfdi start     # watch the board, run continuously, live TUI
+jfdi start     # watch the board, run continuously, live terminal front end
+jfdi start --front-end web  # same read-only live view in a local browser
 ```
 
 The full walkthrough is in
@@ -86,7 +87,7 @@ The full walkthrough is in
 
 ```
 jfdi run <ticket>     One ticket through the pipeline, streaming inline
-jfdi start            Watch the board, run continuously (live TUI)
+jfdi start [options]  Watch the board, run continuously (terminal or web)
 jfdi status [--json]  Coordinator state snapshot
 jfdi logs <ticket>    A ticket's raw session logs
 jfdi merge <ticket>   Approve a Ready-to-Merge ticket (on-approval mode)
@@ -99,8 +100,8 @@ jfdi init [options]   Scaffold .jfdi/ and conversationally tune the setup
 The **coordinator** watches the board and dispatches each ready card into its
 own git worktree, up to `maxConcurrent` pipelines at once; **integration** is
 globally serialized so only one merge ever touches the target branch at a time.
-Every transition appends to a per-project `events.jsonl`; state and UIs (the
-TUI today, anything else tomorrow) are pure derivations of that stream. Agent
+Every transition appends to a per-project `events.jsonl`; state and the
+terminal/web front ends are pure derivations of that stream. Agent
 CLIs sit behind a **harness** interface, so pipeline logic never touches
 provider specifics. The cheapest reviewer is the mechanical gate, and the
 system's core value is moving standards *into* it: conversational `jfdi init`

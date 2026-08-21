@@ -7,7 +7,7 @@ Usage:
   jfdi run <ticket>     Run one ticket through the full pipeline (card text,
                         [[wikilink]], or an inline description). Add --force to
                         run a ticket whose blocked-by tickets are not yet done.
-  jfdi start            Watch the board and run pipelines continuously (live TUI)
+  jfdi start [options]  Watch the board and run pipelines continuously
   jfdi status [--json]  Snapshot of coordinator state
   jfdi logs <ticket>    Dump a ticket's raw session logs
   jfdi merge <ticket>   Approve a Ready-to-Merge ticket (on-approval mode)
@@ -19,6 +19,9 @@ Init options:
   --harness <provider>  claude or codex (default: claude)
   --model <model>       Provider model (default: claude-fable-5)
   --effort <level>      Provider effort (default: provider default)
+
+Start options:
+  --front-end <name>    terminal or web (default: config, then terminal)
 ```
 
 Run every command from inside the project's git repository (any subdirectory
@@ -63,20 +66,26 @@ blocking means blocked on every path, so the override has to be spelled out.
 Coordinator multi-mode: watches the board (file-watch with a 2-second polling
 fallback), dispatches cards from the begin column top-first up to
 `maxConcurrent`, runs pipelines concurrently, owns the serialized integration
-queue, and presents a live full-screen TUI. A begin-column card whose ticket is
+queue, and presents the selected live front end. A begin-column card whose ticket is
 [blocked by another](board-and-tickets.md#blocked-by-gating) not yet done is
 skipped over — left in place, re-checked each scan, and dispatched once its
 blockers reach Done.
 
-The TUI shows the board name and target branch, active tickets with their
+Both front ends show the board name and target branch, active tickets with their
 current stage and round and running cost/agent-time, tickets needing attention
 (blocked / ready to merge / queued), the integration queue, settled tickets, and
-a tail of recent events.
-When the provider under the harness is down, a banner across the top names the
-reason and when work resumes. Two keys: `q` quits (as do Ctrl-C / SIGTERM, exit
-codes 130/143), and `R` retries a paused harness immediately. `jfdi start`
-requires stdout to be a TTY and exits non-zero with an actionable error when it
-is redirected; it does not provide a headless coordinator mode.
+a tail of recent events. Both update directly from the event stream as dispatch,
+stage, round, integration, pause, and resume events arrive.
+
+With no option, [`frontEnd`](configuration.md#frontend) chooses the project
+default and itself defaults to `terminal`; `--front-end terminal|web` overrides
+it for one invocation. The terminal front end is unchanged: `q` quits (as do
+Ctrl-C / SIGTERM, exit codes 130/143), `R` retries a paused harness immediately,
+and redirected stdout is refused because Ink requires a TTY. The web front end
+works without a TTY, prints the URL to open, binds only to `127.0.0.1` on an
+operating-system-assigned port, and is strictly read-only. Its pause banner
+reports the reason and scheduled resume but offers no retry or other action.
+Stopping `jfdi start` closes the server and connected event streams.
 
 On startup the coordinator:
 

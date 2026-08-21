@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { main, parseInitOptions } from "./cli.js";
+import { main, parseInitOptions, parseStartOptions } from "./cli.js";
 
 describe("parseInitOptions", () => {
   it("parses the conversational init session selection", () => {
@@ -20,6 +20,21 @@ describe("parseInitOptions", () => {
   });
 });
 
+describe("parseStartOptions", () => {
+  it("selects one front end for this invocation", () => {
+    expect(parseStartOptions(["--front-end", "web"])).toEqual({ frontEnd: "web" });
+    expect(parseStartOptions(["--front-end", "terminal"])).toEqual({ frontEnd: "terminal" });
+  });
+
+  it("rejects unknown, missing, and invalid options", () => {
+    expect(() => parseStartOptions(["--front-end"])).toThrow("--front-end requires a value");
+    expect(() => parseStartOptions(["--front-end", "desktop"])).toThrow(
+      '--front-end must be "terminal" or "web", got "desktop"',
+    );
+    expect(() => parseStartOptions(["--port", "8080"])).toThrow('unknown start option "--port"');
+  });
+});
+
 describe("help", () => {
   it("lists the config migration command", async () => {
     const output = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -27,6 +42,7 @@ describe("help", () => {
     expect(await main(["help"])).toBe(0);
 
     expect(output).toHaveBeenCalledWith(expect.stringContaining("jfdi update-config"));
+    expect(output).toHaveBeenCalledWith(expect.stringContaining("--front-end <name>"));
     output.mockRestore();
   });
 });

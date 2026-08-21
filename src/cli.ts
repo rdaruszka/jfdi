@@ -1,4 +1,5 @@
 import type { InitOptions } from "./commands/init.js";
+import type { StartOptions } from "./commands/start.js";
 
 const USAGE = `jfdi — Just F'ing Do It
 
@@ -6,7 +7,7 @@ Usage:
   jfdi run <ticket>     Run one ticket through the full pipeline (card text,
                         [[wikilink]], or an inline description). Add --force to
                         run a ticket whose blocked-by tickets are not yet done.
-  jfdi start            Watch the board and run pipelines continuously (live TUI)
+  jfdi start [options]  Watch the board and run pipelines continuously
   jfdi status [--json]  Snapshot of coordinator state
   jfdi logs <ticket>    Dump a ticket's raw session logs
   jfdi merge <ticket>   Approve a Ready-to-Merge ticket (on-approval mode)
@@ -18,9 +19,12 @@ Init options:
   --harness <provider>  claude or codex (default: claude)
   --model <model>       Provider model (default: claude-fable-5)
   --effort <level>      Provider effort (default: provider default)
+
+Start options:
+  --front-end <name>    terminal or web (default: config, then terminal)
 `;
 
-function initOptionValue(args: string[], index: number): string {
+function optionValue(args: string[], index: number): string {
   const option = args[index];
   const value = args[index + 1];
   if (value === undefined || value.startsWith("--")) {
@@ -38,7 +42,7 @@ export function parseInitOptions(args: string[]): InitOptions {
         options.isBare = true;
         break;
       case "--harness": {
-        const harness = initOptionValue(args, index);
+        const harness = optionValue(args, index);
         if (harness !== "claude" && harness !== "codex") {
           throw new Error(`--harness must be "claude" or "codex", got "${harness}"`);
         }
@@ -47,16 +51,30 @@ export function parseInitOptions(args: string[]): InitOptions {
         break;
       }
       case "--model":
-        options.model = initOptionValue(args, index);
+        options.model = optionValue(args, index);
         index += 1;
         break;
       case "--effort":
-        options.effort = initOptionValue(args, index);
+        options.effort = optionValue(args, index);
         index += 1;
         break;
       default:
         throw new Error(`unknown init option "${option}"`);
     }
+  }
+  return options;
+}
+
+export function parseStartOptions(args: string[]): StartOptions {
+  const options: StartOptions = {};
+  for (let index = 0; index < args.length; index += 1) {
+    const option = args[index];
+    if (option !== "--front-end") throw new Error(`unknown start option "${option}"`);
+    const frontEnd = optionValue(args, index);
+    if (frontEnd !== "terminal" && frontEnd !== "web")
+      throw new Error(`--front-end must be "terminal" or "web", got "${frontEnd}"`);
+    options.frontEnd = frontEnd;
+    index += 1;
   }
   return options;
 }
@@ -78,7 +96,7 @@ export async function main(argv: string[]): Promise<number> {
       }
       case "start": {
         const { startCommand } = await import("./commands/start.js");
-        return await startCommand();
+        return await startCommand(parseStartOptions(rest));
       }
       case "status": {
         const { statusCommand } = await import("./commands/status.js");

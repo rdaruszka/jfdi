@@ -30,6 +30,7 @@ describe("parseConfig", () => {
         remote: { fetchBefore: true, pushAfter: true },
       },
       permissions: { mode: "bypass" },
+      frontEnd: "web",
       maxConcurrent: 4,
       stages: STAGES,
     });
@@ -39,6 +40,7 @@ describe("parseConfig", () => {
       remote: { fetchBefore: true, pushAfter: true },
     });
     expect(config.permissions).toEqual({ mode: "bypass" });
+    expect(config.frontEnd).toBe("web");
     expect(config.gate).toHaveLength(2);
     expect(config.maxConcurrent).toBe(4);
     expect(config.board.columns.blocked).toBe("Blocked");
@@ -128,6 +130,15 @@ describe("parseConfig", () => {
     });
     expect(() => parseConfig({ permissions: { mode: "manual" }, stages: STAGES })).toThrowError(
       new ConfigError('permissions.mode must be "auto" or "bypass", got "manual"'),
+    );
+  });
+
+  it("defaults, accepts, and validates the front end", () => {
+    expect(parseConfig({ stages: STAGES }).frontEnd).toBe("terminal");
+    expect(parseConfig({ frontEnd: "terminal", stages: STAGES }).frontEnd).toBe("terminal");
+    expect(parseConfig({ frontEnd: "web", stages: STAGES }).frontEnd).toBe("web");
+    expect(() => parseConfig({ frontEnd: "desktop", stages: STAGES })).toThrowError(
+      new ConfigError('frontEnd must be "terminal" or "web", got "desktop"'),
     );
   });
 

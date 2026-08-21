@@ -20,7 +20,7 @@ The test: a file copied into target projects at init is **product content** (edi
 - **Package manager:** pnpm
 - **Tests:** vitest
 - **Lint + format:** biome (single tool, single config)
-- **TUI:** Ink (React-for-terminal)
+- **Front ends:** Ink TUI and a read-only Node HTTP server
 
 The project's own mechanical gate — all must exit zero before any handoff:
 
@@ -36,7 +36,7 @@ JFDI is self-hosting from milestone 1: JFDI's own tickets become its first board
 
 ## Architecture (one paragraph)
 
-The **coordinator** watches `board.md` (Obsidian Kanban format), dispatches each ready card into its own **git worktree** on branch `jfdi/<ticket-id>`, and runs a per-ticket pipeline of fresh Claude Code or Codex sessions: **Implementation → mechanical gate → Code Review → QA**, with feedback rounds (cap: `pipeline.maxRounds`, default 3; a gate failure feeds back into the same Implementation session *within* the round, up to 10 fix sessions, before it may consume one). Agents never commit: the pipeline commits each session's handoff itself, with a **scribe** session writing the message. One phase comment per stage and round folds together that message, the stage's decisions, status, and usage; gate-fix commit messages are included in their round's Implementation comment. **Integration** is coordinator-owned and globally serialized — one merge at a time: merge the target branch into the ticket branch, rerun the gate, then land that tested tree on the target as a merge commit (target's prior head first parent, signed-off branch head second). Every transition appends to the project's `events.jsonl` under `~/.jfdi/projects/<project-key>/`; `state.json` is a derived snapshot; the TUI is a pure renderer over that stream.
+The **coordinator** watches `board.md` (Obsidian Kanban format), dispatches each ready card into its own **git worktree** on branch `jfdi/<ticket-id>`, and runs a per-ticket pipeline of fresh Claude Code or Codex sessions: **Implementation → mechanical gate → Code Review → QA**, with feedback rounds (cap: `pipeline.maxRounds`, default 3; a gate failure feeds back into the same Implementation session *within* the round, up to 10 fix sessions, before it may consume one). Agents never commit: the pipeline commits each session's handoff itself, with a **scribe** session writing the message. One phase comment per stage and round folds together that message, the stage's decisions, status, and usage; gate-fix commit messages are included in their round's Implementation comment. **Integration** is coordinator-owned and globally serialized — one merge at a time: merge the target branch into the ticket branch, rerun the gate, then land that tested tree on the target as a merge commit (target's prior head first parent, signed-off branch head second). Every transition appends to the project's `events.jsonl` under `~/.jfdi/projects/<project-key>/`; `state.json` is a derived snapshot; both live front ends are pure renderers over that stream.
 
 ## Layout
 
@@ -80,7 +80,7 @@ scripts/playground.mjs     — `pnpm playground`: mint a disposable half-app cop
 
 These are architectural requirements, not preferences (rationale in [docs/architecture/overview.md](docs/architecture/overview.md)):
 
-1. **Renderer separation.** All UI (TUI now, web later) renders `events.jsonl`/`state.json` only. Pipeline/coordinator logic never talks to a UI directly, and no state exists only in the UI.
+1. **Renderer separation.** All UI renders `events.jsonl`/`state.json` only. Pipeline/coordinator logic never talks to a UI directly, and no state exists only in the UI.
 2. **Harness abstraction.** Pipeline logic never touches provider-specific details. Everything goes through the harness interface (`spawn(prompt, options) → event stream` — with session continuation via a spawn option — plus interactive launch and kill/cleanup); Claude Code and Codex are implementations. Provider-specific accelerations (e.g. the Claude PostToolUse format hook) live inside the matching harness implementation, and their absence elsewhere degrades gracefully.
 3. **Serialized integration.** Exactly one integration at a time, pulled from the merge-ready queue in completion order. Nothing but Integration ever touches the target branch.
 4. **Atomic board writes.** `board.md` is co-edited by Obsidian. Read → check mtime → write via temp-file rename → re-read/retry on mtime change. Edits are surgical (move one card line); never rewrite the file wholesale. Writes follow symlinks: the rename targets the link's real path — renaming onto the link itself would replace it with a private copy and silently split the board from the file the human edits.
@@ -171,14 +171,14 @@ The generic rules with rationale and check questions live in [docs/coding-guidel
 
 ## Explicitly out of scope
 
-No PO/orchestrator agent, no PRD building or auto-decomposition, no pre-implementation ticket review, no standalone question queue, no multi-project support, no web UI. Ticket dependency handling is limited to **`blocked-by` gating at dispatch and deadlock detection at any loop size**: a card whose ticket lists a `blocked-by` ticket that is not yet in the done column is not dispatched, and every member of a loop touching the begin column moves to Blocked with the loop named in its ticket comment. The tool reports the loop and never auto-resolves it. Still out of scope — transitive scheduling, critical paths, and auto-ordering. Don't build toward these; just don't preclude the extension seams (ticket sources, merge targets, harnesses, renderers — see [docs/architecture/overview.md](docs/architecture/overview.md)).
+No PO/orchestrator agent, no PRD building or auto-decomposition, no pre-implementation ticket review, no standalone question queue, no multi-project support. Ticket dependency handling is limited to **`blocked-by` gating at dispatch and deadlock detection at any loop size**: a card whose ticket lists a `blocked-by` ticket that is not yet in the done column is not dispatched, and every member of a loop touching the begin column moves to Blocked with the loop named in its ticket comment. The tool reports the loop and never auto-resolves it. Still out of scope — transitive scheduling, critical paths, and auto-ordering. Don't build toward these; just don't preclude the extension seams (ticket sources, merge targets, harnesses, renderers — see [docs/architecture/overview.md](docs/architecture/overview.md)).
 
 ## Build sequence
 
 All three milestones are implemented and tested:
 
 1. **Single-ticket pipeline** — `jfdi run` ([pipeline.ts](src/pipeline.ts), [integrate.ts](src/integrate.ts))
-2. **Coordinator** — `jfdi start` ([coordinator.ts](src/coordinator.ts), TUI in [src/tui/App.tsx](src/tui/App.tsx)), plus `status`/`logs`/`merge`
+2. **Coordinator** — `jfdi start` ([coordinator.ts](src/coordinator.ts), TUI in [src/tui/App.tsx](src/tui/App.tsx), web front end in [src/web/server.ts](src/web/server.ts)), plus `status`/`logs`/`merge`
 3. **Conversational init** — `jfdi init` ([commands/init.ts](src/commands/init.ts), [scaffold.ts](src/scaffold.ts))
 
 Self-hosting is live: this repo's own [.jfdi/](.jfdi/config.json) has the pnpm gate configured (`auto` merge mode), and [.jfdi/board.md](.jfdi/board.md) holds the backlog. Improvements to JFDI should flow through JFDI: add a card to the configured begin column (`Todo` here) and `jfdi start` (or `jfdi run "<ticket>"`). **Before creating or changing any card or ticket, read [.jfdi/ticket-format.md](.jfdi/ticket-format.md)** — the shipped contract for card lines, ticket anatomy, acceptance criteria, and which board columns are safe to add cards to. It is required reading, not reference material.

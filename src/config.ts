@@ -20,6 +20,7 @@ export interface GateCommand {
 
 export type IntegrationMode = "auto" | "on-approval";
 export type PermissionMode = "auto" | "bypass";
+export type FrontEnd = "terminal" | "web";
 export type { HarnessName, SessionKind };
 
 export interface IntegrationRemoteConfig {
@@ -50,6 +51,7 @@ export interface JfdiConfig {
     remote: IntegrationRemoteConfig;
   };
   permissions: { mode: PermissionMode };
+  frontEnd: FrontEnd;
   maxConcurrent: number;
   /** Required, one entry per stage plus the scribe — there is no global harness. */
   stages: Record<SessionKind, SessionConfig>;
@@ -79,6 +81,7 @@ export function defaultConfig(): JfdiConfig {
       remote: { fetchBefore: false, pushAfter: false },
     },
     permissions: { mode: "auto" },
+    frontEnd: "terminal",
     maxConcurrent: 2,
     stages: {
       implementation: { harness: "claude", model: "claude-opus-4-8", effort: "high" },
@@ -458,6 +461,9 @@ export function parseConfig(raw: unknown): JfdiConfig {
   );
   if (permissionMode !== "auto" && permissionMode !== "bypass")
     throw new ConfigError(`permissions.mode must be "auto" or "bypass", got "${permissionMode}"`);
+  const frontEnd = stringOrDefault(raw.frontEnd, defaults.frontEnd, "frontEnd");
+  if (frontEnd !== "terminal" && frontEnd !== "web")
+    throw new ConfigError(`frontEnd must be "terminal" or "web", got "${frontEnd}"`);
 
   return {
     board: { path: stringOrDefault(board.path, defaults.board.path, "board.path"), columns },
@@ -476,6 +482,7 @@ export function parseConfig(raw: unknown): JfdiConfig {
     },
     integration: parseIntegrationConfig(raw.integration, defaults.integration),
     permissions: { mode: permissionMode },
+    frontEnd,
     maxConcurrent: positiveInteger(
       aliasedValue(raw, "maxConcurrent", "max_concurrent", "config"),
       defaults.maxConcurrent,

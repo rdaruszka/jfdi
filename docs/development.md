@@ -11,7 +11,7 @@ invariants for coding agents (and humans) are in [AGENTS.md](../AGENTS.md).
 - **Package manager:** pnpm
 - **Tests:** vitest
 - **Lint + format:** biome (single tool, single config)
-- **TUI:** Ink (React-for-terminal)
+- **Front ends:** Ink TUI and a read-only Node HTTP server
 
 The project's own mechanical gate — all must exit zero before any handoff:
 
