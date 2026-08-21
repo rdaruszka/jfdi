@@ -40,7 +40,7 @@ const POLL_INTERVAL_MS = 100;
  * parses, records each prompt it was handed, and writes the verdict its prompt
  * names. Two knobs drive the crash scenario: STUB_REVIEW_FEEDBACK makes Code
  * Review refuse (with that text) so the run keeps retrying, and
- * STUB_HANG_IMPL_FROM_INDEX freezes the implementation session from a given
+ * STUB_HANG_IMPLEMENTATION_FROM_INDEX freezes the implementation session from a given
  * round onward, so the test can SIGKILL the CLI at a controlled point instead
  * of racing it to completion. The hang is bounded, not infinite, so an orphan
  * left by the kill self-terminates rather than lingering.
@@ -75,7 +75,7 @@ while (fs.existsSync(path.join(promptDirectory, stage + "-" + index + ".txt"))) 
 fs.writeFileSync(path.join(promptDirectory, stage + "-" + index + ".txt"), prompt);
 let verdict;
 if (stage === "implementation") {
-  const hangFrom = process.env.STUB_HANG_IMPL_FROM_INDEX;
+  const hangFrom = process.env.STUB_HANG_IMPLEMENTATION_FROM_INDEX;
   if (hangFrom !== undefined && index >= Number(hangFrom)) {
     sleepThenExit();
     return;
@@ -144,7 +144,7 @@ interface StubOptions {
   reviewFeedback?: string;
   hangImplementationFromIndex?: number;
   tag?: string;
-  promptSubdir?: string;
+  promptSubdirectory?: string;
 }
 
 function stubEnv(sandbox: Sandbox, options: StubOptions): NodeJS.ProcessEnv {
@@ -154,7 +154,10 @@ function stubEnv(sandbox: Sandbox, options: StubOptions): NodeJS.ProcessEnv {
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
     STUB_TAG: options.tag ?? "work",
-    STUB_PROMPT_DIRECTORY: path.join(sandbox.promptDirectory, options.promptSubdir ?? "default"),
+    STUB_PROMPT_DIRECTORY: path.join(
+      sandbox.promptDirectory,
+      options.promptSubdirectory ?? "default",
+    ),
     NO_COLOR: "1",
   };
   if (options.reviewFeedback !== undefined) env.STUB_REVIEW_FEEDBACK = options.reviewFeedback;
@@ -225,8 +228,8 @@ function ticketIdOf(result: CliResult): string {
   return match[1];
 }
 
-function readPrompt(sandbox: Sandbox, subdir: string, name: string): Promise<string> {
-  return fs.readFile(path.join(sandbox.promptDirectory, subdir, name), "utf8");
+function readPrompt(sandbox: Sandbox, subdirectory: string, name: string): Promise<string> {
+  return fs.readFile(path.join(sandbox.promptDirectory, subdirectory, name), "utf8");
 }
 
 function runHistoryPath(sandbox: Sandbox, ticketId: string, runNumber: number): string {
@@ -277,7 +280,7 @@ describe("feedback carry across a crash mid-retry", () => {
       const run1 = await runCli(sandbox, ["run", "Fix the carry"], {
         reviewFeedback: Run1Feedback,
         tag: "one",
-        promptSubdir: "run1",
+        promptSubdirectory: "run1",
       });
       expect(run1.code).toBe(2);
       const ticketId = ticketIdOf(run1);
@@ -289,7 +292,7 @@ describe("feedback carry across a crash mid-retry", () => {
         reviewFeedback: Run2Feedback,
         hangImplementationFromIndex: 1,
         tag: "two",
-        promptSubdir: "run2",
+        promptSubdirectory: "run2",
       });
       try {
         await waitUntil(
@@ -314,7 +317,7 @@ describe("feedback carry across a crash mid-retry", () => {
       // point. Its review now passes, so the run completes.
       const run3 = await runCli(sandbox, ["run", "Fix the carry"], {
         tag: "three",
-        promptSubdir: "run3",
+        promptSubdirectory: "run3",
       });
       expect(run3.code).toBe(0);
 

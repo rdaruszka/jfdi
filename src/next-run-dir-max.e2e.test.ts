@@ -138,7 +138,7 @@ interface CliResult {
 async function runCli(
   sandbox: Sandbox,
   args: string[],
-  options: { tag?: string; promptSubdir?: string } = {},
+  options: { tag?: string; promptSubdirectory?: string } = {},
 ): Promise<CliResult> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -146,7 +146,10 @@ async function runCli(
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
     STUB_TAG: options.tag ?? "work",
-    STUB_PROMPT_DIRECTORY: path.join(sandbox.promptDirectory, options.promptSubdir ?? "default"),
+    STUB_PROMPT_DIRECTORY: path.join(
+      sandbox.promptDirectory,
+      options.promptSubdirectory ?? "default",
+    ),
     NO_COLOR: "1",
   };
   try {
@@ -195,7 +198,7 @@ describe("run-directory allocation across a deleted middle run", () => {
       // id and gives us a genuine run-1 on disk.
       const run1 = await runCli(sandbox, ["run", "Fix the widget alignment"], {
         tag: "one",
-        promptSubdir: "run1",
+        promptSubdirectory: "run1",
       });
       expect(run1.code).toBe(0);
       const ticketId = ticketIdOf(run1);
@@ -222,7 +225,7 @@ describe("run-directory allocation across a deleted middle run", () => {
       // Run 2: re-dispatch the same ticket with the gap present.
       const run2 = await runCli(sandbox, ["run", "Fix the widget alignment"], {
         tag: "two",
-        promptSubdir: "run2",
+        promptSubdirectory: "run2",
       });
       expect(run2.code).toBe(0);
 

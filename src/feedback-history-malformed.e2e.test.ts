@@ -125,7 +125,7 @@ async function makeSandbox(): Promise<Sandbox> {
 interface StubOptions {
   reviewFeedback?: string;
   tag?: string;
-  promptSubdir?: string;
+  promptSubdirectory?: string;
 }
 
 function stubEnv(sandbox: Sandbox, options: StubOptions): NodeJS.ProcessEnv {
@@ -135,7 +135,10 @@ function stubEnv(sandbox: Sandbox, options: StubOptions): NodeJS.ProcessEnv {
     HOME: sandbox.home,
     JFDI_HOME: sandbox.jfdiHome,
     STUB_TAG: options.tag ?? "work",
-    STUB_PROMPT_DIRECTORY: path.join(sandbox.promptDirectory, options.promptSubdir ?? "default"),
+    STUB_PROMPT_DIRECTORY: path.join(
+      sandbox.promptDirectory,
+      options.promptSubdirectory ?? "default",
+    ),
     NO_COLOR: "1",
   };
   if (options.reviewFeedback !== undefined) env.STUB_REVIEW_FEEDBACK = options.reviewFeedback;
@@ -196,8 +199,8 @@ async function errorEvents(sandbox: Sandbox): Promise<Array<Record<string, unkno
     .filter((event) => event.type === "error");
 }
 
-function promptFilesFor(sandbox: Sandbox, subdir: string): Promise<string[]> {
-  return fs.readdir(path.join(sandbox.promptDirectory, subdir)).catch(() => [] as string[]);
+function promptFilesFor(sandbox: Sandbox, subdirectory: string): Promise<string[]> {
+  return fs.readdir(path.join(sandbox.promptDirectory, subdirectory)).catch(() => [] as string[]);
 }
 
 async function initProject(sandbox: Sandbox): Promise<void> {
@@ -223,7 +226,7 @@ describe("malformed feedback history blocks the re-dispatch", () => {
       const run1 = await runCli(sandbox, ["run", "Fix the history"], {
         reviewFeedback: "run-1 review feedback",
         tag: "one",
-        promptSubdir: "run1",
+        promptSubdirectory: "run1",
       });
       expect(run1.code).toBe(2);
       const ticketId = ticketIdOf(run1);
@@ -242,7 +245,7 @@ describe("malformed feedback history blocks the re-dispatch", () => {
       // would pass here, but the run must never reach it.
       const run2 = await runCli(sandbox, ["run", "Fix the history"], {
         tag: "two",
-        promptSubdir: "run2",
+        promptSubdirectory: "run2",
       });
       expect(run2.code).toBe(2);
 
@@ -277,7 +280,7 @@ describe("malformed feedback history blocks the re-dispatch", () => {
       // implementation prompt carries the full repaired history, intact.
       const run3 = await runCli(sandbox, ["run", "Fix the history"], {
         tag: "three",
-        promptSubdir: "run3",
+        promptSubdirectory: "run3",
       });
       expect(run3.code).toBe(0);
       const resumedPrompt = await fs.readFile(
@@ -300,7 +303,7 @@ describe("malformed feedback history blocks the re-dispatch", () => {
       const run1 = await runCli(sandbox, ["run", "Empty history"], {
         reviewFeedback: "run-1 review feedback",
         tag: "one",
-        promptSubdir: "run1",
+        promptSubdirectory: "run1",
       });
       expect(run1.code).toBe(2);
       const ticketId = ticketIdOf(run1);
@@ -311,7 +314,7 @@ describe("malformed feedback history blocks the re-dispatch", () => {
 
       const run2 = await runCli(sandbox, ["run", "Empty history"], {
         tag: "two",
-        promptSubdir: "run2",
+        promptSubdirectory: "run2",
       });
       expect(run2.code).toBe(0);
       // It really ran: the agent was dispatched despite the empty prior history.

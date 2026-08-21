@@ -182,7 +182,7 @@ interface StubOptions {
   /** Distinguishes one dispatch's commits from another's in the branch log. */
   tag?: string;
   /** Subdirectory of promptDirectory this invocation records into. */
-  promptSubdir?: string;
+  promptSubdirectory?: string;
 }
 
 function stubEnv(sandbox: Sandbox, options: StubOptions): NodeJS.ProcessEnv {
@@ -193,7 +193,10 @@ function stubEnv(sandbox: Sandbox, options: StubOptions): NodeJS.ProcessEnv {
     JFDI_HOME: sandbox.jfdiHome,
     STUB_MODE: options.stubMode ?? "pass",
     STUB_TAG: options.tag ?? "work",
-    STUB_PROMPT_DIRECTORY: path.join(sandbox.promptDirectory, options.promptSubdir ?? "default"),
+    STUB_PROMPT_DIRECTORY: path.join(
+      sandbox.promptDirectory,
+      options.promptSubdirectory ?? "default",
+    ),
     NO_COLOR: "1",
   };
 }
@@ -228,8 +231,8 @@ function ticketIdOf(result: CliResult): string {
   return match[1];
 }
 
-function readPrompt(sandbox: Sandbox, subdir: string, name: string): Promise<string> {
-  return fs.readFile(path.join(sandbox.promptDirectory, subdir, name), "utf8");
+function readPrompt(sandbox: Sandbox, subdirectory: string, name: string): Promise<string> {
+  return fs.readFile(path.join(sandbox.promptDirectory, subdirectory, name), "utf8");
 }
 
 interface RecordedEvent {
@@ -377,7 +380,7 @@ describe("resuming an interrupted run", () => {
       const first = await runCli(sandbox, ["run", "Fix the parser"], {
         stubMode: "review-fail",
         tag: "first",
-        promptSubdir: "run1",
+        promptSubdirectory: "run1",
       });
       expect(first.code).toBe(2);
       const ticketId = ticketIdOf(first);
@@ -392,7 +395,7 @@ describe("resuming an interrupted run", () => {
       const second = await runCli(sandbox, ["run", "Fix the parser"], {
         stubMode: "review-fail-round-1",
         tag: "second",
-        promptSubdir: "run2",
+        promptSubdirectory: "run2",
       });
       expect(second.code).toBe(0);
 
@@ -437,7 +440,7 @@ describe("resuming an interrupted run", () => {
       await initProject(sandbox);
       const first = await runCli(sandbox, ["run", "Add a greeting"], {
         tag: "first",
-        promptSubdir: "run1",
+        promptSubdirectory: "run1",
       });
       expect(first.code).toBe(0);
       const ticketId = ticketIdOf(first);
@@ -455,7 +458,7 @@ describe("resuming an interrupted run", () => {
 
       const second = await runCli(sandbox, ["run", "Add a greeting"], {
         tag: "second",
-        promptSubdir: "run2",
+        promptSubdirectory: "run2",
       });
       expect(second.code).toBe(0);
 
@@ -498,15 +501,17 @@ describe("resuming an interrupted run", () => {
       await initProject(sandbox);
       const first = await runCli(sandbox, ["run", "Add a farewell"], {
         tag: "first",
-        promptSubdir: "run1",
+        promptSubdirectory: "run1",
       });
       expect(first.code).toBe(0);
       const ticketId = ticketIdOf(first);
-      expect((await runCli(sandbox, ["merge", ticketId], { promptSubdir: "merge" })).code).toBe(0);
+      expect(
+        (await runCli(sandbox, ["merge", ticketId], { promptSubdirectory: "merge" })).code,
+      ).toBe(0);
 
       const second = await runCli(sandbox, ["run", "Add a farewell"], {
         tag: "second",
-        promptSubdir: "run2",
+        promptSubdirectory: "run2",
       });
       expect(second.code).toBe(0);
 
@@ -556,7 +561,7 @@ describe("coordinator startup", () => {
       await runCoordinatorUntil(
         sandbox,
         async () => (await cardsInColumn(sandbox, "Blocked")).length > 0,
-        { stubMode: "review-fail", tag: "first", promptSubdir: "run1" },
+        { stubMode: "review-fail", tag: "first", promptSubdirectory: "run1" },
       );
 
       // The human reads the note and readies the card again.
@@ -571,7 +576,7 @@ describe("coordinator startup", () => {
       const output = await runCoordinatorUntil(
         sandbox,
         async () => (await cardsInColumn(sandbox, "Ready to Merge")).length > 0,
-        { tag: "second", promptSubdir: "run2" },
+        { tag: "second", promptSubdirectory: "run2" },
       );
 
       expect(output).toContain("resumed");
@@ -606,7 +611,7 @@ describe("a provider that is down", () => {
       // pause outlives this coordinator.
       await runCoordinatorUntil(sandbox, () => hasPaused(sandbox), {
         stubMode: "usage-limit",
-        promptSubdir: "down",
+        promptSubdirectory: "down",
       });
 
       const paused = (await readEvents(sandbox)).filter((event) => event.type === "harness_paused");
@@ -624,7 +629,7 @@ describe("a provider that is down", () => {
         async () =>
           (await readEvents(sandbox)).filter((event) => event.type === "harness_paused").length >
           pausesBefore,
-        { stubMode: "usage-limit", promptSubdir: "down-again" },
+        { stubMode: "usage-limit", promptSubdirectory: "down-again" },
       );
       expect(await cardsInColumn(sandbox, "In Progress")).toEqual(["- [ ] Fix the parser"]);
       expect(await cardsInColumn(sandbox, "Blocked")).toEqual([]);
@@ -634,7 +639,7 @@ describe("a provider that is down", () => {
       await runCoordinatorUntil(
         sandbox,
         async () => (await cardsInColumn(sandbox, "Ready to Merge")).length > 0,
-        { tag: "healthy", promptSubdir: "healthy" },
+        { tag: "healthy", promptSubdirectory: "healthy" },
       );
       expect(await cardsInColumn(sandbox, "Ready to Merge")).toEqual(["- [ ] Fix the parser"]);
       expect(await cardsInColumn(sandbox, "Blocked")).toEqual([]);
@@ -645,9 +650,9 @@ describe("a provider that is down", () => {
   );
 
   /** How many sessions the stub was asked for, across every run in a sandbox. */
-  async function spawnCount(sandbox: Sandbox, subdir: string): Promise<number> {
+  async function spawnCount(sandbox: Sandbox, subdirectory: string): Promise<number> {
     const log = await fs
-      .readFile(path.join(sandbox.promptDirectory, subdir, "spawns.log"), "utf8")
+      .readFile(path.join(sandbox.promptDirectory, subdirectory, "spawns.log"), "utf8")
       .catch(() => "");
     return log.split("\n").filter(Boolean).length;
   }
@@ -661,7 +666,7 @@ describe("a provider that is down", () => {
 
       await runCoordinatorUntil(sandbox, () => hasPaused(sandbox), {
         stubMode: "needs-human",
-        promptSubdir: "login",
+        promptSubdirectory: "login",
       });
 
       // No reset time to offer and no retry worth making: the banner names the
@@ -680,7 +685,7 @@ describe("a provider that is down", () => {
       await runCoordinatorUntil(
         sandbox,
         async () => (await cardsInColumn(sandbox, "Ready to Merge")).length > 0,
-        { tag: "repaired", promptSubdir: "repaired" },
+        { tag: "repaired", promptSubdirectory: "repaired" },
       );
       expect(await cardsInColumn(sandbox, "Ready to Merge")).toEqual(["- [ ] Fix the parser"]);
       expect((await readEvents(sandbox)).filter((event) => event.type === "blocked")).toEqual([]);
@@ -699,7 +704,7 @@ describe("a provider that is down", () => {
       await initProject(sandbox);
       const run = spawnCli(sandbox, ["run", "Fix the parser"], {
         stubMode: "needs-human",
-        promptSubdir: "held-run",
+        promptSubdirectory: "held-run",
       });
       try {
         await waitUntil(
@@ -768,7 +773,7 @@ describe("a provider that is down", () => {
 
       const result = await runCli(sandbox, ["run", "Fix the parser"], {
         stubMode: "outage-once",
-        promptSubdir: "run1",
+        promptSubdirectory: "run1",
       });
       expect(`${result.code} ${result.stderr}`).toBe("0 ");
 
