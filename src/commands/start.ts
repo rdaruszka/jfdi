@@ -17,18 +17,31 @@ export function resolveFrontEnd(options: StartOptions, config: JfdiConfig): Fron
   return options.frontEnd ?? config.frontEnd;
 }
 
+function refuseTerminalFrontEnd(): number {
+  console.error("jfdi start requires a terminal (TTY); it renders a live TUI");
+  return 1;
+}
+
 /**
  * `jfdi start` — coordinator multi-mode: watch the board, dispatch concurrently,
  * serialize integration, and present the selected live front end.
  */
 export async function startCommand(options: StartOptions = {}): Promise<number> {
-  const context = await buildContext();
+  if (!process.stdout.isTTY && options.frontEnd === "terminal") return refuseTerminalFrontEnd();
+  let context: PipelineContext;
+  try {
+    context = await buildContext();
+  } catch (error) {
+    // With no explicit selection, redirected output historically refused the
+    // terminal front end before context errors could shadow that diagnostic.
+    // A valid web config loads successfully; an explicit web selection keeps
+    // the context error because the terminal constraint does not apply to it.
+    if (!process.stdout.isTTY && options.frontEnd === undefined) return refuseTerminalFrontEnd();
+    throw error;
+  }
   const frontEnd = resolveFrontEnd(options, context.config);
   if (frontEnd === "web") return startWithWebFrontEnd(context);
-  if (!process.stdout.isTTY) {
-    console.error("jfdi start requires a terminal (TTY); it renders a live TUI");
-    return 1;
-  }
+  if (!process.stdout.isTTY) return refuseTerminalFrontEnd();
   return startWithTerminalFrontEnd(context);
 }
 

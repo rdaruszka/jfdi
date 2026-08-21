@@ -11,6 +11,7 @@ const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.resetAllMocks();
   if (originalIsTTY) {
     Object.defineProperty(process.stdout, "isTTY", originalIsTTY);
   } else {
@@ -37,5 +38,24 @@ describe("startCommand", () => {
       "jfdi start requires a terminal (TTY); it renders a live TUI",
     );
     expect(buildContext).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the TTY refusal ahead of context errors for an implicit front end", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: undefined });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.mocked(buildContext).mockRejectedValue(new Error("not inside a git repository"));
+
+    await expect(startCommand()).resolves.toBe(1);
+
+    expect(consoleError).toHaveBeenCalledWith(
+      "jfdi start requires a terminal (TTY); it renders a live TUI",
+    );
+  });
+
+  it("does not hide context errors from an explicitly selected web front end", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: undefined });
+    vi.mocked(buildContext).mockRejectedValue(new Error("not inside a git repository"));
+
+    await expect(startCommand({ frontEnd: "web" })).rejects.toThrow("not inside a git repository");
   });
 });

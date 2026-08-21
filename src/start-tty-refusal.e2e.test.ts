@@ -180,11 +180,11 @@ describe("jfdi start — non-TTY refusal (built CLI)", () => {
   );
 
   it(
-    "refuses before building context — a non-repo directory still gets the TTY message",
+    "keeps the TTY message when an implicit front end cannot load context",
     async () => {
-      // The TTY check must run before `buildContext`, so an environment where
-      // context-building would itself fail (no git repo) must still surface the
-      // TTY refusal — not a 'not a repo' error shadowing it.
+      // A config-selected web front end requires context, but an implicit
+      // redirected start still preserves the prior TTY diagnostic when that
+      // context cannot load — a repository error must not shadow it.
       const bareDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-tty-norepo-e2e-"));
       sandboxes.push(bareDirectory);
       const env = { ...process.env, JFDI_HOME: path.join(bareDirectory, ".jfdi") };
