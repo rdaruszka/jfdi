@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import * as path from "node:path";
 import {
   ConfigError,
   FRONT_ENDS,
@@ -13,6 +14,7 @@ import type { EventLog, TicketState } from "../events.js";
 import { EFFORT_LEVELS_BY_HARNESS } from "../harness/index.js";
 import { initialLiveView, type LiveView, reduceLiveView } from "../renderers/live-view.js";
 import { type SettingsSnapshot, SettingsStaleError } from "../settings.js";
+import { loadTicketDetail } from "./ticket-detail.js";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const ASSIGNED_PORT = 0;
@@ -32,6 +34,8 @@ export interface WebSettingsSurface {
 
 export interface WebFrontEndOptions {
   log: EventLog;
+  projectRoot: string;
+  ticketsDirectory: string;
   boardName: string;
   targetBranch: string;
   integrationMode: JfdiConfig["integration"]["mode"];
@@ -201,16 +205,43 @@ const PAGE = `<!doctype html>
     .column h2 { display: flex; justify-content: space-between; gap: .5rem; margin-bottom: .75rem; }
     .count { color: #657184; }
     .cards { display: grid; gap: .55rem; }
-    .card { min-height: 3.6rem; padding: .75rem; border: 1px solid #343e4d; border-radius: .2rem; background: #171d26; line-height: 1.4; overflow-wrap: anywhere; box-shadow: 0 .2rem .7rem rgba(0, 0, 0, .22); }
+    .card { width: 100%; min-height: 3.6rem; padding: .75rem; border: 1px solid #343e4d; border-radius: .2rem; background: #171d26; text-align: left; line-height: 1.4; overflow-wrap: anywhere; box-shadow: 0 .2rem .7rem rgba(0, 0, 0, .22); }
+    .detail-toolbar { display: flex; align-items: center; gap: .8rem; margin-bottom: .8rem; }
+    .detail-toolbar h1 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+    .detail { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: .8rem; height: calc(100vh - 8rem); min-height: 28rem; }
+    .ticket-pane, .feed-pane { min-width: 0; min-height: 0; border: 1px solid #29313d; background: rgba(14, 18, 24, .9); }
+    .ticket-pane { overflow-y: auto; padding: 1rem; }
+    .ticket-description, .comment-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.55; }
+    .comment-trail { display: grid; gap: .7rem; margin-top: 1.5rem; }
+    .comment { padding: .8rem; border-left: .2rem solid #536176; background: #111720; }
+    .comment-heading { margin: 0 0 .55rem; color: #78dce8; font-size: .78rem; line-height: 1.4; }
+    .feed-pane { display: flex; flex-direction: column; }
+    .session-tabs { display: flex; flex-wrap: wrap; gap: .35rem; min-height: 3.2rem; padding: .6rem; border-bottom: 1px solid #29313d; }
+    .session-tab[aria-selected="true"] { border-color: #78dce8; background: #233040; }
+    .feed-output { flex: 1; min-height: 0; margin: 0; overflow: auto; padding: 1rem; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.45; }
     [hidden] { display: none !important; }
-    @media (max-width: 760px) { header { flex-wrap: wrap; } .live { margin-left: 0; } .settings-button { margin-left: auto; } .settings-list-row { grid-template-columns: 1fr; } }
+    @media (max-width: 760px) { header { flex-wrap: wrap; } .live { margin-left: 0; } .settings-button { margin-left: auto; } .settings-list-row { grid-template-columns: 1fr; } .detail { grid-template-columns: 1fr; height: auto; } .ticket-pane, .feed-pane { height: 60vh; } }
   </style>
 </head>
 <body>
   <main>
     <header><span class="brand">JFDI</span><span class="route"><span id="board"></span> → <strong id="branch"></strong></span><span class="live">LIVE STATUS</span><button class="settings-button" id="settings-open" type="button">Settings</button></header>
     <aside id="pause"></aside>
-    <div class="kanban" id="kanban" aria-label="Ticket states"></div>
+    <section id="board-view"><div class="kanban" id="kanban" aria-label="Ticket states"></div></section>
+    <section id="ticket-detail" hidden>
+      <div class="detail-toolbar"><button id="board-return" type="button">← Board</button><h1 id="ticket-title"></h1></div>
+      <div class="detail">
+        <article class="ticket-pane" aria-label="Ticket content">
+          <h2>Description and acceptance criteria</h2>
+          <pre class="ticket-description" id="ticket-description"></pre>
+          <section class="comment-trail" id="comment-trail" aria-label="Comment trail"></section>
+        </article>
+        <section class="feed-pane" aria-label="Agent feed">
+          <div class="session-tabs" id="session-tabs" role="tablist" aria-label="Agent sessions"></div>
+          <pre class="feed-output" id="feed-output" tabindex="0"></pre>
+        </section>
+      </div>
+    </section>
   </main>
   <aside class="settings-panel" id="settings-panel" hidden>
     <div class="settings-card" role="dialog" aria-modal="true" aria-labelledby="settings-title">
@@ -262,15 +293,26 @@ const PAGE = `<!doctype html>
     </div>
   </aside>
   <script>
+    const DETAIL_REFRESH_MS = 1000;
+    const BOTTOM_TOLERANCE_PX = 8;
     const element = (id) => document.getElementById(id);
     const text = (tag, className, value) => { const node = document.createElement(tag); node.className = className; node.textContent = value; return node; };
+    let selectedTicketId = null;
+    let selectedSessionKey = null;
+    let sessionKeys = [];
+    let detailSessions = [];
+    let detailRequest = 0;
     function renderColumns(columns) {
       const board = element("kanban"); board.replaceChildren();
       for (const column of columns) {
         const section = document.createElement("section"); section.className = "column";
         const heading = document.createElement("h2"); heading.append(text("span", "", column.name), text("span", "count", String(column.cards.length)));
         const cards = document.createElement("div"); cards.className = "cards";
-        for (const card of column.cards) cards.append(text("div", "card", card.title));
+        for (const card of column.cards) {
+          const button = text("button", "card", card.title); button.type = "button";
+          button.addEventListener("click", () => { location.hash = "ticket/" + encodeURIComponent(card.id); });
+          cards.append(button);
+        }
         section.append(heading, cards); board.append(section);
       }
     }
@@ -283,6 +325,83 @@ const PAGE = `<!doctype html>
       element("board").textContent = payload.boardName; element("branch").textContent = payload.targetBranch;
       renderColumns(payload.columns);
       const pause = element("pause"); pause.style.display = payload.pause === null ? "none" : "block"; pause.textContent = payload.pause === null ? "" : pauseText(payload.pause);
+      if (selectedTicketId !== null) refreshTicketDetail();
+    }
+    function ticketIdFromHash() {
+      const prefix = "#ticket/";
+      if (!location.hash.startsWith(prefix)) return null;
+      try { return decodeURIComponent(location.hash.slice(prefix.length)); } catch { return null; }
+    }
+    function renderRoute() {
+      selectedTicketId = ticketIdFromHash();
+      element("board-view").hidden = selectedTicketId !== null;
+      element("ticket-detail").hidden = selectedTicketId === null;
+      element("settings-open").hidden = selectedTicketId !== null;
+      if (selectedTicketId === null) {
+        detailRequest += 1; selectedSessionKey = null; sessionKeys = []; detailSessions = [];
+        return;
+      }
+      element("ticket-title").textContent = selectedTicketId;
+      refreshTicketDetail();
+    }
+    function isFeedAtBottom(feed) {
+      return feed.scrollHeight - feed.scrollTop - feed.clientHeight <= BOTTOM_TOLERANCE_PX;
+    }
+    function showSelectedSession(shouldScrollToBottom = false) {
+      const feed = element("feed-output");
+      const previousScrollTop = feed.scrollTop;
+      const shouldFollow = shouldScrollToBottom || isFeedAtBottom(feed);
+      const selected = detailSessions.find((session) => session.key === selectedSessionKey);
+      const content = selected?.content || "";
+      if (feed.textContent !== content) {
+        feed.textContent = content;
+        feed.scrollTop = shouldFollow ? feed.scrollHeight : previousScrollTop;
+      }
+    }
+    function renderSessionTabs(sessions) {
+      const tabs = element("session-tabs"); tabs.replaceChildren();
+      for (const session of sessions) {
+        const tab = text("button", "session-tab", session.label); tab.type = "button"; tab.role = "tab";
+        tab.setAttribute("aria-selected", String(session.key === selectedSessionKey));
+        tab.addEventListener("click", () => {
+          selectedSessionKey = session.key; renderSessionTabs(detailSessions); showSelectedSession(true);
+        });
+        tabs.append(tab);
+      }
+    }
+    function renderTicketDetail(detail) {
+      element("ticket-title").textContent = detail.title;
+      element("ticket-description").textContent = detail.description;
+      const comments = element("comment-trail"); comments.replaceChildren();
+      if (detail.comments.length > 0) comments.append(text("h2", "", "Comment trail"));
+      for (const comment of detail.comments) {
+        const article = document.createElement("article"); article.className = "comment";
+        article.append(text("h3", "comment-heading", comment.label + " · " + comment.timestamp), text("pre", "comment-body", comment.body));
+        comments.append(article);
+      }
+      const priorLatest = sessionKeys.at(-1);
+      const wasLatest = selectedSessionKey === null || selectedSessionKey === priorLatest;
+      const wasFollowingLatest = wasLatest && isFeedAtBottom(element("feed-output"));
+      const nextKeys = detail.sessions.map((session) => session.key);
+      const nextLatest = nextKeys.at(-1) || null;
+      if (!nextKeys.includes(selectedSessionKey) || (wasFollowingLatest && nextLatest !== priorLatest)) selectedSessionKey = nextLatest;
+      const didSwitch = !sessionKeys.includes(selectedSessionKey);
+      sessionKeys = nextKeys; detailSessions = detail.sessions;
+      renderSessionTabs(detailSessions); showSelectedSession(didSwitch);
+    }
+    async function refreshTicketDetail() {
+      const ticketId = selectedTicketId;
+      if (ticketId === null) return;
+      const request = ++detailRequest;
+      try {
+        const response = await fetch("ticket-detail?ticketId=" + encodeURIComponent(ticketId));
+        const body = await response.json();
+        if (request !== detailRequest || ticketId !== selectedTicketId) return;
+        if (!response.ok) throw new Error(body.error || "Could not read ticket");
+        renderTicketDetail(body);
+      } catch (error) {
+        if (request === detailRequest && ticketId === selectedTicketId) element("feed-output").textContent = error.message;
+      }
     }
     const settingsChoices = ${SETTINGS_CHOICES};
     let settingsRevision = "";
@@ -448,6 +567,10 @@ const PAGE = `<!doctype html>
     element("settings-gate-add").addEventListener("click", () => addGateRow({}, "", true));
     element("settings-form").addEventListener("submit", saveSettings);
     element("settings-form").addEventListener("input", (event) => { event.target.setCustomValidity(""); event.target.removeAttribute("aria-invalid"); });
+    element("board-return").addEventListener("click", () => { location.hash = ""; });
+    window.addEventListener("hashchange", renderRoute);
+    renderRoute();
+    setInterval(() => { if (selectedTicketId !== null) refreshTicketDetail(); }, DETAIL_REFRESH_MS);
     new EventSource("events").onmessage = (message) => render(JSON.parse(message.data));
   </script>
 </body>
@@ -511,6 +634,7 @@ class RunningWebFrontEnd implements WebFrontEnd {
   private closePromise: Promise<void> | null = null;
   private readonly exitPromise: Promise<void>;
   private integrationMode: JfdiConfig["integration"]["mode"];
+  private ticketsDirectory: string;
 
   constructor(
     private readonly server: Server,
@@ -519,6 +643,7 @@ class RunningWebFrontEnd implements WebFrontEnd {
   ) {
     this.url = `http://${LOOPBACK_HOST}:${address.port}/`;
     this.integrationMode = options.integrationMode;
+    this.ticketsDirectory = options.ticketsDirectory;
     this.view = initialLiveView(options.log.snapshot());
     this.unsubscribe = options.log.on((event, state) => {
       this.view = reduceLiveView(this.view, event, state);
@@ -551,6 +676,10 @@ class RunningWebFrontEnd implements WebFrontEnd {
       this.openEventStream(request.method, response);
       return;
     }
+    if (requestPath === "/ticket-detail") {
+      await this.handleTicketDetail(request, response);
+      return;
+    }
     response.writeHead(HTTP_NOT_FOUND, { "Content-Type": "text/plain; charset=utf-8" });
     response.end("Not found\n");
   }
@@ -566,6 +695,7 @@ class RunningWebFrontEnd implements WebFrontEnd {
         const { staged, revision } = settingsSaveInput(await readSettingsBody(request));
         const snapshot = await this.options.settings.save(staged, revision);
         this.integrationMode = snapshot.config.integration.mode;
+        this.ticketsDirectory = snapshot.config.ticketsDirectory;
         jsonResponse(response, HTTP_OK, snapshot);
         this.broadcast();
         return;
@@ -586,6 +716,39 @@ class RunningWebFrontEnd implements WebFrontEnd {
       }
       jsonResponse(response, HTTP_INTERNAL_SERVER_ERROR, {
         error: `could not access config settings: ${(error as Error).message}`,
+      });
+    }
+  }
+
+  private async handleTicketDetail(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
+    const ticketId = new URL(request.url ?? "/", "http://localhost").searchParams.get("ticketId");
+    if (ticketId === null || ticketId === "") {
+      jsonResponse(response, HTTP_BAD_REQUEST, { error: "ticketId is required" });
+      return;
+    }
+    const ticket = this.view.state.tickets[ticketId];
+    if (ticket === undefined) {
+      jsonResponse(response, HTTP_NOT_FOUND, { error: `ticket "${ticketId}" is not on the board` });
+      return;
+    }
+    try {
+      jsonResponse(
+        response,
+        HTTP_OK,
+        await loadTicketDetail(
+          ticket,
+          this.options.projectRoot,
+          this.ticketsDirectory,
+          path.dirname(this.options.log.eventsPath),
+        ),
+        request.method === "HEAD",
+      );
+    } catch (error) {
+      jsonResponse(response, HTTP_INTERNAL_SERVER_ERROR, {
+        error: `could not read ticket "${ticketId}": ${(error as Error).message}`,
       });
     }
   }

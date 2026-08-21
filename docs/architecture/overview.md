@@ -60,6 +60,7 @@ flowchart TB
     INT -->|emit| EV
     EV -->|reduce| SNAP
     EV -->|render| UI
+    RUNS -->|read-only session feed| UI
     UI -->|validated atomic settings save| CONFIG
     UI -->|apply saved config| COORD
     PIPE --> RUNS
@@ -129,8 +130,10 @@ flowchart TB
   and the inline ANSI printer ([src/commands/context.ts](../../src/commands/context.ts)).
   The live front ends share one bounded view fold
   ([src/renderers/live-view.ts](../../src/renderers/live-view.ts)); all three
-  render run status only from the event stream/snapshot. The web front end's
-  separate settings path reads and atomically writes `config.json`, then hands a
+  render run status only from the event stream/snapshot. The web ticket detail
+  additionally reads the current ticket note and pipeline-written run logs
+  read-only for its content and full session feed. The web front end's separate
+  settings path reads and atomically writes `config.json`, then hands a
   successful save to the coordinator; no configuration state lives only in the
   browser.
 
@@ -190,7 +193,8 @@ once; [AGENTS.md](../../AGENTS.md) carries the same list for agents working on
 this repo.
 
 1. **Renderer separation.** All run status renders from `events.jsonl`/
-   `state.json` only. Pipeline and coordinator logic never talk to a UI directly,
+   `state.json` only; renderers may also read pipeline-written run logs read-only
+   for full session output. Pipeline and coordinator logic never talk to a UI directly,
    and no state exists only in the UI. The web settings write path is separate:
    disk remains authoritative, and only a successful atomic save is applied to
    the coordinator. The coordinator therefore runs identically whichever front

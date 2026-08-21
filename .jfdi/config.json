@@ -12,25 +12,63 @@
   },
   "ticketsDirectory": ".jfdi/tickets",
   "gate": [
-    { "name": "build", "command": "pnpm build" },
-    { "name": "typecheck", "command": "pnpm exec tsc -p tsconfig.json --noEmit" },
-    { "name": "test", "command": "pnpm test" },
-    { "name": "lint", "command": "pnpm lint" }
+    {
+      "name": "build",
+      "command": "pnpm build"
+    },
+    {
+      "name": "typecheck",
+      "command": "pnpm exec tsc -p tsconfig.json --noEmit"
+    },
+    {
+      "name": "test",
+      "command": "pnpm test"
+    },
+    {
+      "name": "lint",
+      "command": "pnpm lint"
+    }
   ],
-  "pipeline": { "maxRounds": 3 },
+  "pipeline": {
+    "maxRounds": 3
+  },
   "integration": {
     "targetBranch": "main",
     "mode": "auto",
-    "remote": { "fetchBefore": true, "pushAfter": true }
+    "remote": {
+      "fetchBefore": true,
+      "pushAfter": true
+    }
   },
-  "permissions": { "mode": "auto" },
+  "permissions": {
+    "mode": "auto"
+  },
   "frontEnd": "web",
-  "maxConcurrent": 2,
+  "maxConcurrent": 1,
   "stages": {
-    "implementation": { "harness": "codex", "model": "gpt-5.6-sol", "effort": "high" },
-    "code-review": { "harness": "claude", "model": "claude-opus-4-8", "effort": "high" },
-    "qa": { "harness": "claude", "model": "claude-opus-4-8", "effort": "high" },
-    "integration": { "harness": "claude", "model": "claude-opus-4-8", "effort": "medium" },
-    "commit-message": { "harness": "claude", "model": "claude-sonnet-5" }
+    "implementation": {
+      "harness": "codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high"
+    },
+    "code-review": {
+      "harness": "claude",
+      "model": "claude-opus-4-8",
+      "effort": "high"
+    },
+    "qa": {
+      "harness": "claude",
+      "model": "claude-opus-4-8",
+      "effort": "high"
+    },
+    "integration": {
+      "harness": "claude",
+      "model": "claude-opus-4-8",
+      "effort": "medium"
+    },
+    "commit-message": {
+      "harness": "claude",
+      "model": "claude-sonnet-5"
+    }
   }
 }
