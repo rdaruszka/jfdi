@@ -23,6 +23,18 @@ export type PermissionMode = "auto" | "bypass";
 export type FrontEnd = "terminal" | "web";
 export type { HarnessName, SessionKind };
 
+export const INTEGRATION_MODES = ["auto", "on-approval"] as const;
+export const PERMISSION_MODES = ["auto", "bypass"] as const;
+export const FRONT_ENDS = ["terminal", "web"] as const;
+export const HARNESS_NAMES = ["claude", "codex"] as const;
+export const SESSION_KINDS: readonly SessionKind[] = [
+  "implementation",
+  "code-review",
+  "qa",
+  "integration",
+  "commit-message",
+];
+
 export interface IntegrationRemoteConfig {
   fetchBefore: boolean;
   pushAfter: boolean;
@@ -101,15 +113,6 @@ export function defaultConfig(): JfdiConfig {
   };
 }
 
-/** Every `SessionKind`, as a runtime list — the compiler enforces the pairing. */
-const SESSION_KINDS: Record<SessionKind, true> = {
-  implementation: true,
-  "code-review": true,
-  qa: true,
-  integration: true,
-  "commit-message": true,
-};
-
 /** Quoted into every `stages` rejection, so the message shows the fix. */
 const STAGES_EXAMPLE = `"stages": {
   "implementation": { "harness": "claude", "model": "claude-opus-4-8", "effort": "high" },
@@ -139,6 +142,13 @@ export interface ConfigKeyMigration {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isChoice<Choices extends readonly string[]>(
+  value: string,
+  choices: Choices,
+): value is Choices[number] {
+  return choices.some((choice) => choice === value);
 }
 
 function keyPath(where: string, key: string): string {
@@ -324,7 +334,7 @@ function parseIntegrationConfig(
     throw new ConfigError("integration.remote must be an object");
   const remote = isRecord(integration.remote) ? integration.remote : {};
   const mode = stringOrDefault(integration.mode, defaults.mode, "integration.mode");
-  if (mode !== "auto" && mode !== "on-approval")
+  if (!isChoice(mode, INTEGRATION_MODES))
     throw new ConfigError(`integration.mode must be "auto" or "on-approval", got "${mode}"`);
   return {
     targetBranch: stringOrDefault(
@@ -353,7 +363,7 @@ function parseSessionConfig(raw: unknown, sessionKind: SessionKind): SessionConf
   const where = `stages.${sessionKind}`;
   if (!isRecord(raw)) throw new ConfigError(`${where} must be an object, e.g. ${STAGES_EXAMPLE}`);
   const harness = requiredString(raw.harness, `${where}.harness`);
-  if (harness !== "claude" && harness !== "codex")
+  if (!isChoice(harness, HARNESS_NAMES))
     throw new ConfigError(`${where}.harness must be "claude" or "codex", got "${harness}"`);
   const effort =
     raw.effort === undefined ? undefined : requiredString(raw.effort, `${where}.effort`);
@@ -382,12 +392,12 @@ function parseStages(raw: unknown): Record<SessionKind, SessionConfig> {
     );
   if (!isRecord(raw)) throw new ConfigError(`stages must be an object, e.g. ${STAGES_EXAMPLE}`);
   for (const key of Object.keys(raw)) {
-    if (!Object.hasOwn(SESSION_KINDS, key))
+    if (!SESSION_KINDS.some((sessionKind) => sessionKind === key))
       throw new ConfigError(
-        `stages has an unknown entry "${key}"; the entries are ${Object.keys(SESSION_KINDS).join(", ")}`,
+        `stages has an unknown entry "${key}"; the entries are ${SESSION_KINDS.join(", ")}`,
       );
   }
-  const missing = Object.keys(SESSION_KINDS).filter((stage) => raw[stage] === undefined);
+  const missing = SESSION_KINDS.filter((stage) => raw[stage] === undefined);
   if (missing.length > 0)
     throw new ConfigError(
       `stages is missing an entry for ${missing.join(", ")}; every stage needs one, and "commit-message" selects the scribe that writes commit messages, e.g.\n${STAGES_EXAMPLE}`,
@@ -459,10 +469,10 @@ export function parseConfig(raw: unknown): JfdiConfig {
     defaults.permissions.mode,
     "permissions.mode",
   );
-  if (permissionMode !== "auto" && permissionMode !== "bypass")
+  if (!isChoice(permissionMode, PERMISSION_MODES))
     throw new ConfigError(`permissions.mode must be "auto" or "bypass", got "${permissionMode}"`);
   const frontEnd = stringOrDefault(raw.frontEnd, defaults.frontEnd, "frontEnd");
-  if (frontEnd !== "terminal" && frontEnd !== "web")
+  if (!isChoice(frontEnd, FRONT_ENDS))
     throw new ConfigError(`frontEnd must be "terminal" or "web", got "${frontEnd}"`);
 
   return {

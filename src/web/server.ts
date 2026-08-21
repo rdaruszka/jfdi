@@ -1,7 +1,16 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { ConfigError, type JfdiConfig } from "../config.js";
+import {
+  ConfigError,
+  FRONT_ENDS,
+  HARNESS_NAMES,
+  INTEGRATION_MODES,
+  type JfdiConfig,
+  PERMISSION_MODES,
+  SESSION_KINDS,
+} from "../config.js";
 import type { EventLog, TicketState } from "../events.js";
+import { EFFORT_LEVELS_BY_HARNESS } from "../harness/index.js";
 import { initialLiveView, type LiveView, reduceLiveView } from "../renderers/live-view.js";
 import { type SettingsSnapshot, SettingsStaleError } from "../settings.js";
 
@@ -134,6 +143,15 @@ function payload(
   });
 }
 
+const SETTINGS_CHOICES = JSON.stringify({
+  integrationModes: INTEGRATION_MODES,
+  permissionModes: PERMISSION_MODES,
+  frontEnds: FRONT_ENDS,
+  harnessNames: HARNESS_NAMES,
+  sessionKinds: SESSION_KINDS,
+  effortLevelsByHarness: EFFORT_LEVELS_BY_HARNESS,
+});
+
 const PAGE = `<!doctype html>
 <html lang="en">
 <head>
@@ -155,11 +173,22 @@ const PAGE = `<!doctype html>
     button:hover { border-color: #78dce8; }
     .settings-button { margin-left: .25rem; }
     .settings-panel { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; padding: 1rem; background: rgba(4, 6, 9, .78); }
-    .settings-card { width: min(780px, 100%); max-height: calc(100vh - 2rem); overflow: auto; padding: 1.2rem; border: 1px solid #3a4657; background: #10141a; box-shadow: 0 1.5rem 5rem #000; }
+    .settings-card { width: min(920px, 100%); max-height: calc(100vh - 2rem); overflow: auto; padding: 1.2rem; border: 1px solid #3a4657; background: #10141a; box-shadow: 0 1.5rem 5rem #000; }
     .settings-card h2 { color: #edf1f7; font-size: 1rem; }
     .settings-card p { color: #aab5c5; font-size: .85rem; line-height: 1.5; }
-    .settings-card label { display: block; margin: 1rem 0 .45rem; color: #cbd3df; font-size: .82rem; }
-    #settings-editor { width: 100%; min-height: 24rem; resize: vertical; border: 1px solid #343e4d; background: #090c10; color: #edf1f7; font: inherit; line-height: 1.45; padding: .8rem; tab-size: 2; }
+    .settings-card fieldset { margin: 1rem 0; padding: .8rem; border: 1px solid #29313d; }
+    .settings-card legend { padding: 0 .35rem; color: #78dce8; font-size: .82rem; }
+    .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: .8rem; }
+    .settings-field { display: grid; align-content: start; gap: .35rem; color: #cbd3df; font-size: .82rem; }
+    .settings-field input:not([type="checkbox"]), .settings-field select { width: 100%; min-width: 0; border: 1px solid #343e4d; border-radius: .2rem; background: #090c10; color: #edf1f7; font: inherit; padding: .5rem; }
+    .settings-field input[aria-invalid="true"], .settings-field select[aria-invalid="true"] { border-color: #ff6b6b; outline: 1px solid #ff6b6b; }
+    .boolean-field { display: flex; align-items: center; gap: .55rem; min-height: 2.4rem; }
+    .boolean-field input { width: 1.1rem; height: 1.1rem; accent-color: #63d392; }
+    .settings-list { display: grid; gap: .65rem; }
+    .settings-list-row { display: grid; grid-template-columns: minmax(10rem, .7fr) minmax(16rem, 1.5fr) auto; gap: .65rem; align-items: end; padding: .65rem; border: 1px solid #29313d; }
+    .settings-stage { padding: .65rem; border: 1px solid #29313d; }
+    .settings-stage h3 { margin: 0 0 .65rem; color: #cbd3df; font-size: .82rem; }
+    .remove-button { border-color: #70434a; background: #321d21; }
     .settings-actions { display: flex; align-items: center; gap: .6rem; margin-top: .8rem; }
     #settings-save { border-color: #4c9b70; background: #173326; }
     #settings-message { min-height: 1.3rem; margin: .8rem 0 0; color: #e5b567; }
@@ -173,7 +202,7 @@ const PAGE = `<!doctype html>
     .cards { display: grid; gap: .55rem; }
     .card { min-height: 3.6rem; padding: .75rem; border: 1px solid #343e4d; border-radius: .2rem; background: #171d26; line-height: 1.4; overflow-wrap: anywhere; box-shadow: 0 .2rem .7rem rgba(0, 0, 0, .22); }
     [hidden] { display: none !important; }
-    @media (max-width: 760px) { header { flex-wrap: wrap; } .live { margin-left: 0; } .settings-button { margin-left: auto; } }
+    @media (max-width: 760px) { header { flex-wrap: wrap; } .live { margin-left: 0; } .settings-button { margin-left: auto; } .settings-list-row { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -185,15 +214,50 @@ const PAGE = `<!doctype html>
   <aside class="settings-panel" id="settings-panel" hidden>
     <div class="settings-card" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <h2 id="settings-title">Instance settings</h2>
-      <p>Edit every value in <code>.jfdi/config.json</code> below. Changes are staged here until Save. The <code>frontEnd</code> value is saved but switching front ends requires a restart.</p>
-      <label for="settings-editor">Complete configuration</label>
-      <textarea id="settings-editor" spellcheck="false"></textarea>
-      <div class="settings-actions">
-        <button id="settings-save" type="button">Save</button>
-        <button id="settings-cancel" type="button">Cancel</button>
-        <button id="settings-reload" type="button">Reload</button>
-      </div>
-      <p id="settings-message" role="status"></p>
+      <p>Edit each value in <code>.jfdi/config.json</code>. Changes are staged here until Save. The <code>frontEnd</code> value is saved but switching front ends requires a restart.</p>
+      <form id="settings-form">
+        <fieldset>
+          <legend>Board and tickets</legend>
+          <div class="settings-grid">
+            <label class="settings-field">Board path<input data-config-path="board.path" type="text" required></label>
+            <label class="settings-field">Tickets directory<input data-config-path="ticketsDirectory" type="text" required></label>
+            <label class="settings-field">Begin column<input data-config-path="board.columns.begin" type="text" required></label>
+            <label class="settings-field">In progress column<input data-config-path="board.columns.inProgress" type="text" required></label>
+            <label class="settings-field">Done column<input data-config-path="board.columns.done" type="text" required></label>
+            <label class="settings-field">Blocked column<input data-config-path="board.columns.blocked" type="text" required></label>
+            <label class="settings-field">Ready to merge column<input data-config-path="board.columns.readyToMerge" type="text" required></label>
+            <label class="settings-field">Inbox column<input data-config-path="board.columns.inbox" type="text" required></label>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Pipeline and integration</legend>
+          <div class="settings-grid">
+            <label class="settings-field">Maximum rounds<input data-config-path="pipeline.maxRounds" type="number" min="1" step="1" required></label>
+            <label class="settings-field">Maximum concurrent runs<input data-config-path="maxConcurrent" type="number" min="1" step="1" required></label>
+            <label class="settings-field">Target branch<input data-config-path="integration.targetBranch" type="text" required></label>
+            <label class="settings-field">Integration mode<select data-config-path="integration.mode"></select></label>
+            <label class="settings-field">Permission mode<select data-config-path="permissions.mode"></select></label>
+            <label class="settings-field">Front end<select data-config-path="frontEnd"></select></label>
+            <label class="settings-field boolean-field"><input data-config-path="integration.remote.fetchBefore" type="checkbox"><span>Fetch before integration</span></label>
+            <label class="settings-field boolean-field"><input data-config-path="integration.remote.pushAfter" type="checkbox"><span>Push after integration</span></label>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Gate commands</legend>
+          <div class="settings-list" id="settings-gate"></div>
+          <button id="settings-gate-add" type="button">Add gate command</button>
+        </fieldset>
+        <fieldset>
+          <legend>Stages and scribe</legend>
+          <div class="settings-list" id="settings-stages"></div>
+        </fieldset>
+        <div class="settings-actions">
+          <button id="settings-save" type="submit">Save</button>
+          <button id="settings-cancel" type="button">Cancel</button>
+          <button id="settings-reload" type="button">Reload</button>
+        </div>
+        <p id="settings-message" role="status"></p>
+      </form>
     </div>
   </aside>
   <script>
@@ -219,48 +283,170 @@ const PAGE = `<!doctype html>
       renderColumns(payload.columns);
       const pause = element("pause"); pause.style.display = payload.pause === null ? "none" : "block"; pause.textContent = payload.pause === null ? "" : pauseText(payload.pause);
     }
+    const settingsChoices = ${SETTINGS_CHOICES};
     let settingsRevision = "";
+    let settingsBaseConfig = null;
+    const settingsControls = () => Array.from(document.querySelectorAll("[data-config-path]"));
+    const settingsField = (path) => settingsControls().find((control) => control.dataset.configPath === path);
+    function option(value, label = value) {
+      const choice = document.createElement("option"); choice.value = value; choice.textContent = label; return choice;
+    }
+    function setSelectOptions(control, values, emptyLabel) {
+      const selected = control.value; control.replaceChildren();
+      if (emptyLabel !== undefined) control.append(option("", emptyLabel));
+      for (const value of values) control.append(option(value));
+      control.value = selected;
+    }
+    function labeledField(labelText, control) {
+      const label = document.createElement("label"); label.className = "settings-field"; label.append(labelText, control); return label;
+    }
+    function settingsInput(path, value, type = "text") {
+      const control = document.createElement("input"); control.type = type; control.value = value; control.required = true; control.dataset.configPath = path; return control;
+    }
+    function clearFieldErrors() {
+      for (const control of settingsControls()) { control.setCustomValidity(""); control.removeAttribute("aria-invalid"); }
+    }
+    function pointAtSettingsField(path, message) {
+      const controls = settingsControls();
+      const control = controls.find((candidate) => candidate.dataset.configPath === path)
+        || controls.find((candidate) => candidate.dataset.configPath.startsWith(path + ".") || candidate.dataset.configPath.startsWith(path + "["));
+      if (control === undefined) return;
+      control.setCustomValidity(message); control.setAttribute("aria-invalid", "true"); control.focus(); control.reportValidity();
+    }
     function settingsMessage(message, isSuccess = false) {
       const output = element("settings-message"); output.textContent = message; output.className = isSuccess ? "success" : "";
     }
+    function updateGatePaths() {
+      const rows = Array.from(element("settings-gate").children);
+      rows.forEach((row, index) => {
+        row.querySelector('[data-gate-part="name"]').dataset.configPath = "gate[" + index + "].name";
+        row.querySelector('[data-gate-part="command"]').dataset.configPath = "gate[" + index + "].command";
+      });
+    }
+    function addGateRow(entry = {}, sourceIndex = "", shouldFocus = false) {
+      const row = document.createElement("div"); row.className = "settings-list-row"; row.dataset.sourceIndex = sourceIndex;
+      const name = settingsInput("", entry.name || ""); name.dataset.gatePart = "name";
+      const command = settingsInput("", entry.command || ""); command.dataset.gatePart = "command";
+      const remove = document.createElement("button"); remove.type = "button"; remove.className = "remove-button"; remove.textContent = "Remove";
+      remove.addEventListener("click", () => { row.remove(); updateGatePaths(); });
+      row.append(labeledField("Name", name), labeledField("Command", command), remove);
+      element("settings-gate").append(row); updateGatePaths(); if (shouldFocus) name.focus();
+    }
+    function renderGate(entries) {
+      element("settings-gate").replaceChildren();
+      entries.forEach((entry, index) => addGateRow(entry, String(index)));
+    }
+    function renderStages(stages) {
+      const output = element("settings-stages"); output.replaceChildren();
+      for (const sessionKind of settingsChoices.sessionKinds) {
+        const entry = stages[sessionKind];
+        const section = document.createElement("section"); section.className = "settings-stage";
+        const heading = document.createElement("h3"); heading.textContent = sessionKind;
+        const fields = document.createElement("div"); fields.className = "settings-grid";
+        const harness = document.createElement("select"); harness.dataset.configPath = "stages." + sessionKind + ".harness";
+        setSelectOptions(harness, settingsChoices.harnessNames); harness.value = entry.harness;
+        const model = settingsInput("stages." + sessionKind + ".model", entry.model || ""); model.required = false;
+        const effort = document.createElement("select"); effort.dataset.configPath = "stages." + sessionKind + ".effort";
+        const renderEffort = () => { setSelectOptions(effort, settingsChoices.effortLevelsByHarness[harness.value], "Provider default"); };
+        renderEffort(); effort.value = entry.effort || "";
+        harness.addEventListener("change", () => { const previous = effort.value; renderEffort(); effort.value = settingsChoices.effortLevelsByHarness[harness.value].includes(previous) ? previous : ""; });
+        fields.append(labeledField("Harness", harness), labeledField("Model", model), labeledField("Effort", effort));
+        section.append(heading, fields); output.append(section);
+      }
+    }
+    function setSettingsValue(path, value) {
+      const control = settingsField(path);
+      if (control.type === "checkbox") control.checked = value;
+      else control.value = value;
+    }
+    function renderSettings(config) {
+      settingsBaseConfig = structuredClone(config); clearFieldErrors();
+      setSettingsValue("board.path", config.board.path);
+      setSettingsValue("ticketsDirectory", config.ticketsDirectory);
+      for (const name of ["begin", "inProgress", "done", "blocked", "readyToMerge", "inbox"])
+        setSettingsValue("board.columns." + name, config.board.columns[name]);
+      setSettingsValue("pipeline.maxRounds", config.pipeline.maxRounds);
+      setSettingsValue("maxConcurrent", config.maxConcurrent);
+      setSettingsValue("integration.targetBranch", config.integration.targetBranch);
+      setSettingsValue("integration.mode", config.integration.mode);
+      setSettingsValue("permissions.mode", config.permissions.mode);
+      setSettingsValue("frontEnd", config.frontEnd);
+      setSettingsValue("integration.remote.fetchBefore", config.integration.remote.fetchBefore);
+      setSettingsValue("integration.remote.pushAfter", config.integration.remote.pushAfter);
+      renderGate(config.gate); renderStages(config.stages);
+    }
+    function collectSettings() {
+      const config = structuredClone(settingsBaseConfig);
+      config.board.path = settingsField("board.path").value;
+      config.ticketsDirectory = settingsField("ticketsDirectory").value;
+      for (const name of ["begin", "inProgress", "done", "blocked", "readyToMerge", "inbox"])
+        config.board.columns[name] = settingsField("board.columns." + name).value;
+      config.pipeline.maxRounds = settingsField("pipeline.maxRounds").valueAsNumber;
+      config.maxConcurrent = settingsField("maxConcurrent").valueAsNumber;
+      config.integration.targetBranch = settingsField("integration.targetBranch").value;
+      config.integration.mode = settingsField("integration.mode").value;
+      config.permissions.mode = settingsField("permissions.mode").value;
+      config.frontEnd = settingsField("frontEnd").value;
+      config.integration.remote.fetchBefore = settingsField("integration.remote.fetchBefore").checked;
+      config.integration.remote.pushAfter = settingsField("integration.remote.pushAfter").checked;
+      config.gate = Array.from(element("settings-gate").children).map((row) => {
+        const sourceIndex = Number(row.dataset.sourceIndex);
+        const source = row.dataset.sourceIndex !== "" && Number.isInteger(sourceIndex) && settingsBaseConfig.gate[sourceIndex] !== undefined ? settingsBaseConfig.gate[sourceIndex] : {};
+        return { ...source, name: row.querySelector('[data-gate-part="name"]').value, command: row.querySelector('[data-gate-part="command"]').value };
+      });
+      for (const sessionKind of settingsChoices.sessionKinds) {
+        const entry = config.stages[sessionKind];
+        entry.harness = settingsField("stages." + sessionKind + ".harness").value;
+        const model = settingsField("stages." + sessionKind + ".model").value;
+        const effort = settingsField("stages." + sessionKind + ".effort").value;
+        if (model === "") delete entry.model; else entry.model = model;
+        if (effort === "") delete entry.effort; else entry.effort = effort;
+      }
+      return config;
+    }
     async function loadSettings() {
-      settingsRevision = ""; element("settings-editor").value = "";
+      settingsRevision = ""; settingsBaseConfig = null; element("settings-gate").replaceChildren(); element("settings-stages").replaceChildren();
       settingsMessage("Loading…");
       try {
         const response = await fetch("settings");
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "Could not load settings");
         settingsRevision = body.revision;
-        element("settings-editor").value = JSON.stringify(body.config, null, 2);
+        renderSettings(body.editableConfig);
         settingsMessage("Loaded from disk.", true);
       } catch (error) { settingsMessage(error.message); }
     }
     async function openSettings() {
       element("settings-panel").hidden = false;
       await loadSettings();
-      element("settings-editor").focus();
+      settingsField("board.path")?.focus();
     }
     function cancelSettings() {
-      settingsRevision = ""; element("settings-editor").value = ""; settingsMessage(""); element("settings-panel").hidden = true;
+      settingsRevision = ""; settingsBaseConfig = null; element("settings-gate").replaceChildren(); element("settings-stages").replaceChildren(); settingsMessage(""); element("settings-panel").hidden = true;
     }
-    async function saveSettings() {
-      let config;
-      try { config = JSON.parse(element("settings-editor").value); }
-      catch (error) { settingsMessage("Invalid JSON: " + error.message); return; }
+    async function saveSettings(event) {
+      event.preventDefault(); clearFieldErrors();
+      if (!element("settings-form").reportValidity()) return;
+      const config = collectSettings();
       settingsMessage("Saving…");
       try {
         const response = await fetch("settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config, revision: settingsRevision }) });
         const body = await response.json();
-        if (!response.ok) throw new Error(body.error || "Could not save settings");
+        if (!response.ok) { if (body.field) pointAtSettingsField(body.field, body.error); throw new Error(body.error || "Could not save settings"); }
         settingsRevision = body.revision;
-        element("settings-editor").value = JSON.stringify(body.config, null, 2);
+        renderSettings(body.editableConfig);
         settingsMessage("Saved and applied. Switching front ends still requires a restart.", true);
       } catch (error) { settingsMessage(error.message); }
     }
+    setSelectOptions(settingsField("integration.mode"), settingsChoices.integrationModes);
+    setSelectOptions(settingsField("permissions.mode"), settingsChoices.permissionModes);
+    setSelectOptions(settingsField("frontEnd"), settingsChoices.frontEnds);
     element("settings-open").addEventListener("click", openSettings);
     element("settings-cancel").addEventListener("click", cancelSettings);
     element("settings-reload").addEventListener("click", loadSettings);
-    element("settings-save").addEventListener("click", saveSettings);
+    element("settings-gate-add").addEventListener("click", () => addGateRow({}, "", true));
+    element("settings-form").addEventListener("submit", saveSettings);
+    element("settings-form").addEventListener("input", (event) => { event.target.setCustomValidity(""); event.target.removeAttribute("aria-invalid"); });
     new EventSource("events").onmessage = (message) => render(JSON.parse(message.data));
   </script>
 </body>
@@ -308,6 +494,12 @@ function settingsSaveInput(raw: unknown): { staged: unknown; revision: string } 
     throw new ConfigError("settings revision must be a non-empty string");
   if (!Object.hasOwn(input, "config")) throw new ConfigError("settings config is required");
   return { staged: input.config, revision: input.revision };
+}
+
+function configErrorField(message: string): string | undefined {
+  return /^(board(?:\.columns\.[A-Za-z]+|\.path)?|ticketsDirectory|gate(?:\[\d+\])?(?:\.[A-Za-z]+)?|pipeline(?:\.[A-Za-z]+)?|integration(?:\.[A-Za-z]+)*|permissions(?:\.[A-Za-z]+)?|frontEnd|maxConcurrent|stages(?:\.[A-Za-z-]+)*)/.exec(
+    message,
+  )?.[1];
 }
 
 class RunningWebFrontEnd implements WebFrontEnd {
@@ -385,7 +577,10 @@ class RunningWebFrontEnd implements WebFrontEnd {
         return;
       }
       if (error instanceof ConfigError) {
-        jsonResponse(response, HTTP_BAD_REQUEST, { error: error.message });
+        jsonResponse(response, HTTP_BAD_REQUEST, {
+          error: error.message,
+          field: configErrorField(error.message),
+        });
         return;
       }
       jsonResponse(response, HTTP_INTERNAL_SERVER_ERROR, {

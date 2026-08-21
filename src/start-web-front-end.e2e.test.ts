@@ -172,6 +172,26 @@ async function setConfigFrontEnd(sandbox: Sandbox, frontEnd: string): Promise<vo
   await fs.writeFile(sandbox.configPath, JSON.stringify(config, null, 2));
 }
 
+/**
+ * Hand-add keys the typed panel does not model at several depths — a top-level
+ * key, one nested inside `integration`, an extra field on a gate entry, and one
+ * on a stage entry — mirroring a config co-edited by hand or another tool. These
+ * must survive a load-edit-save round trip through the panel unchanged.
+ */
+async function addUnmodeledConfigKeys(sandbox: Sandbox): Promise<void> {
+  const config = JSON.parse(await fs.readFile(sandbox.configPath, "utf8")) as {
+    integration: Record<string, unknown>;
+    gate: unknown[];
+    stages: Record<string, Record<string, unknown>>;
+    [key: string]: unknown;
+  };
+  config.handAddedTopLevel = { note: "keep me" };
+  config.integration.futureFlag = "preserve";
+  config.gate = [{ name: "test", command: "pnpm test", timeoutSeconds: 42 }];
+  config.stages.implementation = { ...config.stages.implementation, experimentalTuning: 7 };
+  await fs.writeFile(sandbox.configPath, `${JSON.stringify(config, null, 2)}\n`);
+}
+
 async function seedReadyCard(sandbox: Sandbox): Promise<void> {
   const board = await fs.readFile(sandbox.boardPath, "utf8");
   await fs.writeFile(sandbox.boardPath, board.replace("## Ready\n", `## Ready\n\n${CARD_LINE}\n`));
@@ -622,6 +642,133 @@ describe("jfdi start --front-end web (built CLI)", () => {
       const exit = waitForExit(child);
       child.kill("SIGINT");
       await exit;
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
+    "edits config through typed panel fields: refusals name the offending option, and hand-added keys survive a save",
+    async () => {
+      // A config co-edited by hand carries keys the typed panel does not model.
+      const sandbox = await makeSandbox();
+      await addUnmodeledConfigKeys(sandbox);
+      const original = await fs.readFile(sandbox.configPath, "utf8");
+
+      const { child, stdout } = startCli(sandbox, ["start", "--front-end", "web"]);
+      const url = await waitForUrl(stdout);
+
+      // GET exposes an editableConfig the typed controls bind to. Every unmodeled
+      // key is present at its original depth, while the typed `config` view drops
+      // the keys the panel does not know about (the gate entry's extra field).
+      const loaded = (await (await fetch(new URL("settings", url))).json()) as {
+        config: { gate: Array<Record<string, unknown>> };
+        editableConfig: {
+          handAddedTopLevel: unknown;
+          integration: Record<string, unknown>;
+          gate: Array<Record<string, unknown>>;
+          stages: Record<string, Record<string, unknown>>;
+          [key: string]: unknown;
+        };
+        revision: string;
+      };
+      expect(loaded.editableConfig.handAddedTopLevel).toEqual({ note: "keep me" });
+      expect(loaded.editableConfig.integration.futureFlag).toBe("preserve");
+      expect(loaded.editableConfig.gate[0]).toMatchObject({ timeoutSeconds: 42 });
+      expect(loaded.editableConfig.stages.implementation).toMatchObject({ experimentalTuning: 7 });
+      // The typed shape the pipeline consumes never carries the unmodeled key.
+      expect(loaded.config.gate[0]).not.toHaveProperty("timeoutSeconds");
+
+      // A validation refusal for each kind of typed control names the exact field
+      // the panel would highlight — numeric, constrained enum (top-level and a
+      // per-stage harness), a nested board column, and a variable-length gate
+      // entry — not merely a message line.
+      const refusals: Array<[Record<string, unknown>, string]> = [
+        [{ ...loaded.editableConfig, maxConcurrent: 0 }, "maxConcurrent"],
+        [{ ...loaded.editableConfig, pipeline: { maxRounds: 0 } }, "pipeline.maxRounds"],
+        [
+          {
+            ...loaded.editableConfig,
+            integration: { ...loaded.editableConfig.integration, mode: "sometimes" },
+          },
+          "integration.mode",
+        ],
+        [{ ...loaded.editableConfig, permissions: { mode: "yolo" } }, "permissions.mode"],
+        [{ ...loaded.editableConfig, frontEnd: "gui" }, "frontEnd"],
+        [
+          {
+            ...loaded.editableConfig,
+            stages: {
+              ...loaded.editableConfig.stages,
+              qa: { ...loaded.editableConfig.stages.qa, harness: "gemini" },
+            },
+          },
+          "stages.qa.harness",
+        ],
+        [
+          {
+            ...loaded.editableConfig,
+            board: {
+              ...(loaded.editableConfig.board as Record<string, unknown>),
+              columns: {
+                ...(loaded.editableConfig.board as { columns: Record<string, unknown> }).columns,
+                begin: "",
+              },
+            },
+          },
+          "board.columns.begin",
+        ],
+        [{ ...loaded.editableConfig, gate: [{ name: "test" }] }, "gate[0].command"],
+      ];
+      for (const [config, field] of refusals) {
+        const response = await fetch(new URL("settings", url), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ config, revision: loaded.revision }),
+        });
+        expect(response.status).toBe(400);
+        expect((await response.json()) as { field: string }).toMatchObject({ field });
+      }
+      // Every refusal staged nothing: the file on disk is byte-for-byte untouched.
+      expect(await fs.readFile(sandbox.configPath, "utf8")).toBe(original);
+
+      // A valid edit through one typed field saves and applies, and every
+      // hand-added key round-trips to disk unchanged.
+      const saved = await fetch(new URL("settings", url), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          config: { ...loaded.editableConfig, maxConcurrent: 4 },
+          revision: loaded.revision,
+        }),
+      });
+      expect(saved.status).toBe(200);
+      const onDisk = JSON.parse(await fs.readFile(sandbox.configPath, "utf8")) as Record<
+        string,
+        unknown
+      >;
+      expect(onDisk).toMatchObject({
+        maxConcurrent: 4,
+        handAddedTopLevel: { note: "keep me" },
+        integration: { futureFlag: "preserve" },
+        gate: [{ timeoutSeconds: 42 }],
+        stages: { implementation: { experimentalTuning: 7 } },
+      });
+
+      // The now-consumed revision is stale; a second save with it is refused.
+      const stale = await fetch(new URL("settings", url), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          config: { ...loaded.editableConfig, maxConcurrent: 9 },
+          revision: loaded.revision,
+        }),
+      });
+      expect(stale.status).toBe(409);
+
+      const exit = waitForExit(child);
+      child.kill("SIGINT");
+      const result = await exit;
+      expect(result.code).toBe(EXIT_SIGINT);
     },
     SCENARIO_TIMEOUT_MS,
   );

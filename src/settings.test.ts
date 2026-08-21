@@ -25,6 +25,7 @@ describe("settings file", () => {
     const loaded = await loadSettings(projectRoot);
 
     expect(loaded.config).toEqual(defaultConfig());
+    expect(loaded.editableConfig).toEqual(defaultConfig());
     expect(loaded.revision).toMatch(/^[a-f0-9]{64}$/);
   });
 
@@ -64,5 +65,40 @@ describe("settings file", () => {
     expect(
       (await fs.readdir(path.dirname(configPath))).filter((entry) => entry.endsWith(".tmp")),
     ).toEqual([]);
+  });
+
+  it("preserves unmodeled keys through a load, edit, and save", async () => {
+    const source = {
+      ...defaultConfig(),
+      extension: { enabled: true },
+      integration: {
+        ...defaultConfig().integration,
+        extensionMode: "keep",
+      },
+      gate: [{ name: "test", command: "pnpm test", timeoutSeconds: 30 }],
+      stages: {
+        ...defaultConfig().stages,
+        implementation: {
+          ...defaultConfig().stages.implementation,
+          extensionModelSetting: "keep",
+        },
+      },
+    };
+    await fs.writeFile(configPath, `${JSON.stringify(source, null, 2)}\n`);
+
+    const loaded = await loadSettings(projectRoot);
+    const saved = await saveSettings(
+      projectRoot,
+      { ...loaded.editableConfig, maxConcurrent: 4 },
+      loaded.revision,
+    );
+
+    expect(saved.config.maxConcurrent).toBe(4);
+    expect(JSON.parse(await fs.readFile(configPath, "utf8"))).toMatchObject({
+      extension: { enabled: true },
+      integration: { extensionMode: "keep" },
+      gate: [{ timeoutSeconds: 30 }],
+      stages: { implementation: { extensionModelSetting: "keep" } },
+    });
   });
 });
