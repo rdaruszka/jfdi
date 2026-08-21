@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CLAUDE_EFFORT_LEVELS,
   ClaudeHarness,
@@ -365,6 +365,7 @@ describe("ClaudeHarness selection flags", () => {
     directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-claude-argv-")));
   });
   afterEach(async () => {
+    vi.restoreAllMocks();
     await fs.rm(directory, { recursive: true, force: true });
   });
 
@@ -427,6 +428,17 @@ describe("ClaudeHarness selection flags", () => {
       "high",
       "brief",
     ]);
+  });
+
+  it("releases inherited stdin after an interactive launch exits", async () => {
+    const recorder = await argvRecorder();
+    const pauseInput = vi.spyOn(process.stdin, "pause");
+
+    await new ClaudeHarness(TEST_SELECTION, "auto", recorder.executable).spawnInteractive("brief", {
+      cwd: directory,
+    });
+
+    expect(pauseInput).toHaveBeenCalledOnce();
   });
 
   it.each([

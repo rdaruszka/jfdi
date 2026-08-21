@@ -47,32 +47,65 @@ export async function startCommand(options: StartOptions = {}): Promise<number> 
 
 async function startWithTerminalFrontEnd(context: PipelineContext): Promise<number> {
   const coordinator = new Coordinator(context);
-
-  const shutdown = () => {
+  let exitCode = 0;
+  let isCoordinatorStopped = false;
+  const shutdown = (requestedExitCode: number) => {
+    if (isCoordinatorStopped) return;
+    isCoordinatorStopped = true;
+    exitCode = requestedExitCode;
     coordinator.stop();
   };
-  process.on("SIGINT", () => {
-    shutdown();
-    process.exit(EXIT_SIGINT);
-  });
-  process.on("SIGTERM", () => {
-    shutdown();
-    process.exit(EXIT_SIGTERM);
-  });
+  const quit = (requestedExitCode: number) => {
+    shutdown(requestedExitCode);
+    // Stopping releases a paused pipeline with its last failed result. An
+    // interrupt must terminate after cleanup, before that pipeline can settle
+    // the card as a task failure instead of leaving it resumable In Progress.
+    if (requestedExitCode !== 0) process.exit(requestedExitCode);
+  };
 
-  const app = render(
-    createElement(App, {
-      log: context.log,
-      boardName: path.basename(context.config.board.path),
-      targetBranch: context.config.integration.targetBranch,
-      onQuit: shutdown,
-      onRetry: () => context.pause.retryNow(),
-    }),
-  );
-  await coordinator.start();
-  await app.waitUntilExit();
-  await context.log.flush();
-  return 0;
+  try {
+    const app = render(
+      createElement(App, {
+        log: context.log,
+        boardName: path.basename(context.config.board.path),
+        targetBranch: context.config.integration.targetBranch,
+        onQuit: quit,
+        onRetry: () => context.pause.retryNow(),
+      }),
+      { exitOnCtrlC: false },
+    );
+    let hasUnmountedApp = false;
+    const unmountApp = () => {
+      if (hasUnmountedApp) return;
+      hasUnmountedApp = true;
+      app.unmount();
+    };
+    const onInterrupt = () => {
+      shutdown(EXIT_SIGINT);
+      unmountApp();
+      process.exit(EXIT_SIGINT);
+    };
+    const onTermination = () => {
+      shutdown(EXIT_SIGTERM);
+      unmountApp();
+      process.exit(EXIT_SIGTERM);
+    };
+    process.once("SIGINT", onInterrupt);
+    process.once("SIGTERM", onTermination);
+
+    try {
+      await coordinator.start();
+      await app.waitUntilExit();
+      return exitCode;
+    } finally {
+      process.off("SIGINT", onInterrupt);
+      process.off("SIGTERM", onTermination);
+      unmountApp();
+    }
+  } finally {
+    shutdown(exitCode);
+    await context.log.flush();
+  }
 }
 
 async function startWithWebFrontEnd(context: PipelineContext): Promise<number> {

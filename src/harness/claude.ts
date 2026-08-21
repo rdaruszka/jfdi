@@ -405,11 +405,18 @@ function interactiveResult(
   selection: HarnessSelection,
 ): Promise<number> {
   return new Promise<number>((resolve) => {
+    let hasSettled = false;
+    const finish = (exitCode: number) => {
+      if (hasSettled) return;
+      hasSettled = true;
+      process.stdin.pause();
+      resolve(exitCode);
+    };
     child.on("error", (error) => {
       console.error(spawnFailureText(executable, selection, error.message, "init-flags"));
-      resolve(EXIT_COMMAND_NOT_EXECUTABLE);
+      finish(EXIT_COMMAND_NOT_EXECUTABLE);
     });
-    child.on("close", (code) => resolve(code ?? 0));
+    child.on("close", (code) => finish(code ?? 0));
   });
 }
 
