@@ -166,9 +166,9 @@ const PAGE = `<!doctype html>
   <style>
     :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #0b0d10; color: #edf1f7; }
     * { box-sizing: border-box; }
-    body { margin: 0; background: radial-gradient(circle at top right, #19243a 0, #0b0d10 36rem); min-height: 100vh; }
-    main { width: calc(100% - 2rem); margin: 0 auto; padding: 2rem 0 4rem; }
-    header { display: flex; align-items: baseline; gap: .8rem; margin-bottom: 1.5rem; }
+    body { margin: 0; overflow-x: auto; background: radial-gradient(circle at top right, #19243a 0, #0b0d10 36rem); min-height: 100vh; }
+    main { display: flex; flex-direction: column; min-height: 100vh; }
+    header { display: flex; align-items: baseline; gap: .8rem; margin: 2rem 1rem 1.5rem; }
     .brand { background: #edf1f7; color: #0b0d10; font-weight: 900; padding: .25rem .55rem; letter-spacing: .08em; }
     .route { color: #aab5c5; }
     .route strong { color: #edf1f7; }
@@ -198,10 +198,11 @@ const PAGE = `<!doctype html>
     #settings-save { border-color: #4c9b70; background: #173326; }
     #settings-message { min-height: 1.3rem; margin: .8rem 0 0; color: #e5b567; }
     #settings-message.success { color: #63d392; }
-    #pause { display: none; margin-bottom: 1.25rem; padding: .8rem 1rem; border: 1px solid #e5b567; background: #2b2418; color: #ffd58c; }
+    #pause { display: none; margin: 0 1rem 1.25rem; padding: .8rem 1rem; border: 1px solid #e5b567; background: #2b2418; color: #ffd58c; }
     h2 { margin: 0 0 .55rem; color: #aab5c5; font-size: .78rem; letter-spacing: .12em; text-transform: uppercase; }
-    .kanban { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(15rem, 1fr); gap: .8rem; overflow-x: auto; align-items: start; padding-bottom: 1rem; }
-    .column { min-height: 12rem; padding: .75rem; border: 1px solid #29313d; background: rgba(14, 18, 24, .82); }
+    .kanban { flex: 1; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(15rem, 1fr); gap: 0; align-items: stretch; }
+    .column { padding: .75rem; }
+    .column + .column { border-left: 1px solid #29313d; }
     .column h2 { display: flex; justify-content: space-between; gap: .5rem; margin-bottom: .75rem; }
     .count { color: #657184; }
     .cards { display: grid; gap: .55rem; }
