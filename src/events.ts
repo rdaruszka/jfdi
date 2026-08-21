@@ -356,8 +356,8 @@ export function reduceEvent(state: CoordinatorState, event: JfdiEvent): Coordina
 }
 
 /**
- * Append-only event log + derived state snapshot. The TUI (and any future
- * renderer) consumes this stream; nothing renders from pipeline internals.
+ * Append-only event log + derived state snapshot. Every renderer consumes this
+ * stream; nothing renders from pipeline internals.
  */
 export class EventLog {
   private readonly emitter = new EventEmitter();

@@ -2,14 +2,15 @@
  * Acceptance for the TTY-only requirement of `jfdi start`, exercised against the
  * built CLI (`dist/index.js start`) in a scratch repo under the OS temp dir.
  *
- * `jfdi start` renders a live Ink TUI, which cannot draw without a terminal.
- * When stdout is redirected (a pipe, not a TTY) it must refuse immediately: a
- * non-zero exit and an actionable message on stderr, and — critically — it must
- * dispatch nothing. There is no headless coordinator fallback. The refusal
- * lands before any board is read or any session spawned, so a stub agent that
+ * The default `jfdi start` front end is the live Ink TUI, which cannot draw
+ * without a terminal. When stdout is redirected (a pipe, not a TTY) it must
+ * refuse: a non-zero exit and an actionable message on stderr, and — critically —
+ * it must dispatch nothing. It never silently falls back to the web front end; that
+ * selection must be explicit in config or on the CLI. The refusal lands before
+ * any session is spawned, so a stub agent that
  * records every invocation staying silent (`CAPTURE_DIRECTORY/ran.log` absent) proves
- * no dispatch, and the begin-column card sitting untouched proves the board was
- * never mutated.
+ * no dispatch, and the begin-column card sitting untouched proves the board
+ * was never mutated.
  *
  * `JFDI_HOME`/`HOME` always point inside the scratch tree; nothing here can
  * reach the real `~/.jfdi`, and the stub guarantees no real agent CLI is spawned.
@@ -179,11 +180,11 @@ describe("jfdi start — non-TTY refusal (built CLI)", () => {
   );
 
   it(
-    "refuses before building context — a non-repo directory still gets the TTY message",
+    "keeps the TTY message when an implicit front end cannot load context",
     async () => {
-      // The TTY check must run before `buildContext`, so an environment where
-      // context-building would itself fail (no git repo) must still surface the
-      // TTY refusal — not a 'not a repo' error shadowing it.
+      // A config-selected web front end requires context, but an implicit
+      // redirected start still preserves the prior TTY diagnostic when that
+      // context cannot load — a repository error must not shadow it.
       const bareDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-tty-norepo-e2e-"));
       sandboxes.push(bareDirectory);
       const env = { ...process.env, JFDI_HOME: path.join(bareDirectory, ".jfdi") };

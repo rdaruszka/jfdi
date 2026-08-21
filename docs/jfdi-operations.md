@@ -137,6 +137,7 @@ identifiers. In particular, every gate entry has exactly `name` and `command`:
     "remote": { "fetchBefore": false, "pushAfter": false }
   },
   "permissions": { "mode": "auto" },
+  "frontEnd": "terminal",
   "maxConcurrent": 2,
   "stages": {
     "implementation": { "harness": "claude", "model": "claude-opus-4-8", "effort": "high" },
@@ -158,7 +159,9 @@ Older projects may contain the legacy spellings `cmd`, `ticketsDir`,
   assume `main`), `integration.mode` (`on-approval` holds merges for a human,
   `auto` lands them), `integration.remote` (opt-in fetch-before/push-after);
   `permissions.mode` (`auto` = sandboxed autonomous, default; `bypass` =
-  opt-in full access); `maxConcurrent`; per-stage `stages` entries
+  opt-in full access); `frontEnd` (`terminal` by default, or read-only local
+  `web`; `jfdi start --front-end` overrides it for one invocation);
+  `maxConcurrent`; per-stage `stages` entries
   (harness, model, effort per stage plus the scribe).
   Setup does not require this file to be valid: when it cannot load, the setup
   command warns, runs its session with sandboxed `auto` permissions, and puts

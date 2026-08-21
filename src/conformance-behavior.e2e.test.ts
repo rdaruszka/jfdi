@@ -338,6 +338,7 @@ describe("CLI surface", () => {
       expect(Object.keys(config).sort()).toEqual(
         [
           "board",
+          "frontEnd",
           "gate",
           "integration",
           "maxConcurrent",

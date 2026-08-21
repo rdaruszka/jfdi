@@ -42,7 +42,7 @@ flowchart TB
     HARNESS[Harness interface<br/>src/harness/]
     CLI_A[claude CLI]
     CLI_B[codex CLI]
-    TUI[TUI / inline printer<br/>src/tui/App.tsx]
+    UI[Terminal / web / inline renderers<br/>src/tui/ · src/web/]
 
     BOARD <-->|atomic card moves| COORD
     COORD -->|dispatch, one per ready card| PIPE
@@ -58,7 +58,7 @@ flowchart TB
     PIPE -->|emit| EV
     INT -->|emit| EV
     EV -->|reduce| SNAP
-    EV -->|render| TUI
+    EV -->|render| UI
     PIPE --> RUNS
 ```
 
@@ -121,9 +121,12 @@ flowchart TB
 - **Events & state** ([src/events.ts](../../src/events.ts)) — the append-only
   `events.jsonl` stream, the pure reducer that derives `state.json`, and the
   cross-process tail-following; see [Events & State](events-and-state.md).
-- **Renderers** — the Ink TUI ([src/tui/App.tsx](../../src/tui/App.tsx)) and the
-  inline ANSI printer ([src/commands/context.ts](../../src/commands/context.ts)).
-  Both are pure functions of the event stream/snapshot.
+- **Renderers** — the Ink TUI ([src/tui/App.tsx](../../src/tui/App.tsx)), the
+  read-only local web front end ([src/web/server.ts](../../src/web/server.ts)),
+  and the inline ANSI printer ([src/commands/context.ts](../../src/commands/context.ts)).
+  The live front ends share one bounded view fold
+  ([src/renderers/live-view.ts](../../src/renderers/live-view.ts)); all three
+  render only the event stream/snapshot.
 
 ## Anatomy of a run
 
@@ -182,7 +185,8 @@ this repo.
 
 1. **Renderer separation.** All UI renders `events.jsonl`/`state.json` only.
    Pipeline and coordinator logic never talk to a UI directly, and no state
-   exists only in the UI. This is what makes a future web UI purely additive.
+   exists only in the UI. The coordinator therefore runs identically whichever
+   front end `jfdi start` selects.
 2. **Harness abstraction.** Pipeline logic never touches provider-specific
    details; everything goes through the harness interface. Provider-specific
    accelerations (the Claude format hook) live inside the matching harness
@@ -259,7 +263,9 @@ src/
   state-dir.ts            ~/.jfdi/projects/<key> resolution (JFDI_HOME)
   git.ts                  git plumbing (worktrees, merge, landing commit)
   harness/                the provider abstraction (see harness.md)
+  renderers/live-view.ts  shared bounded live renderer view
   tui/App.tsx             the Ink TUI
+  web/server.ts           read-only loopback HTTP front end
   guidelines.ts           GENERATED from docs/coding-guidelines.md
   ticket-format.ts        GENERATED from docs/ticket-format.md
   fixture-project.ts      test-fixture factory (see ../development.md)
@@ -277,7 +283,8 @@ them:
   integration step.
 - **Harnesses** — Claude Code and Codex now; any CLI that can run headless with
   JSON output later ([how to add one](harness.md#adding-a-provider)).
-- **Renderers** — TUI now; a web UI later, over the same event stream.
+- **Renderers** — terminal and web front ends now; another presentation can
+  consume the same event stream later.
 
 Explicitly out of scope for this iteration (don't build toward these): a
 PO/orchestrator agent, PRD building or auto-decomposition, pre-implementation
