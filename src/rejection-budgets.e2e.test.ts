@@ -47,7 +47,7 @@ const PIPELINE_TIMEOUT_MS = 120_000;
  * by a persistent counter in STUB_STATE_DIR, and writes the verdict. Counters
  * live outside the worktree so a reviewer's hard reset cannot rewind them.
  *
- * Implementation always commits a per-session file; when IMPL_BREAK_UNTIL is set
+ * Implementation always commits a per-session file; when IMPLEMENTATION_BREAK_UNTIL is set
  * it also writes (then, past that count, removes) a `BROKEN` sentinel a gate
  * command can trip — the only way to drive a red gate deterministically.
  */
@@ -55,9 +55,9 @@ const STUB_BODY = `
 const fs = require("node:fs");
 const { execFileSync } = require("node:child_process");
 const match = prompt.match(/(\\/\\S+\\.verdict\\.json)/);
-const stateDir = process.env.STUB_STATE_DIR;
+const stateDirectory = process.env.STUB_STATE_DIR;
 function nextIndex(stage) {
-  const counterPath = stateDir + "/" + stage + ".count";
+  const counterPath = stateDirectory + "/" + stage + ".count";
   let seen = 0;
   try { seen = parseInt(fs.readFileSync(counterPath, "utf8"), 10) || 0; } catch (_) {}
   fs.writeFileSync(counterPath, String(seen + 1));
@@ -73,7 +73,7 @@ if (match) {
   let verdict;
   if (stage === "implementation") {
     const idx = nextIndex("implementation");
-    const breakUntil = parseInt(process.env.IMPL_BREAK_UNTIL || "0", 10);
+    const breakUntil = parseInt(process.env.IMPLEMENTATION_BREAK_UNTIL || "0", 10);
     const brokenPath = process.cwd() + "/BROKEN";
     if (idx < breakUntil) fs.writeFileSync(brokenPath, "x\\n");
     else { try { fs.rmSync(brokenPath); } catch (_) {} }
@@ -170,7 +170,7 @@ interface CliResult {
 interface RunOptions {
   scriptCodeReview?: string[];
   scriptQa?: string[];
-  implBreakUntil?: number;
+  implementationBreakUntil?: number;
 }
 
 async function runCli(
@@ -186,7 +186,7 @@ async function runCli(
     STUB_STATE_DIR: sandbox.stubStateDirectory,
     SCRIPT_CR: JSON.stringify(options.scriptCodeReview ?? []),
     SCRIPT_QA: JSON.stringify(options.scriptQa ?? []),
-    IMPL_BREAK_UNTIL: String(options.implBreakUntil ?? 0),
+    IMPLEMENTATION_BREAK_UNTIL: String(options.implementationBreakUntil ?? 0),
     NO_COLOR: "1",
   };
   try {
@@ -365,7 +365,9 @@ describe("per-reviewer rejection budgets", () => {
 
       // Every implementation session leaves BROKEN in the tree, so all four gate
       // attempts (1 + 3 fix sessions) fail at `lint`.
-      const run = await runCli(sandbox, ["run", "Add a greeting"], { implBreakUntil: 99 });
+      const run = await runCli(sandbox, ["run", "Add a greeting"], {
+        implementationBreakUntil: 99,
+      });
       expect(run.code).toBe(2);
       const ticketId = ticketIdOf(run);
 
@@ -397,7 +399,7 @@ describe("per-reviewer rejection budgets", () => {
       // third of the four allowed attempts) leaves the tree clean, so the round
       // continues to the reviewers and the run passes in a single round.
       const run = await runCli(sandbox, ["run", "Add a greeting"], {
-        implBreakUntil: 2,
+        implementationBreakUntil: 2,
         scriptCodeReview: ["pass"],
         scriptQa: ["pass"],
       });
