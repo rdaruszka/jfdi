@@ -59,6 +59,16 @@ function cardsIn(payload: Record<string, unknown>, columnName: string): unknown[
   )?.cards;
 }
 
+function styleDeclarations(pageMarkup: string, selector: string): string {
+  const ruleStart = `    ${selector} {`;
+  const startIndex = pageMarkup.indexOf(ruleStart);
+  if (startIndex === -1) throw new Error(`web page has no style rule for ${selector}`);
+  const declarationsStart = startIndex + ruleStart.length;
+  const endIndex = pageMarkup.indexOf("}", declarationsStart);
+  if (endIndex === -1) throw new Error(`web page style rule for ${selector} is not closed`);
+  return pageMarkup.slice(declarationsStart, endIndex);
+}
+
 async function bindPort(port: number): Promise<void> {
   const server = createServer();
   await new Promise<void>((resolve, reject) => {
@@ -71,6 +81,41 @@ async function bindPort(port: number): Promise<void> {
 }
 
 describe("web front end", () => {
+  it("uses the window scrollbars and stretches line-separated columns", async () => {
+    frontEnd = await startWebFrontEnd({
+      log: new EventLog("unused", false),
+      boardName: "board.md",
+      targetBranch: "main",
+      integrationMode: "auto",
+      settings: memorySettings(),
+    });
+
+    const pageMarkup = await (await fetch(frontEnd.url)).text();
+    const body = styleDeclarations(pageMarkup, "body");
+    const main = styleDeclarations(pageMarkup, "main");
+    const kanban = styleDeclarations(pageMarkup, ".kanban");
+    const column = styleDeclarations(pageMarkup, ".column");
+
+    expect(body).toContain("margin: 0");
+    expect(body).toContain("overflow-x: auto");
+    expect(main).toContain("min-height: 100vh");
+    expect(main).toContain("display: flex");
+    expect(main).toContain("flex-direction: column");
+    expect(main).not.toContain("width: calc");
+    expect(main).not.toContain("padding:");
+    expect(kanban).toContain("flex: 1");
+    expect(kanban).toContain("gap: 0");
+    expect(kanban).toContain("align-items: stretch");
+    expect(kanban).not.toContain("overflow-x: auto");
+    expect(kanban).not.toContain("padding:");
+    expect(column).not.toContain("background:");
+    expect(column).not.toContain("border:");
+    expect(column).not.toContain("overflow");
+    expect(styleDeclarations(pageMarkup, ".column + .column")).toContain(
+      "border-left: 1px solid #29313d",
+    );
+  });
+
   it("serves the live view and a settings panel from loopback", async () => {
     const log = new EventLog("unused", false);
     frontEnd = await startWebFrontEnd({
