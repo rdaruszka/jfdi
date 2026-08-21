@@ -1,7 +1,8 @@
-import { Box, Text, useApp, useInput } from "ink";
+import { Box, type Key, Text, useApp, useInput } from "ink";
 import { useEffect, useState } from "react";
 import type { CoordinatorState, EventLog, JfdiEvent, TicketState } from "../events.js";
 import { formatRunningTotals } from "../usage.js";
+import { EXIT_SIGINT } from "../util/exit-codes.js";
 
 /**
  * Cap on the event tail held in memory — the TUI runs for the coordinator's
@@ -82,9 +83,16 @@ export interface AppProps {
   log: EventLog;
   boardName: string;
   targetBranch: string;
-  onQuit: () => void;
+  onQuit: (exitCode: number) => void;
   /** The human's "the provider is back / I repaired it" signal. */
   onRetry: () => void;
+}
+
+/** Map terminal input to a requested process exit; null means keep rendering. */
+export function exitCodeForInput(input: string, key: Pick<Key, "ctrl">): number | null {
+  if (input === "c" && key.ctrl) return EXIT_SIGINT;
+  if (input === "q") return 0;
+  return null;
 }
 
 /**
@@ -110,10 +118,12 @@ export function App({ log, boardName, targetBranch, onQuit, onRetry }: AppProps)
     });
   }, [log]);
 
-  useInput((input) => {
-    if (input === "q") {
-      onQuit();
+  useInput((input, key) => {
+    const exitCode = exitCodeForInput(input, key);
+    if (exitCode !== null) {
+      onQuit(exitCode);
       exit();
+      return;
     }
     if (input === "r" || input === "R") onRetry();
   });
