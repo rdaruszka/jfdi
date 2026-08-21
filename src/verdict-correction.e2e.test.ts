@@ -59,7 +59,7 @@ const match = prompt.match(/(\\/\\S+\\.verdict\\.json)/);
 if (match && !isScribe) {
   const verdictPath = match[1];
   const stage = verdictPath.split("/").pop().replace(".verdict.json", "");
-  const write = (obj) => fs.writeFileSync(verdictPath, JSON.stringify(obj));
+  const write = (object) => fs.writeFileSync(verdictPath, JSON.stringify(object));
   const writeRaw = (raw) => fs.writeFileSync(verdictPath, raw);
   if (stage === "implementation") {
     if (!isCorrection) {

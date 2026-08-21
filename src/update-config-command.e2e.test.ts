@@ -60,12 +60,12 @@ interface Sandbox {
   jfdiHome: string;
 }
 
-const scratchDirs: string[] = [];
+const scratchDirectories: string[] = [];
 
 async function makeSandbox(): Promise<Sandbox> {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-uc-cmd-"));
   const root = await fs.realpath(created);
-  scratchDirs.push(created);
+  scratchDirectories.push(created);
   const project = path.join(root, "project");
   const binDirectory = path.join(root, "bin");
   const home = path.join(root, "home");
@@ -127,7 +127,9 @@ async function noAgentSpawned(sandbox: Sandbox): Promise<boolean> {
 
 afterEach(async () => {
   await Promise.all(
-    scratchDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    scratchDirectories
+      .splice(0)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
