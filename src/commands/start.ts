@@ -41,7 +41,7 @@ export async function startCommand(options: StartOptions = {}): Promise<number> 
     throw error;
   }
   const frontEnd = resolveFrontEnd(options, context.config);
-  if (frontEnd === "web") return startWithWebFrontEnd(context);
+  if (frontEnd === "web") return startWithWebFrontEnd(context, frontEnd);
   if (!process.stdout.isTTY) return refuseTerminalFrontEnd();
   return startWithTerminalFrontEnd(context);
 }
@@ -109,7 +109,10 @@ async function startWithTerminalFrontEnd(context: PipelineContext): Promise<numb
   }
 }
 
-async function startWithWebFrontEnd(context: PipelineContext): Promise<number> {
+async function startWithWebFrontEnd(
+  context: PipelineContext,
+  frontEndInEffect: FrontEnd,
+): Promise<number> {
   const coordinator = new Coordinator(context);
   const frontEnd = await startWebFrontEnd({
     log: context.log,
@@ -119,6 +122,7 @@ async function startWithWebFrontEnd(context: PipelineContext): Promise<number> {
     targetBranch: context.config.integration.targetBranch,
     integrationMode: context.config.integration.mode,
     settings: {
+      frontEndInEffect: () => frontEndInEffect,
       load: () => loadSettings(context.projectRoot),
       save: async (staged, revision) => {
         const saved = await saveSettings(context.projectRoot, staged, revision);

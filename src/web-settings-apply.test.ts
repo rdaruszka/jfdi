@@ -86,6 +86,7 @@ async function readBoard(): Promise<ReturnType<typeof parseBoard>> {
 /** The settings surface `startWithWebFrontEnd` builds: disk save, then live apply. */
 function liveSettings(coordinator: Coordinator, projectRoot: string) {
   return {
+    frontEndInEffect: () => "web" as const,
     load: () => loadSettings(projectRoot),
     save: async (staged: unknown, revision: string) => {
       const saved = await saveSettings(projectRoot, staged, revision);

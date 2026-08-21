@@ -425,6 +425,9 @@ describe("jfdi start --front-end web (built CLI)", () => {
         }),
       });
       expect(savedResponse.status).toBe(200);
+      expect((await savedResponse.json()) as { hasPendingFrontEndChange: boolean }).toMatchObject({
+        hasPendingFrontEndChange: true,
+      });
       expect(JSON.parse(await fs.readFile(sandbox.configPath, "utf8"))).toMatchObject({
         maxConcurrent: 3,
       });
@@ -491,6 +494,23 @@ describe("jfdi start --front-end web (built CLI)", () => {
       const page = await fetch(url);
       expect(page.status).toBe(200);
       expect(await page.text()).toContain("JFDI");
+
+      const loaded = (await (await fetch(new URL("settings", url))).json()) as {
+        config: Record<string, unknown>;
+        revision: string;
+      };
+      const saved = await fetch(new URL("settings", url), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          config: { ...loaded.config, maxConcurrent: 3 },
+          revision: loaded.revision,
+        }),
+      });
+      expect(saved.status).toBe(200);
+      expect((await saved.json()) as { hasPendingFrontEndChange: boolean }).toMatchObject({
+        hasPendingFrontEndChange: false,
+      });
 
       const exit = waitForExit(child);
       child.kill("SIGTERM");
