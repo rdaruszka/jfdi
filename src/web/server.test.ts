@@ -131,6 +131,58 @@ describe("web front end", () => {
     );
   });
 
+  it("serves the proportional type scale with monospace reserved for terminal-like content", async () => {
+    frontEnd = await startWebFrontEnd({
+      log: new EventLog("unused", false),
+      projectRoot: "unused",
+      ticketsDirectory: ".jfdi/tickets",
+      boardName: "board.md",
+      targetBranch: "main",
+      integrationMode: "auto",
+      settings: memorySettings(),
+    });
+
+    const pageMarkup = await (await fetch(frontEnd.url)).text();
+    const proportionalFont =
+      'font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+    const monospaceFont = "font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+    const root = styleDeclarations(pageMarkup, ":root");
+    const card = styleDeclarations(pageMarkup, ".card");
+    const detailText = styleDeclarations(pageMarkup, ".ticket-description, .comment-body");
+    const feedOutput = styleDeclarations(pageMarkup, ".feed-output");
+
+    expect(root).toContain(proportionalFont);
+    expect(root).toContain("font-size: 14px");
+    expect(root).toContain("line-height: 1.5");
+    expect(root).toContain("background: #0b0d10");
+    expect(root).toContain("color: #edf1f7");
+    expect(styleDeclarations(pageMarkup, ".brand")).toContain(monospaceFont);
+    expect(styleDeclarations(pageMarkup, ".detail-toolbar h1")).toContain(monospaceFont);
+    expect(styleDeclarations(pageMarkup, "code")).toContain(monospaceFont);
+    expect(feedOutput).toContain(monospaceFont);
+    expect(feedOutput).toContain("font-size: .82rem");
+    expect(feedOutput).toContain("line-height: 1.5");
+    expect(card).toContain("font-size: .86rem");
+    expect(card).toContain("line-height: 1.45");
+    expect(card).toContain("padding: .6rem .7rem");
+    expect(card).not.toContain("min-height");
+    expect(styleDeclarations(pageMarkup, ".column h2")).toContain("font-size: .7rem");
+    expect(detailText).toContain("font: inherit");
+    expect(detailText).toContain("font-size: .9rem");
+    expect(detailText).toContain("line-height: 1.6");
+    expect(styleDeclarations(pageMarkup, ".comment-heading")).toContain("font-size: .74rem");
+    expect(styleDeclarations(pageMarkup, ".detail-toolbar h1")).toContain("font-size: 1rem");
+    expect(styleDeclarations(pageMarkup, ".session-tab")).toContain("font-size: .8rem");
+    expect(styleDeclarations(pageMarkup, ".live")).toContain("font-size: .78rem");
+    expect(styleDeclarations(pageMarkup, "button")).toContain("font: inherit");
+    expect(
+      styleDeclarations(
+        pageMarkup,
+        '.settings-field input:not([type="checkbox"]), .settings-field select',
+      ),
+    ).toContain("font: inherit");
+  });
+
   it("serves the live view and a settings panel from loopback", async () => {
     const log = new EventLog("unused", false);
     frontEnd = await startWebFrontEnd({

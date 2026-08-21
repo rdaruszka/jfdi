@@ -164,15 +164,16 @@ const PAGE = `<!doctype html>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>JFDI runs</title>
   <style>
-    :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #0b0d10; color: #edf1f7; }
+    :root { color-scheme: dark; font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.5; background: #0b0d10; color: #edf1f7; }
     * { box-sizing: border-box; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     body { margin: 0; overflow-x: auto; background: radial-gradient(circle at top right, #19243a 0, #0b0d10 36rem); min-height: 100vh; }
     main { display: flex; flex-direction: column; min-height: 100vh; }
     header { display: flex; align-items: baseline; gap: .8rem; margin: 2rem 1rem 1.5rem; }
-    .brand { background: #edf1f7; color: #0b0d10; font-weight: 900; padding: .25rem .55rem; letter-spacing: .08em; }
+    .brand { background: #edf1f7; color: #0b0d10; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 900; padding: .25rem .55rem; letter-spacing: .08em; }
     .route { color: #aab5c5; }
     .route strong { color: #edf1f7; }
-    .live { margin-left: auto; color: #63d392; font-size: .8rem; }
+    .live { margin-left: auto; color: #63d392; font-size: .78rem; }
     .live::before { content: ""; display: inline-block; width: .55rem; height: .55rem; margin-right: .45rem; border-radius: 50%; background: currentColor; box-shadow: 0 0 1rem currentColor; }
     button { border: 1px solid #536176; border-radius: .2rem; background: #18202b; color: #edf1f7; font: inherit; padding: .45rem .7rem; cursor: pointer; }
     button:hover { border-color: #78dce8; }
@@ -203,23 +204,24 @@ const PAGE = `<!doctype html>
     .kanban { flex: 1; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(15rem, 1fr); gap: 0; align-items: stretch; }
     .column { padding: .75rem; }
     .column + .column { border-left: 1px solid #29313d; }
-    .column h2 { display: flex; justify-content: space-between; gap: .5rem; margin-bottom: .75rem; }
+    .column h2 { display: flex; justify-content: space-between; gap: .5rem; margin-bottom: .75rem; font-size: .7rem; }
     .count { color: #657184; }
     .cards { display: grid; gap: .55rem; }
-    .card { width: 100%; min-height: 3.6rem; padding: .75rem; border: 1px solid #343e4d; border-radius: .2rem; background: #171d26; text-align: left; line-height: 1.4; overflow-wrap: anywhere; box-shadow: 0 .2rem .7rem rgba(0, 0, 0, .22); }
+    .card { width: 100%; padding: .6rem .7rem; border: 1px solid #343e4d; border-radius: .2rem; background: #171d26; font-size: .86rem; text-align: left; line-height: 1.45; overflow-wrap: anywhere; box-shadow: 0 .2rem .7rem rgba(0, 0, 0, .22); }
     .detail-toolbar { display: flex; align-items: center; gap: .8rem; margin-bottom: .8rem; }
-    .detail-toolbar h1 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+    .detail-toolbar h1 { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 1rem; overflow-wrap: anywhere; }
     .detail { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: .8rem; height: calc(100vh - 8rem); min-height: 28rem; }
     .ticket-pane, .feed-pane { min-width: 0; min-height: 0; border: 1px solid #29313d; background: rgba(14, 18, 24, .9); }
     .ticket-pane { overflow-y: auto; padding: 1rem; }
-    .ticket-description, .comment-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.55; }
+    .ticket-description, .comment-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: .9rem; line-height: 1.6; }
     .comment-trail { display: grid; gap: .7rem; margin-top: 1.5rem; }
     .comment { padding: .8rem; border-left: .2rem solid #536176; background: #111720; }
-    .comment-heading { margin: 0 0 .55rem; color: #78dce8; font-size: .78rem; line-height: 1.4; }
+    .comment-heading { margin: 0 0 .55rem; color: #78dce8; font-size: .74rem; line-height: 1.4; }
     .feed-pane { display: flex; flex-direction: column; }
     .session-tabs { display: flex; flex-wrap: wrap; gap: .35rem; min-height: 3.2rem; padding: .6rem; border-bottom: 1px solid #29313d; }
+    .session-tab { font-size: .8rem; }
     .session-tab[aria-selected="true"] { border-color: #78dce8; background: #233040; }
-    .feed-output { flex: 1; min-height: 0; margin: 0; overflow: auto; padding: 1rem; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.45; }
+    .feed-output { flex: 1; min-height: 0; margin: 0; overflow: auto; padding: 1rem; white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .82rem; line-height: 1.5; }
     [hidden] { display: none !important; }
     @media (max-width: 760px) { header { flex-wrap: wrap; } .live { margin-left: 0; } .settings-button { margin-left: auto; } .settings-list-row { grid-template-columns: 1fr; } .detail { grid-template-columns: 1fr; height: auto; } .ticket-pane, .feed-pane { height: 60vh; } }
   </style>
