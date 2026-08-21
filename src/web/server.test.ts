@@ -10,7 +10,7 @@ let frontEnd: WebFrontEnd | null = null;
 function memorySettings(): WebSettingsSurface {
   let snapshot: SettingsSnapshot = {
     config: defaultConfig(),
-    editableConfig: defaultConfig(),
+    editableConfig: { ...defaultConfig() },
     revision: "initial",
   };
   return {
@@ -239,7 +239,7 @@ describe("web front end", () => {
         load: () =>
           Promise.resolve({
             config: defaultConfig(),
-            editableConfig: defaultConfig(),
+            editableConfig: { ...defaultConfig() },
             revision: "disk-version",
           }),
         save: (staged, revision) => {
@@ -295,7 +295,7 @@ describe("web front end", () => {
         load: () =>
           Promise.resolve({
             config: defaultConfig(),
-            editableConfig: defaultConfig(),
+            editableConfig: { ...defaultConfig() },
             revision: "disk-version",
           }),
         save: () =>
