@@ -17,8 +17,8 @@
  *     settings control; a POST to any other route is rejected.
  *   - A card seeded in the begin column is dispatched, run, and merged while the
  *     coordinator works, and every transition streams live to a connected client
- *     over Server-Sent Events with no manual refresh — the same picture the TUI
- *     renders (board name, target branch, per-ticket status).
+ *     over Server-Sent Events with no manual refresh (board name, target branch,
+ *     and kanban column).
  *   - Stopping `jfdi start` (SIGINT / SIGTERM) stops the web server, exits with
  *     the signal's conventional code, and frees the port it was bound to.
  *
@@ -217,9 +217,15 @@ async function waitForUrl(stdout: () => string): Promise<string> {
 interface WebPayload {
   boardName: string;
   targetBranch: string;
-  view: {
-    state: { tickets: Record<string, { status: string; stage: string | null; round: number }> };
-  };
+  columns: Array<{ name: string; cards: Array<{ id: string; title: string }> }>;
+}
+
+function columnHasTicket(payload: WebPayload, columnName: string, ticketId: string): boolean {
+  return (
+    payload.columns
+      .find((column) => column.name === columnName)
+      ?.cards.some((card) => card.id === ticketId) ?? false
+  );
 }
 
 /**
@@ -378,15 +384,20 @@ describe("jfdi start --front-end web (built CLI)", () => {
       });
 
       await waitFor(
-        () => stream.payloads.some((p) => p.view.state.tickets[TICKET_ID]?.status === "running"),
+        () =>
+          stream.payloads.some((payload) =>
+            ["Implementation", "Code Review", "QA", "Integration"].some((column) =>
+              columnHasTicket(payload, column, TICKET_ID),
+            ),
+          ),
         {
           timeoutMs: WAIT_TIMEOUT_MS,
           intervalMs: POLL_INTERVAL_MS,
-          describe: () => `a streamed payload showing ${TICKET_ID} running`,
+          describe: () => `a streamed payload showing ${TICKET_ID} in a running column`,
         },
       );
       await waitFor(
-        () => stream.payloads.some((p) => p.view.state.tickets[TICKET_ID]?.status === "done"),
+        () => stream.payloads.some((payload) => columnHasTicket(payload, "Done", TICKET_ID)),
         {
           timeoutMs: WAIT_TIMEOUT_MS,
           intervalMs: POLL_INTERVAL_MS,

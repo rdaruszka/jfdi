@@ -375,6 +375,10 @@ describe("Coordinator", () => {
     try {
       await waitUntil(() => startedImplementations.length === 1);
       expect(startedImplementations).toEqual(["alpha"]);
+      expect(context.log.snapshot().tickets[ticketIdFromCard("Add feature beta")]).toMatchObject({
+        title: "Add feature beta",
+        status: "ready",
+      });
 
       await coordinator.applyConfig({ ...context.config, maxConcurrent: 2, frontEnd: "web" });
       await waitUntil(() => startedImplementations.length === 2);

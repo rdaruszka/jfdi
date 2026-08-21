@@ -49,6 +49,29 @@ describe("EventLog", () => {
     expect(log.snapshot().tickets.a?.status).toBe("done");
   });
 
+  it("tracks an undispatched begin-column card until it leaves Ready", () => {
+    const log = new EventLog(directory, false);
+    log.emit("ready", "queued", { title: "Queued work [[queued]]" });
+
+    expect(log.snapshot().tickets.queued).toMatchObject({
+      title: "Queued work [[queued]]",
+      status: "ready",
+      stage: null,
+    });
+
+    log.emit("ready_removed", "queued");
+    expect(log.snapshot().tickets.queued).toBeUndefined();
+  });
+
+  it("does not remove a dispatched ticket when a stale Ready removal arrives", () => {
+    const log = new EventLog(directory, false);
+    log.emit("ready", "queued", { title: "Queued work [[queued]]" });
+    log.emit("dispatch", "queued", { title: "Queued work [[queued]]" });
+    log.emit("ready_removed", "queued");
+
+    expect(log.snapshot().tickets.queued?.status).toBe("running");
+  });
+
   it("sets running cost/time totals from a stage_end, idempotent under re-folding", () => {
     const log = new EventLog(directory, false);
     log.emit("dispatch", "t1", { title: "Ticket One" });

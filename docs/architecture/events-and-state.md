@@ -60,6 +60,8 @@ One JSON object per line:
 
 | Type | Payload | Meaning |
 |---|---|---|
+| `ready` | `title` | A begin-column card is awaiting dispatch and is visible to renderers without giving them board access |
+| `ready_removed` | — | An undispatched card left the begin column and is removed from derived state |
 | `dispatch` | `title`, `branch` | A run started for the ticket |
 | `resumed` | `commitCount`, `hasCheckpointedChanges`, `hasAbortedMerge` | The run continues prior partial work |
 | `round_start` | `round` | A feedback round began |
@@ -106,7 +108,7 @@ interface CoordinatorState {
 }
 interface TicketState {
   id: string; title: string;
-  status: "running" | "waiting" | "blocked" | "merge-queued" | "merging"
+  status: "ready" | "running" | "waiting" | "blocked" | "merge-queued" | "merging"
         | "merge-ready" | "done" | "failed";
   stage: "implementation" | "code-review" | "qa" | "integration" | null;
   round: number; branch: string;
@@ -114,13 +116,17 @@ interface TicketState {
 }
 ```
 
-A ticket first seen as a begin-column skip enters at `waiting` (`blocked_by`)
-rather than `running`; when its blockers clear (`unblocked`) it dispatches like
-any other card. `waiting` records the skip in derived state without ever running
-the ticket, so a stranded card carrying that id is still a genuine resume.
+A begin-column card enters at `ready`, before dispatch, so renderers can show it
+without reading the board. A card first seen as a begin-column skip then enters
+`waiting` (`blocked_by`) rather than `running`; when its blockers clear
+(`unblocked`) it dispatches like any other card. Both states record a card that
+has never run, so a stranded card carrying that id is still a genuine resume.
 
 ```mermaid
 stateDiagram-v2
+    [*] --> ready: ready
+    ready --> [*]: ready_removed
+    ready --> running: dispatch
     [*] --> running: dispatch
     [*] --> waiting: blocked_by
     waiting --> running: unblocked → dispatch

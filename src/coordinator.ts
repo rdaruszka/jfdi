@@ -282,11 +282,38 @@ export class Coordinator {
     const content = await readIfExists(this.boardPath);
     if (content === null) return;
     const board = parseBoard(content);
+    this.surfaceReadyCards(board);
     await this.closeMergedCards(board);
     this.acknowledgeApprovals(board);
     // Paused means the provider under the harness is down: a new dispatch
     // would spawn straight into the same wall. The resume triggers a rescan.
     if (!this.context.pause.isPaused()) await this.dispatchReadyCards(board);
+  }
+
+  /** Keep begin-column cards in derived state without exposing the board to renderers. */
+  private surfaceReadyCards(board: Board): void {
+    const beginCards = findColumn(board, this.context.config.board.columns.begin)?.cards ?? [];
+    const beginIds = new Set(beginCards.map((card) => ticketIdFromCard(card.text)));
+    const tickets = this.context.log.snapshot().tickets;
+    for (const card of beginCards) {
+      const id = ticketIdFromCard(card.text);
+      const ticket = tickets[id];
+      if (this.active.has(id)) continue;
+      if (
+        (ticket?.status === "ready" || ticket?.status === "waiting") &&
+        ticket.title === card.text
+      )
+        continue;
+      this.context.log.emit("ready", id, { title: card.text });
+    }
+    for (const ticket of Object.values(tickets)) {
+      if (
+        (ticket.status === "ready" || ticket.status === "waiting") &&
+        !beginIds.has(ticket.id) &&
+        !this.active.has(ticket.id)
+      )
+        this.context.log.emit("ready_removed", ticket.id);
+    }
   }
 
   /** Block corrupt reports before the merge-detection sweep considers a card. */
@@ -585,7 +612,7 @@ export class Coordinator {
    */
   private hasRunHere(ticketId: string): boolean {
     const ticket = this.context.log.snapshot().tickets[ticketId];
-    return ticket !== undefined && ticket.status !== "waiting";
+    return ticket !== undefined && ticket.status !== "ready" && ticket.status !== "waiting";
   }
 
   private async dispatch(card: Card, id: string, isAlreadyInProgress: boolean): Promise<void> {
