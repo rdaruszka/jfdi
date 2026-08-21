@@ -49,9 +49,13 @@ zero.** The pipeline runs it — after every implementation session, after QA
 (the tests QA added must pass), and again at integration on the merged tree.
 Agents are told not to run it themselves.
 
-A gate failure is cheap by design: it feeds straight back into the same
-implementation session (up to 10 fix sessions) *without consuming a round*.
-A review failure costs a round. This asymmetry is the point: **the gate is
+A gate failure is cheap by design: it feeds straight back into the session
+whose handoff made it red (up to 10 fix sessions) *without consuming a round*.
+After Implementation, that means its own session. After QA adds tests, QA gets
+the failed step and output and fixes only paths from its initial handoff; the
+pipeline checks that path scope before preserving both existing sign-offs. A
+wider QA change or a gate still red at the cap consumes the round. A review
+failure costs a round. This asymmetry is the point: **the gate is
 the workflow's cheapest reviewer**, and every standard you can encode
 mechanically — lint rule, type check, format check, naming convention, test
 suite — is one that review sessions never spend tokens or rounds on again.
@@ -86,7 +90,9 @@ HEAD before each session, soft-resets anything the session committed, and
 lands exactly one handoff commit per session that changed the worktree — with
 a message written by the scribe. Everything a stage wants recorded arrives
 through its verdict, which the pipeline folds into one phase comment per
-stage and round in the note's `## Comments` trail.
+stage and round in the note's `## Comments` trail. Gate-fix commit messages
+stay inside that stage's one comment; QA's status names the red step and fix
+count.
 
 Do not write project docs, prompts, or AGENTS.md text instructing agents to
 commit, push, or run the gate — the pipeline owns all three, and contradicting

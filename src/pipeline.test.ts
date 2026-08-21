@@ -1605,43 +1605,195 @@ describe("runPipeline", () => {
     expect(implementationSpawns).toEqual([undefined, "impl-1", undefined]);
   });
 
-  it("the gate re-runs mechanically after QA commits tests, and a failure costs the round", async () => {
-    // The gate rejects any committed qa-broken.txt — QA's test commit breaks it.
+  it("continues QA to fix its gate-breaking tests without consuming the round", async () => {
     await fixture.cleanup();
     fixture = await makeFixture({
-      gate: [{ name: "check", command: "test -f impl.txt && test ! -f qa-broken.txt" }],
+      gate: [{ name: "check", command: "test -f impl.txt && ! grep -q BROKEN qa-test.txt" }],
     });
     let qaCalls = 0;
     let implementationCalls = 0;
+    let reviewCalls = 0;
+    const roundsSeen: number[] = [];
+    const handleQa = async (prompt: string, worktreePath: string) => {
+      qaCalls++;
+      if (qaCalls === 1) {
+        await commitFile(worktreePath, "qa-test.txt", "BROKEN\n", "qa tests");
+      } else {
+        expect(prompt).toContain('Mechanical gate failed at step "check"');
+        expect(prompt).toContain("qa-test.txt");
+        await commitFile(worktreePath, "qa-test.txt", "fixed\n", "fix qa tests");
+      }
+      await writeVerdict(prompt, {
+        verdict: "pass",
+        testsAdded: qaCalls === 1 ? "one" : "fixed one",
+      });
+    };
     const context = fixture.context(async (prompt, options) => {
       const stage = sessionKindOf(prompt);
       if (stage === "implementation") {
         implementationCalls++;
-        if (implementationCalls === 1) {
+        await commitFile(options.cwd, "impl.txt", "x\n", "implement");
+        await writeVerdict(prompt, { status: "done" });
+      } else if (stage === "qa") {
+        if (qaCalls > 0) expect(options.continueSessionId).toBe("qa-session");
+        await handleQa(prompt, options.cwd);
+      } else {
+        reviewCalls++;
+        await writeVerdict(prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "", sessionId: stage === "qa" ? "qa-session" : undefined };
+    });
+    context.log.on((event) => {
+      if (event.type === "round_start") roundsSeen.push(Number(event.data?.round));
+    });
+
+    const ticket = await resolveTicket("QA broke the gate", fixture.ticketsDirectory);
+    const outcome = await runPipeline(context, ticket);
+    expect(outcome.status).toBe("passed");
+    if (outcome.status !== "passed") return;
+    expect(outcome.report.rounds).toBe(1);
+    expect(roundsSeen).toEqual([1]);
+    expect(implementationCalls).toBe(1);
+    expect(reviewCalls).toBe(1);
+    expect(qaCalls).toBe(2);
+    const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8");
+    const qaComments = parseTicketNote(note).comments.filter((comment) => comment.stage === "qa");
+    expect(qaComments).toHaveLength(1);
+    expect(qaComments[0]?.body).toContain("--- Gate-fix session 1 ---");
+    expect(qaComments[0]?.body).toContain("gate failed at `check` over QA's tests");
+    expect(qaComments[0]?.body).toContain("green after 1 gate fix");
+    const qaCommits = (
+      await git(outcome.worktree.path, "log", "--format=%H", "main..HEAD", "--", "qa-test.txt")
+    ).split("\n");
+    expect(qaCommits).toHaveLength(2);
+    for (const commit of qaCommits) {
+      const message = await git(outcome.worktree.path, "show", "-s", "--format=%B", commit);
+      expect(qaComments[0]?.body).toContain(message.trimEnd());
+    }
+  });
+
+  it("rejects a QA gate fix that touches a path outside QA's initial handoff", async () => {
+    await fixture.cleanup();
+    fixture = await makeFixture({
+      gate: [{ name: "check", command: "test -f impl.txt && ! grep -q BROKEN qa-test.txt" }],
+    });
+    let implementationCalls = 0;
+    let reviewCalls = 0;
+    let qaCalls = 0;
+    const handleQa = async (prompt: string, worktreePath: string) => {
+      qaCalls++;
+      if (qaCalls === 1) {
+        await commitFile(worktreePath, "qa-test.txt", "BROKEN\n", "qa tests");
+      } else if (qaCalls === 2) {
+        await fs.writeFile(path.join(worktreePath, "qa-test.txt"), "fixed\n");
+        await commitFile(worktreePath, "product-change.txt", "unreviewed\n", "unsafe qa fix");
+      }
+      await writeVerdict(prompt, { verdict: "pass", testsAdded: "one" });
+    };
+    const context = fixture.context(async (prompt, options) => {
+      const stage = sessionKindOf(prompt);
+      if (stage === "implementation") {
+        implementationCalls++;
+        if (implementationCalls === 1)
           await commitFile(options.cwd, "impl.txt", "x\n", "implement");
-        } else {
-          expect(prompt).toContain("gate failed after QA committed its tests");
-          await commitFile(options.cwd, "qa-broken.txt.gone", "fixed\n", "remove broken qa file");
-          await git(options.cwd, "rm", "-q", "qa-broken.txt");
-          await git(options.cwd, "commit", "-qm", "drop broken qa test");
-        }
+        else expect(prompt).toContain("outside QA's initial handoff: product-change.txt");
+        await writeVerdict(prompt, { status: "done" });
+      } else if (stage === "code-review") {
+        reviewCalls++;
+        await writeVerdict(prompt, { verdict: "pass" });
+      } else {
+        await handleQa(prompt, options.cwd);
+      }
+      return { ok: true, text: "", sessionId: stage === "qa" ? "qa-session" : undefined };
+    });
+
+    const ticket = await resolveTicket("QA widened its fix", fixture.ticketsDirectory);
+    const outcome = await runPipeline(context, ticket);
+    expect(outcome.status).toBe("passed");
+    if (outcome.status !== "passed") return;
+    expect(outcome.report.rounds).toBe(2);
+    expect(implementationCalls).toBe(2);
+    expect(reviewCalls).toBe(2);
+    expect(qaCalls).toBe(3);
+    const note = await fs.readFile(path.join(fixture.ticketsDirectory, `${ticket.id}.md`), "utf8");
+    const firstQaComment = parseTicketNote(note).comments.find(
+      (comment) => comment.stage === "qa" && comment.round === 1,
+    );
+    expect(firstQaComment?.body).toContain("outside QA's initial handoff: product-change.txt");
+  });
+
+  it("falls back fresh with the same QA gate-fix brief when the session was forgotten", async () => {
+    await fixture.cleanup();
+    fixture = await makeFixture({
+      gate: [{ name: "check", command: "test -f impl.txt && ! grep -q BROKEN qa-test.txt" }],
+    });
+    let qaCalls = 0;
+    const gateFixPrompts: string[] = [];
+    const context = fixture.context(async (prompt, options) => {
+      const stage = sessionKindOf(prompt);
+      if (stage === "implementation") {
+        await commitFile(options.cwd, "impl.txt", "x\n", "implement");
         await writeVerdict(prompt, { status: "done" });
       } else if (stage === "qa") {
         qaCalls++;
-        if (qaCalls === 1) await commitFile(options.cwd, "qa-broken.txt", "boom\n", "qa tests");
-        await writeVerdict(prompt, { verdict: "pass", testsAdded: "one" });
+        if (qaCalls === 1) {
+          await commitFile(options.cwd, "qa-test.txt", "BROKEN\n", "qa tests");
+          await writeVerdict(prompt, { verdict: "pass" });
+          return { ok: true, text: "", sessionId: "forgotten-qa" };
+        }
+        gateFixPrompts.push(prompt);
+        if (qaCalls === 2) {
+          expect(options.continueSessionId).toBe("forgotten-qa");
+          return { ok: false, text: "session not found" };
+        }
+        expect(options.continueSessionId).toBeUndefined();
+        await commitFile(options.cwd, "qa-test.txt", "fixed\n", "fix qa tests");
+        await writeVerdict(prompt, { verdict: "pass" });
       } else {
         await writeVerdict(prompt, { verdict: "pass" });
       }
       return { ok: true, text: "" };
     });
 
-    const ticket = await resolveTicket("QA broke the gate", fixture.ticketsDirectory);
+    const ticket = await resolveTicket("QA forgot its session", fixture.ticketsDirectory);
     const outcome = await runPipeline(context, ticket);
     expect(outcome.status).toBe("passed");
-    if (outcome.status === "passed") expect(outcome.report.rounds).toBe(2);
-    expect(implementationCalls).toBe(2);
-    expect(qaCalls).toBe(2);
+    if (outcome.status === "passed") expect(outcome.report.rounds).toBe(1);
+    expect(qaCalls).toBe(3);
+    expect(gateFixPrompts).toHaveLength(2);
+    expect(gateFixPrompts[1]).toBe(gateFixPrompts[0]);
+  });
+
+  it("lets an exhausted QA gate-fix cap consume the round", { timeout: 30_000 }, async () => {
+    await fixture.cleanup();
+    fixture = await makeFixture({
+      gate: [{ name: "check", command: "test -f impl.txt && ! grep -q BROKEN qa-test.txt" }],
+      pipeline: { maxRounds: 1 },
+    });
+    let qaCalls = 0;
+    const roundsSeen: number[] = [];
+    const context = fixture.context(async (prompt, options) => {
+      const stage = sessionKindOf(prompt);
+      if (stage === "implementation") {
+        await commitFile(options.cwd, "impl.txt", "x\n", "implement");
+        await writeVerdict(prompt, { status: "done" });
+      } else if (stage === "qa") {
+        qaCalls++;
+        await commitFile(options.cwd, "qa-test.txt", `BROKEN ${qaCalls}\n`, "qa tests still red");
+        await writeVerdict(prompt, { verdict: "pass" });
+      } else {
+        await writeVerdict(prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "", sessionId: stage === "qa" ? "qa-session" : undefined };
+    });
+    context.log.on((event) => {
+      if (event.type === "round_start") roundsSeen.push(Number(event.data?.round));
+    });
+
+    const ticket = await resolveTicket("QA never clears the gate", fixture.ticketsDirectory);
+    expect((await runPipeline(context, ticket)).status).toBe("blocked");
+    expect(roundsSeen).toEqual([1]);
+    expect(qaCalls).toBe(11);
   });
 
   it("a session that never writes a verdict burns a round with feedback", async () => {
