@@ -11,11 +11,11 @@ each config option in its own labeled control: choices for constrained values,
 numeric and boolean controls for those types, and free text otherwise. Gate
 commands can be added and removed, and every required stage has separate
 harness, model, and effort controls. Changes stay in the panel until Save.
-Cancel discards them, while Reload re-reads `config.json` from disk into the
-panel without changing the running coordinator. Save validates the complete
-staged config with the same rules as startup and writes it atomically. If
-another tool or a human changed the file since the panel loaded it, Save refuses
-the stale edit; Reload before editing again.
+Cancel or Escape discards them, while Reload re-reads `config.json` from disk
+into the panel without changing the running coordinator. Save validates the
+complete staged config with the same rules as startup and writes it atomically.
+If another tool or a human changed the file since the panel loaded it, Save
+refuses the stale edit; Reload before editing again.
 
 A successful Save updates the running coordinator at safe boundaries:
 

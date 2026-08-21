@@ -152,6 +152,10 @@ describe("web front end", () => {
     expect(pageMarkup).toContain('id="settings-save"');
     expect(pageMarkup).toContain('id="settings-cancel"');
     expect(pageMarkup).toContain('id="settings-reload"');
+    expect(pageMarkup).toContain(
+      'if (event.key === "Escape" && !element("settings-panel").hidden) cancelSettings();',
+    );
+    expect(pageMarkup).toContain('window.addEventListener("keydown", handleSettingsKeydown)');
     expect(pageMarkup).toContain("switching front ends requires a restart");
     expect(pageMarkup).not.toContain("<textarea");
     expect(pageMarkup).toContain(
