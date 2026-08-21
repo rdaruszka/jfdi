@@ -24,6 +24,7 @@
     "remote": { "fetchBefore": true, "pushAfter": true }
   },
   "permissions": { "mode": "auto" },
+  "frontEnd": "web",
   "maxConcurrent": 2,
   "stages": {
     "implementation": { "harness": "codex", "model": "gpt-5.6-sol", "effort": "high" },
