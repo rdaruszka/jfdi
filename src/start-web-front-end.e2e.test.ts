@@ -527,6 +527,58 @@ describe("jfdi start --front-end web (built CLI)", () => {
   );
 
   it(
+    "flags a Save that switches frontEnd for a restart, and clears the flag once frontEnd is restored to the running value",
+    async () => {
+      // Running under the web front end via config (in effect: web). A Save that
+      // changes frontEnd is the one the confirmation must name a restart for; a
+      // later Save that puts frontEnd back to the value actually in effect (web)
+      // must not — even though the file was mid-flight at "terminal" between them.
+      const sandbox = await makeSandbox();
+      await setConfigFrontEnd(sandbox, "web");
+
+      const { child, stdout } = startCli(sandbox, ["start"]);
+      const url = await waitForUrl(stdout);
+
+      const save = async (frontEnd: string) => {
+        const loaded = (await (await fetch(new URL("settings", url))).json()) as {
+          config: Record<string, unknown>;
+          revision: string;
+        };
+        const response = await fetch(new URL("settings", url), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            config: { ...loaded.config, frontEnd },
+            revision: loaded.revision,
+          }),
+        });
+        expect(response.status).toBe(200);
+        return (await response.json()) as { hasPendingFrontEndChange: boolean };
+      };
+
+      // web -> terminal: the running front end (web) now differs from the saved
+      // value, so the confirmation names a restart.
+      expect((await save("terminal")).hasPendingFrontEndChange).toBe(true);
+      expect(JSON.parse(await fs.readFile(sandbox.configPath, "utf8"))).toMatchObject({
+        frontEnd: "terminal",
+      });
+
+      // terminal -> web: frontEnd matches what is actually in effect again, so no
+      // restart is claimed. The comparison tracks the value in effect at startup,
+      // not the value the previous Save left on disk.
+      expect((await save("web")).hasPendingFrontEndChange).toBe(false);
+      expect(JSON.parse(await fs.readFile(sandbox.configPath, "utf8"))).toMatchObject({
+        frontEnd: "web",
+      });
+
+      const exit = waitForExit(child);
+      child.kill("SIGINT");
+      await exit;
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
     "surfaces an undispatched begin-column card in Ready, then holds it in Ready to Merge until a human approves (on-approval mode)",
     async () => {
       // Default integration mode is on-approval — no setAutoMerge here.
