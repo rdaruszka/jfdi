@@ -26,6 +26,13 @@ export async function startCommand(): Promise<number> {
     exitCode = requestedExitCode;
     coordinator.stop();
   };
+  const quit = (requestedExitCode: number) => {
+    shutdown(requestedExitCode);
+    // Stopping releases a paused pipeline with its last failed result. An
+    // interrupt must terminate after cleanup, before that pipeline can settle
+    // the card as a task failure instead of leaving it resumable In Progress.
+    if (requestedExitCode !== 0) process.exit(requestedExitCode);
+  };
 
   try {
     const app = render(
@@ -33,7 +40,7 @@ export async function startCommand(): Promise<number> {
         log: context.log,
         boardName: path.basename(context.config.board.path),
         targetBranch: context.config.integration.targetBranch,
-        onQuit: shutdown,
+        onQuit: quit,
         onRetry: () => context.pause.retryNow(),
       }),
       { exitOnCtrlC: false },
@@ -47,10 +54,12 @@ export async function startCommand(): Promise<number> {
     const onInterrupt = () => {
       shutdown(EXIT_SIGINT);
       unmountApp();
+      process.exit(EXIT_SIGINT);
     };
     const onTermination = () => {
       shutdown(EXIT_SIGTERM);
       unmountApp();
+      process.exit(EXIT_SIGTERM);
     };
     process.once("SIGINT", onInterrupt);
     process.once("SIGTERM", onTermination);

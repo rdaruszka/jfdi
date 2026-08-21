@@ -121,8 +121,9 @@ export function App({ log, boardName, targetBranch, onQuit, onRetry }: AppProps)
   useInput((input, key) => {
     const exitCode = exitCodeForInput(input, key);
     if (exitCode !== null) {
-      onQuit(exitCode);
+      // Give Ink the terminal back before an interrupt callback terminates the process.
       exit();
+      onQuit(exitCode);
       return;
     }
     if (input === "r" || input === "R") onRetry();

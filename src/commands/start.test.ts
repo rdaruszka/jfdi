@@ -95,9 +95,10 @@ describe("startCommand", () => {
     expect(mocks.app.unmount).toHaveBeenCalledOnce();
   });
 
-  it("returns after one raw-mode Ctrl-C with the interrupt exit code", async () => {
+  it("routes one raw-mode Ctrl-C through coordinator shutdown and process exit", async () => {
     Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
     vi.mocked(buildContext).mockResolvedValue(context());
+    const exitProcess = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
     mocks.coordinator.start.mockResolvedValue();
     mocks.app.waitUntilExit.mockResolvedValue();
     mocks.render.mockImplementation(
@@ -111,5 +112,6 @@ describe("startCommand", () => {
 
     expect(mocks.coordinator.stop).toHaveBeenCalledOnce();
     expect(mocks.app.unmount).toHaveBeenCalledOnce();
+    expect(exitProcess).toHaveBeenCalledWith(EXIT_SIGINT);
   });
 });
