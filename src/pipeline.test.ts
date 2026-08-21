@@ -1641,7 +1641,9 @@ describe("runPipeline", () => {
         reviewCalls++;
         await writeVerdict(prompt, { verdict: "pass" });
       }
-      return { ok: true, text: "", sessionId: stage === "qa" ? "qa-session" : undefined };
+      return stage === "qa"
+        ? { ok: true, text: "", sessionId: "qa-session" }
+        : { ok: true, text: "" };
     });
     context.log.on((event) => {
       if (event.type === "round_start") roundsSeen.push(Number(event.data?.round));
@@ -1704,7 +1706,9 @@ describe("runPipeline", () => {
       } else {
         await handleQa(prompt, options.cwd);
       }
-      return { ok: true, text: "", sessionId: stage === "qa" ? "qa-session" : undefined };
+      return stage === "qa"
+        ? { ok: true, text: "", sessionId: "qa-session" }
+        : { ok: true, text: "" };
     });
 
     const ticket = await resolveTicket("QA widened its fix", fixture.ticketsDirectory);
@@ -1784,7 +1788,9 @@ describe("runPipeline", () => {
       } else {
         await writeVerdict(prompt, { verdict: "pass" });
       }
-      return { ok: true, text: "", sessionId: stage === "qa" ? "qa-session" : undefined };
+      return stage === "qa"
+        ? { ok: true, text: "", sessionId: "qa-session" }
+        : { ok: true, text: "" };
     });
     context.log.on((event) => {
       if (event.type === "round_start") roundsSeen.push(Number(event.data?.round));
