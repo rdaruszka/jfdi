@@ -2,10 +2,11 @@
 
 Every significant transition in JFDI — dispatch, stage change, gate result,
 escalation, merge — is an event appended to a per-project `events.jsonl`.
-Everything else is derived: `state.json` is a snapshot produced by a pure
-reducer over the stream; the terminal/web front ends and inline printer are
-renderers over it; and `jfdi status` just prints it. No database, no daemon protocol — rebuildable,
-greppable flat files.
+`state.json` is a snapshot produced by a pure reducer over the stream; the
+terminal/web front ends and inline printer render run status from it, and `jfdi
+status` just prints it. The pipeline's raw run logs are separate derived run
+state: the web ticket detail may read them read-only to render full session
+output. No database, no daemon protocol — rebuildable, greppable flat files.
 
 Source: [src/events.ts](../../src/events.ts),
 [src/state-dir.ts](../../src/state-dir.ts).
@@ -185,4 +186,5 @@ Mechanics that make this safe:
 
 This is also the renderer-separation invariant in action: both live front ends
 subscribe to the event log and render snapshots plus a bounded recent-event
-tail. Neither reads coordinator or pipeline internals.
+tail. The web ticket detail additionally reads pipeline-written run logs
+read-only; neither front end reads coordinator or pipeline internals.

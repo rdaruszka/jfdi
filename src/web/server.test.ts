@@ -1,4 +1,7 @@
+import * as fs from "node:fs/promises";
 import { createServer } from "node:net";
+import * as os from "node:os";
+import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ConfigError, defaultConfig } from "../config.js";
 import { EventLog } from "../events.js";
@@ -6,6 +9,13 @@ import type { SettingsSnapshot } from "../settings.js";
 import { startWebFrontEnd, type WebFrontEnd, type WebSettingsSurface } from "./server.js";
 
 let frontEnd: WebFrontEnd | null = null;
+let projectRoot: string | null = null;
+
+async function makeProjectRoot(): Promise<string> {
+  const created = await fs.mkdtemp(path.join(os.tmpdir(), "jfdi-web-detail-"));
+  projectRoot = created;
+  return created;
+}
 
 function memorySettings(): WebSettingsSurface {
   let snapshot: SettingsSnapshot = {
@@ -29,6 +39,8 @@ function memorySettings(): WebSettingsSurface {
 afterEach(async () => {
   await frontEnd?.close();
   frontEnd = null;
+  if (projectRoot !== null) await fs.rm(projectRoot, { recursive: true, force: true });
+  projectRoot = null;
 });
 
 async function readEventPayload(
@@ -75,6 +87,8 @@ describe("web front end", () => {
     const log = new EventLog("unused", false);
     frontEnd = await startWebFrontEnd({
       log,
+      projectRoot: "unused",
+      ticketsDirectory: ".jfdi/tickets",
       boardName: "board.md",
       targetBranch: "main",
       integrationMode: "on-approval",
@@ -102,6 +116,14 @@ describe("web front end", () => {
     expect(pageMarkup).toContain('"harnessNames":["claude","codex"]');
     expect(pageMarkup).toContain("pointAtSettingsField(body.field, body.error)");
     expect(pageMarkup).toContain('id="kanban"');
+    expect(pageMarkup).toContain('id="ticket-detail"');
+    expect(pageMarkup).toContain('id="board-return"');
+    expect(pageMarkup).toContain('id="session-tabs"');
+    expect(pageMarkup).toContain('id="feed-output"');
+    expect(pageMarkup).toContain("isFeedAtBottom(feed)");
+    expect(pageMarkup).toContain(
+      "feed.scrollTop = shouldFollow ? feed.scrollHeight : previousScrollTop",
+    );
     expect(pageMarkup).not.toContain("Active (0)");
     expect(pageMarkup).not.toContain(">Events<");
     expect(pageMarkup).not.toContain("lastActivity");
@@ -186,6 +208,8 @@ describe("web front end", () => {
     const log = new EventLog("unused", false);
     frontEnd = await startWebFrontEnd({
       log,
+      projectRoot: "unused",
+      ticketsDirectory: ".jfdi/tickets",
       boardName: "board.md",
       targetBranch: "main",
       integrationMode: "auto",
@@ -228,10 +252,169 @@ describe("web front end", () => {
     await reader.cancel();
   });
 
+  it("serves current ticket content and folds the latest run logs into stage tabs", async () => {
+    const root = await makeProjectRoot();
+    const stateDirectory = path.join(root, "state");
+    const ticketsDirectory = path.join(root, ".jfdi", "tickets");
+    await fs.mkdir(ticketsDirectory, { recursive: true });
+    await fs.writeFile(
+      path.join(ticketsDirectory, "detail-ticket.md"),
+      [
+        "# Detail ticket",
+        "",
+        "Explain the change.",
+        "",
+        "## Acceptance criteria",
+        "",
+        "- It works.",
+        "",
+        "## Comments",
+        "",
+        "### 2026-08-20T12:00:00.000Z — JFDI started",
+        "",
+        "> Starting the run.",
+        "",
+      ].join("\n"),
+    );
+    await fs.writeFile(
+      path.join(ticketsDirectory, "ready-ticket.md"),
+      "# Ready ticket\n\nNothing has run.\n",
+    );
+    const latestRun = path.join(stateDirectory, "runs", "detail-ticket", "run-2");
+    await fs.mkdir(path.join(latestRun, "round-1", "gate-fix-1"), { recursive: true });
+    await fs.mkdir(path.join(latestRun, "round-1", "verdict-fix-1"), { recursive: true });
+    await fs.mkdir(path.join(latestRun, "round-2"), { recursive: true });
+    await fs.mkdir(path.join(stateDirectory, "runs", "detail-ticket", "run-1", "round-1"), {
+      recursive: true,
+    });
+    const claudeLine = (text: string) =>
+      `${JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text }] } })}\n`;
+    const codexLine = (text: string) =>
+      `${JSON.stringify({ type: "item.completed", item: { type: "agent_message", text } })}\n`;
+    await fs.writeFile(
+      path.join(latestRun, "round-1", "implementation.log.jsonl"),
+      claudeLine("implementation history\nsecond line"),
+    );
+    await fs.writeFile(
+      path.join(latestRun, "round-1", "verdict-fix-1", "implementation.log.jsonl"),
+      codexLine("corrected verdict"),
+    );
+    await fs.writeFile(
+      path.join(latestRun, "round-1", "gate-fix-1", "implementation.log.jsonl"),
+      codexLine("fixed the gate"),
+    );
+    await fs.writeFile(
+      path.join(latestRun, "round-1", "code-review.log.jsonl"),
+      codexLine("review history"),
+    );
+    await fs.writeFile(
+      path.join(latestRun, "round-1", "implementation.commit-message.log.jsonl"),
+      claudeLine("scribe output"),
+    );
+    await fs.writeFile(
+      path.join(latestRun, "round-2", "implementation.log.jsonl"),
+      claudeLine("round two history"),
+    );
+    await fs.writeFile(
+      path.join(latestRun, "round-2", "qa.log.jsonl"),
+      codexLine("fresh round two QA"),
+    );
+    await fs.writeFile(
+      path.join(stateDirectory, "runs", "detail-ticket", "run-1", "round-1", "qa.log.jsonl"),
+      codexLine("stale run"),
+    );
+    await fs.mkdir(path.join(stateDirectory, "runs", "ready-ticket", "run-1", "round-1"), {
+      recursive: true,
+    });
+    await fs.writeFile(
+      path.join(stateDirectory, "runs", "ready-ticket", "run-1", "round-1", "qa.log.jsonl"),
+      codexLine("old ready history"),
+    );
+
+    const log = new EventLog(stateDirectory);
+    log.emit("dispatch", "detail-ticket", {
+      title: "Detail card [[detail-ticket]]",
+      branch: "jfdi/detail-ticket",
+    });
+    log.emit("round_start", "detail-ticket", { round: 1 });
+    log.emit("stage_start", "detail-ticket", { stage: "implementation" });
+    log.emit("stage_start", "detail-ticket", { stage: "code-review" });
+    log.emit("round_start", "detail-ticket", { round: 2 });
+    log.emit("stage_start", "detail-ticket", { stage: "implementation", isContinuation: true });
+    log.emit("stage_start", "detail-ticket", { stage: "qa" });
+    log.emit("ready", "ready-ticket", { title: "Ready card [[ready-ticket]]" });
+    await log.flush();
+    frontEnd = await startWebFrontEnd({
+      log,
+      projectRoot: root,
+      ticketsDirectory: ".jfdi/tickets",
+      boardName: "board.md",
+      targetBranch: "main",
+      integrationMode: "auto",
+      settings: memorySettings(),
+    });
+
+    const response = await fetch(new URL("ticket-detail?ticketId=detail-ticket", frontEnd.url));
+    expect(response.status).toBe(200);
+    const detail = (await response.json()) as {
+      title: string;
+      description: string;
+      comments: Array<{ label: string; body: string }>;
+      sessions: Array<{ key: string; label: string; content: string }>;
+    };
+    expect(detail).toMatchObject({
+      title: "Detail ticket",
+      description: "Explain the change.\n\n## Acceptance criteria\n\n- It works.",
+      comments: [{ label: "JFDI started", body: "Starting the run." }],
+    });
+    expect(detail.sessions.map(({ label }) => label)).toEqual([
+      "Implementation",
+      "Code Review",
+      "QA round 2",
+    ]);
+    expect(detail.sessions[0]?.content).toContain("implementation history\nsecond line");
+    expect(detail.sessions[0]?.content).toContain("corrected verdict");
+    expect(detail.sessions[0]?.content).toContain("fixed the gate");
+    expect(detail.sessions[0]?.content).toContain("round two history");
+    expect(detail.sessions[2]?.content).toContain("fresh round two QA");
+    expect(JSON.stringify(detail.sessions)).not.toContain("scribe output");
+    expect(JSON.stringify(detail.sessions)).not.toContain("stale run");
+
+    const readyResponse = await fetch(new URL("ticket-detail?ticketId=ready-ticket", frontEnd.url));
+    expect(await readyResponse.json()).toMatchObject({
+      title: "Ready ticket",
+      description: "Nothing has run.",
+      sessions: [],
+    });
+
+    await fs.appendFile(
+      path.join(ticketsDirectory, "detail-ticket.md"),
+      "\n### 2026-08-20T12:01:00.000Z — Implementation round 1 complete\n\n> Comment arrived.\n",
+    );
+    const updatedTicket = await fetch(
+      new URL("ticket-detail?ticketId=detail-ticket", frontEnd.url),
+    );
+    expect(await updatedTicket.json()).toMatchObject({
+      comments: [
+        { label: "JFDI started", body: "Starting the run." },
+        { label: "Implementation round 1 complete", body: "Comment arrived." },
+      ],
+    });
+
+    await fs.appendFile(
+      path.join(latestRun, "round-2", "implementation.log.jsonl"),
+      codexLine("live output arrived"),
+    );
+    const live = await fetch(new URL("ticket-detail?ticketId=detail-ticket", frontEnd.url));
+    expect(JSON.stringify((await live.json()) as unknown)).toContain("live output arrived");
+  });
+
   it("loads settings and sends staged values only on Save", async () => {
     const saves: unknown[] = [];
     frontEnd = await startWebFrontEnd({
       log: new EventLog("unused", false),
+      projectRoot: "unused",
+      ticketsDirectory: ".jfdi/tickets",
       boardName: "board.md",
       targetBranch: "main",
       integrationMode: "auto",
@@ -288,6 +471,8 @@ describe("web front end", () => {
   it("returns the offending field with a configuration refusal", async () => {
     frontEnd = await startWebFrontEnd({
       log: new EventLog("unused", false),
+      projectRoot: "unused",
+      ticketsDirectory: ".jfdi/tickets",
       boardName: "board.md",
       targetBranch: "main",
       integrationMode: "auto",
@@ -319,6 +504,8 @@ describe("web front end", () => {
   it("frees its assigned port when closed", async () => {
     frontEnd = await startWebFrontEnd({
       log: new EventLog("unused", false),
+      projectRoot: "unused",
+      ticketsDirectory: ".jfdi/tickets",
       boardName: "board.md",
       targetBranch: "main",
       integrationMode: "auto",

@@ -76,8 +76,13 @@ running cost/agent-time, tickets needing attention, the integration queue,
 settled tickets, and a tail of recent events. The web front end instead shows a
 read-only kanban view with Ready, Implementation, Code Review, QA, Integration,
 Blocked, and Done columns. On-approval mode adds Ready to Merge. Each card shows
-only its board card content. Both front ends show the board name, target branch,
-and pause banner, and both update directly from the event stream.
+only its board card content. Clicking one opens a read-only split ticket detail:
+the current description, acceptance criteria, and comment trail beside the
+latest run's full session feeds. Stage sessions are tabs in run order;
+continuations and gate fixes stay folded into their stage and round tab. The
+detail follows live output while its feed is at the bottom and preserves the
+reader's position after they scroll up. Both front ends show the board name,
+target branch, and pause banner, and both update directly from the event stream.
 
 With no option, [`frontEnd`](configuration.md#frontend) chooses the project
 default and itself defaults to `terminal`; `--front-end terminal|web` overrides
@@ -86,7 +91,8 @@ Ctrl-C / SIGTERM, exit codes 130/143), `R` retries a paused harness immediately,
 and redirected stdout is refused because Ink requires a TTY. The web front end
 works without a TTY, prints the URL to open, binds only to `127.0.0.1` on an
 operating-system-assigned port. Its run status remains a read-only rendering of
-the event stream. The Settings button is the page's only write surface: it
+the event stream, with raw run logs read-only for the ticket detail's session
+feed. The Settings button on the board is the page's only write surface: it
 stages edits to every config option and provides Save, Cancel, and Reload.
 Save validates and atomically rewrites `.jfdi/config.json`, refuses a stale edit,
 then applies the saved values to the running coordinator at safe boundaries;
