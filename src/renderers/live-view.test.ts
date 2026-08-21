@@ -3,7 +3,12 @@ import { emptyState, type JfdiEvent, reduceEvent } from "../events.js";
 import { initialLiveView, reduceLiveView, ticketGroups } from "./live-view.js";
 
 function event(type: JfdiEvent["type"], data?: Record<string, unknown>): JfdiEvent {
-  return { ts: "2026-08-20T12:34:56.000Z", type, ticketId: "watch-runs", data };
+  return {
+    ts: "2026-08-20T12:34:56.000Z",
+    type,
+    ticketId: "watch-runs",
+    ...(data === undefined ? {} : { data }),
+  };
 }
 
 describe("live renderer view", () => {
