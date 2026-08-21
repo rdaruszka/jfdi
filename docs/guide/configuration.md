@@ -6,6 +6,25 @@ means all defaults, but a file that exists must carry a complete `stages`
 section. A config with the wrong *types* is a hard error with a message naming
 the field.
 
+When `jfdi start` uses the web front end, its Settings button opens the complete
+effective config as editable JSON. Changes stay in the panel until Save. Cancel
+discards them, while Reload re-reads `config.json` from disk into the panel
+without changing the running coordinator. Save validates the complete staged
+config with the same rules as startup and writes it atomically. If another tool
+or a human changed the file since the panel loaded it, Save refuses the stale
+edit; Reload before editing again.
+
+A successful Save updates the running coordinator at safe boundaries:
+
+- raising `maxConcurrent` immediately fills the new capacity; lowering it lets
+  active runs finish and delays new dispatches;
+- gate changes take effect at the next gate invocation, never during one;
+- each stage locks its harness, model, effort, and permission mode when it first
+  fires in a run, so its later continuations keep the same session selection;
+  a stage that has not fired yet uses the newly saved selection;
+- `frontEnd` is written to the file but takes effect only after restarting
+  `jfdi start`.
+
 A complete example (this is also what `jfdi init` writes, minus the gate, which
 init fills in for your repo):
 
@@ -161,10 +180,11 @@ the classifier.
 | string | `terminal` | `"terminal"` or `"web"` |
 
 The front end `jfdi start` presents by default. `terminal` is the existing live
-Ink TUI and requires a TTY. `web` starts a read-only HTTP server on the local
-machine, prints its URL, and streams updates to connected pages without a
-refresh. The server asks the operating system for a free port and binds only to
-`127.0.0.1`; it stops and frees that port when `jfdi start` stops.
+Ink TUI and requires a TTY. `web` starts an HTTP server on the local machine,
+prints its URL, and streams status updates to connected pages without a refresh.
+Its status view is read-only; the Settings panel is its only write surface. The
+server asks the operating system for a free port and binds only to `127.0.0.1`;
+it stops and frees that port when `jfdi start` stops.
 
 `jfdi start --front-end terminal|web` selects a front end for one invocation
 and overrides this setting.
@@ -204,13 +224,13 @@ Omitting `model` or `effort` means **pass no flag**: the provider's own default.
 A value is never inherited from another stage or from the scaffolded example, so
 naming only a harness can't pair one provider with another's model.
 
-The selection is fixed per stage, which is what makes
-[continuations](pipeline.md#fresh-sessions-vs-continuations) safe — a session id is
-only meaningful to the harness that minted it, and a stage always re-enters its
-own. Each session's configured harness, model and effort are recorded on its
-`stage_start` event. The provider-confirmed model, when reported, is recorded on
-`stage_end` and in the run's usage rows; otherwise those rows label the
-configured model as a fallback.
+The selection is fixed when each stage first fires within a run, which is what
+makes [continuations](pipeline.md#fresh-sessions-vs-continuations) safe — a
+session id is only meaningful to the harness that minted it, and a stage always
+re-enters its own. Each session's configured harness, model and effort are
+recorded on its `stage_start` event. The provider-confirmed model, when reported,
+is recorded on `stage_end` and in the run's usage rows; otherwise those rows
+label the configured model as a fallback.
 
 `jfdi init` scaffolds the mix in the example above. Its two deliberate choices:
 

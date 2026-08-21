@@ -336,6 +336,11 @@ async function runIntegrationAgent(
   runDirectory: string,
 ): Promise<IntegrationVerdict | null> {
   const stage: StageName = "integration";
+  const configAtStart = context.config;
+  const agent = {
+    harness: context.harnesses[stage],
+    config: configAtStart.stages[stage],
+  };
   const verdictPath = path.join(runDirectory, "integration.verdict.json");
   const template = await loadPrompt(context.jfdiDirectory, "integration");
   const prompt = renderPrompt(template, {
@@ -348,7 +353,7 @@ async function runIntegrationAgent(
   });
   context.log.emit("stage_start", ticket.id, {
     stage,
-    ...sessionSelectionFields(context.config, stage),
+    ...sessionSelectionFields(configAtStart, stage),
   });
   const result = await runHeldSession(
     context,
@@ -360,13 +365,14 @@ async function runIntegrationAgent(
       if (event.type === "tool")
         context.log.emit("session_activity", ticket.id, { text: `integration: ${event.name}` });
     },
+    agent,
   );
   // The agent wrote its verdict inside the worktree (the only place sandboxed
   // permission modes allow); collect it before reading.
   await collectVerdict(agentVerdictPath(worktree.path, stage), verdictPath);
   const verdictResult = await readIntegrationVerdict(verdictPath);
   const verdict = verdictResult.status === "valid" ? verdictResult.verdict : null;
-  const model = resolveUsageModel(result.usage, context.config.stages[stage].model);
+  const model = resolveUsageModel(result.usage, agent.config.model);
   // Only this session's own numbers: integration runs may be a separate process
   // whose ledger holds no pipeline stages, so it must not overwrite the run
   // total the pipeline's own stage_end events already set. Its cost still reaches

@@ -136,7 +136,9 @@ The coordinator watches the board live, dispatches cards top-first (up to
 `maxConcurrent` pipelines in parallel, each in its own git worktree), serializes
 merges so the target branch only ever moves one integration at a time, and shows
 everything in the terminal front end. Use `jfdi start --front-end web` to print
-a local URL and watch the same read-only live view in a browser instead. Cards
+a local URL and watch the same read-only run status in a browser instead. Its
+Settings panel can stage, reload, validate, and save `.jfdi/config.json`; no
+change applies while you type. Cards
 move across the board as work progresses;
 finished work waits in Ready to Merge; anything needing you lands in Blocked
 with its question in the ticket note. Answer, move the card back to the begin

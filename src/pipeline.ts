@@ -1,10 +1,11 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { JfdiConfig } from "./config.js";
+import type { JfdiConfig, SessionConfig } from "./config.js";
 import type { EventLog, StageName } from "./events.js";
 import { formatGateFailure, formatGatePass, type GateResult, runGate } from "./gate.js";
 import { createWorktree, git, hasStagedChanges, parseRevision, type Worktree } from "./git.js";
 import type {
+  Harness,
   HarnessEvent,
   HarnessResult,
   SessionHarnesses,
@@ -178,6 +179,8 @@ export interface StageSessionMemory {
   sessionId?: string | undefined;
   /** The commit the stage last saw; continuation prompts brief the delta since it. */
   lastSeenCommit?: string | undefined;
+  /** Harness and selection locked when this stage first fired in the run. */
+  agent?: LockedStageAgent | undefined;
 }
 
 type ContinuableStage = "implementation" | "code-review" | "qa";
@@ -196,6 +199,17 @@ interface StageOutcome {
   preSessionHead: string;
   /** What this session cost and took — for its handoff commit's trailers. */
   usage: SessionUsage;
+  /** The stage-local agent selection, retained through corrections and later rounds. */
+  agent: LockedStageAgent;
+}
+
+export interface LockedStageAgent {
+  harness: Harness;
+  config: SessionConfig;
+}
+
+function currentStageAgent(context: PipelineContext, stage: StageName): LockedStageAgent {
+  return { harness: context.harnesses[stage], config: context.config.stages[stage] };
 }
 
 /** Session progress → TUI activity line; session/result events carry no narration. */
@@ -228,7 +242,10 @@ export function sessionSelectionFields(
   config: JfdiConfig,
   sessionKind: SessionKind,
 ): Record<string, string> {
-  const selection = config.stages[sessionKind];
+  return selectionFields(config.stages[sessionKind]);
+}
+
+function selectionFields(selection: SessionConfig): Record<string, string> {
   return {
     harness: selection.harness,
     ...(selection.model ? { model: selection.model } : {}),
@@ -247,9 +264,10 @@ function stageUsageFields(
   ticketId: string,
   sessionKind: SessionKind,
   usage: SessionUsage,
+  selection: SessionConfig = context.config.stages[sessionKind],
 ): Record<string, unknown> {
   const totals = context.usage.of(ticketId).totals();
-  const model = resolveUsageModel(usage, context.config.stages[sessionKind].model);
+  const model = resolveUsageModel(usage, selection.model);
   return {
     ...(model === null ? {} : { model: model.name, modelSource: model.source }),
     durationMs: usage.durationMs,
@@ -282,12 +300,12 @@ function withDuration(result: HarnessResult, durationMs: number): MeasuredHarnes
 /** One session, start to finish, with its events narrated as they arrive. */
 async function runOneSession(
   context: PipelineContext,
-  sessionKind: SessionKind,
+  harness: Harness,
   prompt: string,
   options: SpawnOptions,
   onEvent: (event: HarnessEvent) => void,
 ): Promise<MeasuredHarnessResult> {
-  const session = context.harnesses[sessionKind].spawn(prompt, options);
+  const session = harness.spawn(prompt, options);
   context.sessions?.add(session);
   const startedMs = nowMs(context);
   try {
@@ -319,7 +337,12 @@ export async function runHeldSession(
   prompt: string,
   options: SpawnOptions,
   onEvent: (event: HarnessEvent) => void,
+  lockedAgent?: LockedStageAgent,
 ): Promise<MeasuredHarnessResult> {
+  const agent = lockedAgent ?? {
+    harness: context.harnesses[sessionKind],
+    config: context.config.stages[sessionKind],
+  };
   let attemptOptions = options;
   // Provider-failure retries are one logical session: their wall-clock all
   // counts as agent time, but the tokens/cost come from the attempt that
@@ -327,11 +350,17 @@ export async function runHeldSession(
   let accumulatedMs = 0;
   for (let attempt = 1; ; attempt++) {
     await context.pause.waitWhilePaused();
-    const result = await runOneSession(context, sessionKind, prompt, attemptOptions, onEvent);
+    const result = await runOneSession(context, agent.harness, prompt, attemptOptions, onEvent);
     accumulatedMs += result.usage.durationMs;
     if (!result.failure) {
       context.pause.reportHealthy();
-      return tallied(context, ticketId, sessionKind, withDuration(result, accumulatedMs));
+      return tallied(
+        context,
+        ticketId,
+        sessionKind,
+        withDuration(result, accumulatedMs),
+        agent.config,
+      );
     }
     if (result.sessionId) attemptOptions = { ...options, continueSessionId: result.sessionId };
     context.log.emit("session_activity", ticketId, {
@@ -340,7 +369,13 @@ export async function runHeldSession(
     // Shutting down is the one way out that is not a working provider; the
     // caller then sees the failed session exactly as it did before this hold.
     if (!(await context.pause.holdAfterFailure(result.failure, attempt)))
-      return tallied(context, ticketId, sessionKind, withDuration(result, accumulatedMs));
+      return tallied(
+        context,
+        ticketId,
+        sessionKind,
+        withDuration(result, accumulatedMs),
+        agent.config,
+      );
   }
 }
 
@@ -350,8 +385,9 @@ function tallied(
   ticketId: string,
   sessionKind: SessionKind,
   result: MeasuredHarnessResult,
+  selection: SessionConfig,
 ): MeasuredHarnessResult {
-  context.usage.add(ticketId, sessionKind, result.usage, context.config.stages[sessionKind].model);
+  context.usage.add(ticketId, sessionKind, result.usage, selection.model);
   return result;
 }
 
@@ -363,13 +399,14 @@ async function runStageSession(
   prompt: string,
   roundDirectory: string,
   preSessionHead: string,
+  agent: LockedStageAgent,
   continueSessionId?: string,
 ): Promise<StageOutcome> {
   const verdictPath = path.join(roundDirectory, `${stage}.verdict.json`);
   const logPath = path.join(roundDirectory, `${stage}.log.jsonl`);
   context.log.emit("stage_start", ticket.id, {
     stage,
-    ...sessionSelectionFields(context.config, stage),
+    ...selectionFields(agent.config),
     ...(continueSessionId ? { isContinuation: true } : {}),
   });
   const result = await runHeldSession(
@@ -379,6 +416,7 @@ async function runStageSession(
     prompt,
     { cwd: worktree.path, logPath, ...(continueSessionId ? { continueSessionId } : {}) },
     (event) => narrateSessionActivity(context, ticket.id, stage, event),
+    agent,
   );
   // The agent wrote its verdict inside the worktree (the only place sandboxed
   // permission modes allow); collect it before anything commits the tree.
@@ -389,6 +427,7 @@ async function runStageSession(
     verdictPath,
     preSessionHead,
     usage: result.usage,
+    agent,
     ...(result.sessionId ? { sessionId: result.sessionId } : {}),
   };
 }
@@ -412,11 +451,13 @@ async function runStageWithFallback(
   roundDirectory: string,
   freshPrompt: () => Promise<string>,
   continuation: ContinuationSpecification | null,
+  lockedAgent?: LockedStageAgent,
 ): Promise<StageOutcome> {
   // One reset target for the whole stage: a fallback session inherits whatever
   // the continuation left, and both are folded into the same handoff commit.
   const preSessionHead = await parseRevision(worktree.path, "HEAD");
   if (continuation) {
+    const agent = lockedAgent ?? currentStageAgent(context, stage);
     const outcome = await runStageSession(
       context,
       ticket,
@@ -425,6 +466,7 @@ async function runStageWithFallback(
       continuation.prompt,
       roundDirectory,
       preSessionHead,
+      agent,
       continuation.sessionId,
     );
     if (outcome.ok || (await fileExists(outcome.verdictPath))) return outcome;
@@ -432,14 +474,17 @@ async function runStageWithFallback(
       text: `${stage}: continuation failed; restarting fresh`,
     });
   }
+  const prompt = await freshPrompt();
+  const agent = lockedAgent ?? currentStageAgent(context, stage);
   return runStageSession(
     context,
     ticket,
     worktree,
     stage,
-    await freshPrompt(),
+    prompt,
     roundDirectory,
     preSessionHead,
+    agent,
   );
 }
 
@@ -465,6 +510,7 @@ async function runVerdictCorrectionAttempt(
   prompt: string,
   preSessionHead: string,
   sessionId: string | undefined,
+  agent: LockedStageAgent,
 ): Promise<StageOutcome> {
   await ensureDirectory(attemptDirectory);
   if (sessionId) {
@@ -476,6 +522,7 @@ async function runVerdictCorrectionAttempt(
       prompt,
       attemptDirectory,
       preSessionHead,
+      agent,
       sessionId,
     );
     if (outcome.ok || (await fileExists(outcome.verdictPath))) return outcome;
@@ -491,6 +538,7 @@ async function runVerdictCorrectionAttempt(
     prompt,
     attemptDirectory,
     preSessionHead,
+    agent,
   );
 }
 
@@ -541,6 +589,7 @@ async function readStageVerdictWithCorrections<Verdict>(
       verdictCorrectionPrompt(error, reportedPath),
       initialOutcome.preSessionHead,
       sessionId,
+      initialOutcome.agent,
     );
     combinedUsage = combineSessionUsage(combinedUsage, outcome.usage);
     outcome = { ...outcome, usage: combinedUsage };
@@ -818,6 +867,7 @@ export async function runQaStage(
     roundDirectory,
     freshPrompt,
     continuation,
+    options.previousSession?.agent,
   );
   const result = await readStageVerdictWithCorrections(
     context,
@@ -833,7 +883,7 @@ export async function runQaStage(
   context.log.emit("stage_end", ticket.id, {
     stage: "qa",
     verdict: verdict?.verdict ?? (outcome.ok ? "invalid-verdict" : "session-failed"),
-    ...stageUsageFields(context, ticket.id, "qa", outcome.usage),
+    ...stageUsageFields(context, ticket.id, "qa", outcome.usage, outcome.agent.config),
   });
   return result;
 }
@@ -885,6 +935,7 @@ async function runImplementationStage(
   sessionId: string | undefined;
   preSessionHead: string;
   usage: SessionUsage;
+  agent: LockedStageAgent;
 }> {
   const { roundDirectory, history, resume } = input;
   const variables = commonVariables(
@@ -922,6 +973,7 @@ async function runImplementationStage(
     roundDirectory,
     freshPrompt,
     continuation,
+    input.previousSession?.agent,
   );
   const result = await readStageVerdictWithCorrections(
     context,
@@ -938,11 +990,12 @@ async function runImplementationStage(
     sessionId: outcome.sessionId,
     preSessionHead: outcome.preSessionHead,
     usage: outcome.usage,
+    agent: outcome.agent,
   });
   context.log.emit("stage_end", ticket.id, {
     stage: "implementation",
     verdict: verdict?.status ?? (outcome.ok ? "invalid-verdict" : "session-failed"),
-    ...stageUsageFields(context, ticket.id, "implementation", outcome.usage),
+    ...stageUsageFields(context, ticket.id, "implementation", outcome.usage, outcome.agent.config),
   });
   if (result.invalidVerdictFailure)
     return staged({ kind: "blocked", reason: result.invalidVerdictFailure });
@@ -1064,7 +1117,7 @@ async function runCodeReviewStage(
   ticket: Ticket,
   worktree: Worktree,
   input: CodeReviewStageInput,
-): Promise<{ step: CodeReviewStep; sessionId: string | undefined }> {
+): Promise<{ step: CodeReviewStep; sessionId: string | undefined; agent: LockedStageAgent }> {
   const target = context.config.integration.targetBranch;
   const variables = {
     ...commonVariables(context, ticket, worktree, agentVerdictPath(worktree.path, "code-review")),
@@ -1104,6 +1157,7 @@ async function runCodeReviewStage(
     input.roundDirectory,
     freshPrompt,
     continuation,
+    input.previousSession?.agent,
   );
   const result = await readStageVerdictWithCorrections(
     context,
@@ -1122,7 +1176,7 @@ async function runCodeReviewStage(
   context.log.emit("stage_end", ticket.id, {
     stage: "code-review",
     verdict: verdict?.verdict ?? (outcome.ok ? "invalid-verdict" : "session-failed"),
-    ...stageUsageFields(context, ticket.id, "code-review", outcome.usage),
+    ...stageUsageFields(context, ticket.id, "code-review", outcome.usage, outcome.agent.config),
   });
   const judgment = judgeCodeReview(result, input, context.config.pipeline.maxRounds);
   await recordStagePhase(
@@ -1130,7 +1184,7 @@ async function runCodeReviewStage(
     judgment.handoff,
     assembleStageComment(judgment.handoff, judgment.detail),
   );
-  return { sessionId: outcome.sessionId, step: judgment.step };
+  return { sessionId: outcome.sessionId, step: judgment.step, agent: outcome.agent };
 }
 
 type RoundStep =
@@ -1356,7 +1410,7 @@ async function runImplementationGateIteration(
     preSessionHead: implementation.preSessionHead,
   };
   const hasChanges = await prepareSessionHandoff(context, ticket, preparedInput);
-  const nextSession = { sessionId: implementation.sessionId };
+  const nextSession = { sessionId: implementation.sessionId, agent: implementation.agent };
   if (exitStep)
     return {
       kind: "exit",
@@ -1503,7 +1557,11 @@ async function runRound(
     previousSession: memory["code-review"],
     previousFailure,
   });
-  memory["code-review"] = { sessionId: review.sessionId, lastSeenCommit: headCommit };
+  memory["code-review"] = {
+    sessionId: review.sessionId,
+    lastSeenCommit: headCommit,
+    agent: review.agent,
+  };
   observations.push(...review.step.observations);
   if (review.step.kind === "blocked")
     return {
@@ -1634,6 +1692,7 @@ async function runQaPhase(
   const memory = {
     sessionId: qa.outcome.sessionId,
     lastSeenCommit: committed?.sha ?? input.headCommit,
+    agent: qa.outcome.agent,
   };
   const collected = {
     decisions: qa.verdict?.decisions ?? [],
