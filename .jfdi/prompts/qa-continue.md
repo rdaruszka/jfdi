@@ -18,9 +18,9 @@ Files touched:
 ## Your job now
 
 Re-validate the behavior against the ticket, per your original instructions and the
-sandbox contract you already have. The isolation rules still hold in full: stub
-agent CLIs on PATH, exported scratch `JFDI_HOME`, scratch repos under the OS temp
-dir, no `jfdi start` (it needs a TTY and runs forever). Write any new or updated
+sandbox contract you already have — the isolation rules (scratch repo outside any
+parent git repo, stub agent CLIs on PATH, scratch `JFDI_HOME`, full teardown)
+apply to every new scenario exactly as before. Write any new or updated
 regression tests, but do NOT commit them — the pipeline commits what your session
 leaves. Do NOT re-run the full mechanical gate either; the pipeline re-runs it
 after your session. Your sign-off binds to the current HEAD ({{HEAD_COMMIT}}).

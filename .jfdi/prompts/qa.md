@@ -28,40 +28,24 @@ How to build, launch, drive, and tear down the product under test:
 
 {{SANDBOX}}
 
-## This project — what to distrust and how to exercise it
-
-The product under test is JFDI itself: a CLI that spawns agent sessions and
-creates git worktrees. That shapes everything:
-
-- **A green suite proves less than usual here.** The existing tests stub the
-  agent CLIs and fake the harness; your job is to drive the built `dist/`
-  end-to-end per the sandbox contract and confirm the *ticket's* behavior, not
-  the diff's. Distrust completion claims until you've watched the CLI do it.
-- **The isolation rules in the contract are not optional.** An inner JFDI run
-  that reaches a real `claude`/`codex` binary can spawn real (paid, runaway)
-  sessions; one without a scratch `JFDI_HOME` writes into the real
-  `~/.jfdi/projects/`. Stub CLIs on PATH and an exported scratch `JFDI_HOME`,
-  every scenario, no exceptions.
-- **`jfdi start` needs a TTY and runs forever** — it will hang a headless
-  session. Drive `run`, `status`, `logs`, `merge`, `init` instead. Behavior the
-  TUI would show is observable without it: every transition lands in
-  `$JFDI_HOME/projects/<project-key>/events.jsonl` and the derived
-  `state.json` — assert on those; the TUI is a pure renderer over them.
-- **Encode what you verified as `*.e2e.test.ts` under `src/`,** following the
-  existing suites' conventions: scratch repos via `fs.mkdtemp` under the OS temp
-  dir (never inside the worktree — git and Claude Code walk up the tree), stub
-  harness scripts or `FakeHarness` from `src/test-helpers.ts`, deterministic
-  waits on conditions — never sleeps.
-- For a realistic target project to run JFDI against, mint a copy of the
-  half-app fixture with `createProjectFixture()` (`src/fixture-project.ts`) —
-  never run JFDI against `fixtures/half-app/` in place.
-
 ## Rules
 
 - Exercise the real artifact per the sandbox contract; do not just read code.
+- **The isolation rules in the contract are the highest-stakes part of this
+  session.** The product under test spawns agent sessions and creates git
+  worktrees; a scenario missing its scratch repo (outside any parent git repo),
+  its stub `claude`/`codex` on PATH, or its scratch `JFDI_HOME` export can call a
+  real paid provider or write into the developer's real `~/.jfdi/projects/`.
+  Verify the isolation is in place before each scenario runs, and tear down per
+  the contract afterwards.
 - Encode what you verified as automated end-to-end/regression tests, written on this
   branch — future runs must cover this behavior mechanically. Old behavior is already
-  covered by the existing suite; focus manual exercise on the new surface.
+  covered by the existing suite; focus manual exercise on the new surface. Follow
+  the repo's existing patterns: `src/*.e2e.test.ts` drives built behavior against
+  scratch repos, `src/*.qa.test.ts` marks prior QA acceptance suites, and
+  `FakeHarness`/stub scripts in `src/test-helpers.ts` play the agent sessions.
+  Tests wait on conditions, never sleep for durations, and control time and
+  randomness — a flaky test is a defect against the gate itself.
 - Run the tests you add to prove they pass, but do NOT re-run the full mechanical
   gate — it already passed on the reviewed commit, and the pipeline re-runs it
   mechanically after your session; a failure comes straight back to this ticket.

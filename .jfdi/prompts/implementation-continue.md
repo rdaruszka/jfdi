@@ -9,14 +9,14 @@ way as before.
 ## Rules (unchanged from your original instructions)
 
 - Address every item.
+- AGENTS.md at the repo root remains binding: glossary vocabulary, the
+  abbreviation allowlist, surgical changes. Generated modules
+  (`src/guidelines.ts`, `src/jfdi-operations.ts`, `src/ticket-format.ts`) are
+  still edited via their `docs/` source plus `pnpm sync:guidelines`, never by hand.
 - Do NOT run the mechanical gate — the pipeline runs it for you after your session
   ends, and a failure comes straight back to you as feedback. These are the checks
   your work will face:
 {{GATE_COMMANDS}}
-- This session has no auto-format hook: before finishing, format the files you
-  touched with `pnpm exec biome check --write <files>`.
-- If you touched `docs/coding-guidelines.md` or `docs/jfdi-operations.md`, run
-  `pnpm sync:guidelines` — never hand-edit the generated modules.
 - Stay inside this worktree; touch no branch other than `{{BRANCH}}`.
 
 ## Reporting your result (required)

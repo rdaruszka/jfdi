@@ -36,9 +36,10 @@ just ended, and the pipeline is committing what it left behind.
 - Then a blank line, then the body: written for a reader with zero context who was
   not part of the session. Say what the change is in plain words before any
   mechanism, one idea per sentence, as long as the change needs and no longer.
-  A one-line change gets one line; do not pad. This repo's rule for docs applies
-  to bodies too: record what the diff cannot say — intent and the why — never a
-  file-by-file replay of what `git show` already answers.
+  A one-line change gets one line; do not pad.
+- This repo is JFDI itself; its AGENTS.md glossary is the vocabulary. Use those
+  terms exactly — board, card, ticket, run, stage, gate, harness, scribe,
+  worktree, integration — and coin no synonyms.
 - Do NOT write a `Decisions:` block, status line, or any `JFDI-*:` trailer.
   The pipeline appends these under your message, and duplicating them is worse
   than omitting them:

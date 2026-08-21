@@ -27,34 +27,10 @@ Diffstat:
 
 ## This project
 
-The codebase is JFDI itself — the tool running this pipeline. `AGENTS.md` at the
-repo root is the standard: treat its Code guidelines, glossary, and hard
-invariants as questions to answer about this diff, not background prose. Where
-it bites hardest here, in order:
-
-1. **Over-defense and scope creep — the top failure grounds.** JFDI's inputs are
-   largely LLM output, and the house rule is *assert what the operation needs;
-   sanitize only what the sink can't survive*. A requirement we merely asked an
-   agent for (a subject length, a tone) is a steer — output that misses it passes
-   through unchanged; truncating or padding it into shape is the same over-defense
-   in another costume. Fail the diff for: validation or scrubbing with no named,
-   reachable failure; normalization no ticket requested; recovery paths for
-   impossible states (those get assertions); speculative configurability;
-   abstractions with one caller; blended versions of two existing patterns.
-2. **Hard invariants** (AGENTS.md lists all nine): provider-specific details
-   outside `src/harness/` implementations; UI code reading anything but
-   `events.jsonl`/`state.json`; board writes that aren't read → mtime-check →
-   temp-file-rename; anything but Integration touching the target branch;
-   agent-side commits or ticket-note writes.
-3. **Which JFDI is which.** `src/guidelines.ts` and `src/jfdi-operations.ts` are
-   generated — a diff that hand-edits them instead of editing the doc and
-   regenerating fails. A change to pipeline behavior that doesn't update
-   `docs/jfdi-operations.md` in the same diff fails; so does any doc the diff
-   falsifies but doesn't update. Instance config (`.jfdi/`) changes trace to an
-   explicit ticket instruction or fail scope.
-4. **Test isolation.** New tests: scratch repos under the OS temp dir only, stub
-   agent CLIs or `FakeHarness` only, scratch `JFDI_HOME` always. A test that
-   could touch the real home directory or spawn a real provider fails.
+The code under review is JFDI itself. `AGENTS.md` at the repo root is the
+binding standard — its Hard invariants, Glossary, abbreviation allowlist, and
+Code guidelines are each a question to answer about this diff, not background
+prose. The docs under `docs/` win over AGENTS.md on any conflict.
 
 ## Rules
 
@@ -63,8 +39,10 @@ it bites hardest here, in order:
 - Do not modify any files and do not commit — review only; you are not the author,
   and anything you leave behind is discarded before the next stage runs.
 - Anything a linter/formatter already enforces is out of scope; don't relitigate it.
-- Trust the gate result above — never re-run build/typecheck/test/lint commands
-  yourself.
+  Here that is a lot: biome enforces magic numbers, `any`, suppressed/focused
+  tests, unused code, function length, cognitive complexity; sweep tests enforce
+  banned abbreviations and dead exports. Spend your session on what they cannot see.
+- Trust the gate result above — never re-run build/test/lint commands yourself.
 - Fail only for issues that materially hurt the codebase; nitpicks belong in feedback
   as optional notes, not failure grounds.
 
@@ -72,30 +50,49 @@ it bites hardest here, in order:
 
 - **Scope:** does every changed line trace to the ticket? Anything speculative —
   unrequested features, configurability, abstractions with one caller — fails.
+- **Hard invariants (AGENTS.md):** does the diff keep renderer separation (UI
+  renders `events.jsonl`/`state.json` only), the harness abstraction (no provider
+  specifics in pipeline logic), serialized integration, atomic surgical board
+  writes, pipeline-owned commits and note writes, and configurable target branch
+  (never an assumed `main`)? A violation of any invariant fails outright.
+- **Over-defense:** JFDI's inputs are largely LLM output. Data the next step
+  strictly parses (a JSON verdict shape, an enum switched on) must be enforced;
+  a format merely *asked* of an agent (a 72-char subject, a tone) is a steer —
+  scrubbing, truncating, or coercing missed steers into shape is over-engineering
+  and fails, same as a missing check on a strict contract.
+- **Generated modules:** does the diff hand-edit `src/guidelines.ts`,
+  `src/jfdi-operations.ts`, or `src/ticket-format.ts` instead of editing the
+  `docs/` source and regenerating? That fails (and the drift test would catch it —
+  but say so precisely).
 - **Termination:** for each loop/recursion, what provably shrinks? An intentionally
-  unbounded loop must yield every iteration AND check a reachable exit condition.
-- **Assertions:** are trust boundaries (parsed board/ticket files, harness stream
-  events, subprocess output) checked for what the next step cannot proceed
-  without — and nothing more? Flag assertions that restate what the type system
-  proves, and any defense with no named, reachable failure.
+  unbounded loop (coordinator, watchers) must yield every iteration AND check a
+  reachable exit condition. Long-lived collections need an eviction story.
+- **Resources:** every subprocess, watcher, timer, file handle acquired in the
+  diff has a paired release on error paths too.
+- **Assertions:** are trust boundaries (`board.md` parses, ticket notes, harness
+  stream events, subprocess output, anything `JSON.parse`d) checked for what the
+  downstream step needs? Flag assertions that merely restate what the type system
+  proves.
 - **Suppressions:** every `biome-ignore`/`@ts-expect-error` needs a real reason at
   the site — "function is long" is not a reason. Gaming a mechanical tripwire
-  (splitting a function artificially to duck the length rule) is itself a failure.
+  (splitting a function artificially to duck a length rule) is itself a failure.
 - **Tests:** would each new test fail if the business logic broke? Tests mirroring
   the implementation (asserting methods were called) or tautologies don't count.
-  And are they deterministic — no sleep-based waits, no uncontrolled time,
-  ordering, or randomness? A flaky test is a failure in itself.
+  Deterministic — no sleep-based waits, no uncontrolled time, ordering, or
+  randomness. Scratch repos under the OS temp dir, never inside this repo; stub
+  harnesses/CLIs, never a real provider; a scratch `JFDI_HOME` wherever
+  JFDI-under-test runs. A flaky or leaky test is a failure in itself.
 - **Dependencies:** does the diff add a package? A real justification must be
   logged; a dependency standing in for a few dozen lines of code fails.
-- **Hygiene:** bare literals that encode decisions (thresholds, timeouts, limits)
-  without a named constant carrying its dimension; commented-out code; TODOs that
-  reference no ticket or observation; secrets or personal data anywhere.
-- **Naming:** do quantities carry their unit (`timeoutMs`, `sizeBytes`)? Only
-  allowlisted abbreviations (AGENTS.md keeps the list — `err`, `ctx`, `cfg` are
-  spelled out)? Does the diff coin a synonym for a glossary concept — card,
-  ticket, run, stage, round, sign-off, harness — instead of the established name?
-- **Docs:** does the diff contradict AGENTS.md or anything under `docs/`? A doc
-  the diff falsifies but doesn't update is a failure.
+- **Naming:** glossary terms used exactly, no synonyms coined (`ticket` never
+  `issue`, `stage` never `phase` for sessions); quantities carry their dimension
+  (`timeoutMs`, `sizeBytes`); booleans are positive predicates; abbreviations
+  outside the AGENTS.md allowlist fail.
+- **Hygiene:** commented-out code; TODOs that reference no ticket or observation;
+  secrets or personal data in code, logs, error messages, or fixtures.
+- **Docs:** does the diff contradict AGENTS.md, the glossary, or anything under
+  `docs/`? Pipeline-behavior changes must update `docs/jfdi-operations.md` in the
+  same diff. A doc the diff falsifies but doesn't update is a failure.
 - **Decisions:** does the code match the assumptions folded into the
   implementer's phase comment in the ticket note?
 

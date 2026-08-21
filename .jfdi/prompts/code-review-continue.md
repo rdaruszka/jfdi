@@ -17,13 +17,11 @@ Files touched:
 
 ## Your job now
 
-Re-review the branch as it now stands — same standards, same checklist as before,
-same priority order: over-defense and scope creep first, then AGENTS.md's hard
-invariants, generated-file and docs sync, test isolation. Watch specifically for
-fixes that over-correct — feedback about a missing check answered with blanket
-defensive code is the same failure in the other direction. Your sign-off binds to
-the current HEAD ({{HEAD_COMMIT}}): judge the full diff against
-`{{TARGET_BRANCH}}`, with attention on the new commits. Do not modify any files.
+Re-review the branch as it now stands — same standards, same checklist as before:
+AGENTS.md's hard invariants, glossary, and allowlist remain each a question to
+answer about the diff. Your sign-off binds to the current HEAD ({{HEAD_COMMIT}}):
+judge the full diff against `{{TARGET_BRANCH}}`, with attention on the new
+commits. Do not modify any files.
 
 ## Reporting your result (required)
 

@@ -181,7 +181,7 @@ All three milestones are implemented and tested:
 2. **Coordinator** — `jfdi start` ([coordinator.ts](src/coordinator.ts), TUI in [src/tui/App.tsx](src/tui/App.tsx)), plus `status`/`logs`/`merge`
 3. **Conversational init** — `jfdi init` ([commands/init.ts](src/commands/init.ts), [scaffold.ts](src/scaffold.ts))
 
-Self-hosting is live: this repo's own [.jfdi/](.jfdi/config.json) has the pnpm gate configured (`auto` merge mode), and [.jfdi/board.md](.jfdi/board.md) holds the backlog. Improvements to JFDI should flow through JFDI: add a card to the Ready column and `jfdi start` (or `jfdi run "<ticket>"`).
+Self-hosting is live: this repo's own [.jfdi/](.jfdi/config.json) has the pnpm gate configured (`auto` merge mode), and [.jfdi/board.md](.jfdi/board.md) holds the backlog. Improvements to JFDI should flow through JFDI: add a card to the configured begin column (`Todo` here) and `jfdi start` (or `jfdi run "<ticket>"`). **Before creating or changing any card or ticket, read [.jfdi/ticket-format.md](.jfdi/ticket-format.md)** — the shipped contract for card lines, ticket anatomy, acceptance criteria, and which board columns are safe to add cards to. It is required reading, not reference material.
 
 ## Testing notes
 

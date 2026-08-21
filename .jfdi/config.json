@@ -2,12 +2,12 @@
   "board": {
     "path": ".jfdi/board.md",
     "columns": {
-      "begin": "Todo",
+      "begin": "Ready",
       "inProgress": "In Progress",
       "done": "Done",
       "blocked": "Blocked",
       "readyToMerge": "Ready to Merge",
-      "inbox": "Agent"
+      "inbox": "Inbox"
     }
   },
   "ticketsDirectory": ".jfdi/tickets",
