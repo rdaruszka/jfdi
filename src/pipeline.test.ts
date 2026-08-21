@@ -154,6 +154,78 @@ describe("runPipeline", () => {
     ).toEqual(["replacement-review", "replacement-review"]);
   });
 
+  it("keeps a stage's first-fire settings for its later rounds when the config changes after it fires", async () => {
+    // The other half of the lock: a stage that has ALREADY fired must not adopt
+    // a settings change made mid-run — its round 2 continues with the harness
+    // and selection round 1 started with, because a continuation id is only
+    // meaningful to the harness that minted it.
+    let context: PipelineContext;
+    let reviewCalls = 0;
+    const replacementReview = new FakeHarness(() => {
+      throw new Error("an already-fired review must not adopt a later settings change");
+    });
+    const originalReview = new FakeHarness(async (prompt) => {
+      reviewCalls += 1;
+      if (reviewCalls === 1) {
+        // The save lands after code review has fired once this run.
+        context.config = {
+          ...context.config,
+          stages: {
+            ...context.config.stages,
+            "code-review": { harness: "claude", model: "replacement-review" },
+          },
+        };
+        context.harnesses = { ...context.harnesses, "code-review": replacementReview };
+        await writeVerdict(prompt, { verdict: "fail", feedback: "adjust the implementation" });
+      } else {
+        await writeVerdict(prompt, { verdict: "pass" });
+      }
+      return { ok: true, text: "", sessionId: "original-review" };
+    });
+    let implementationCalls = 0;
+    const implementation = new FakeHarness(async (prompt, options) => {
+      implementationCalls += 1;
+      await fs.writeFile(
+        path.join(options.cwd, "impl.txt"),
+        `implementation ${implementationCalls}\n`,
+      );
+      await writeVerdict(prompt, { status: "done", summary: "implemented" });
+      return { ok: true, text: "", sessionId: "original-implementation" };
+    });
+    const qa = new FakeHarness(async (prompt) => {
+      await writeVerdict(prompt, { verdict: "pass" });
+      return { ok: true, text: "" };
+    });
+    context = fixture.context(() => Promise.resolve({ ok: true, text: "" }));
+    context.config = {
+      ...context.config,
+      pipeline: { maxRounds: 2 },
+      stages: {
+        ...context.config.stages,
+        "code-review": { harness: "codex", model: "original-review" },
+      },
+    };
+    context.harnesses = { ...context.harnesses, implementation, "code-review": originalReview, qa };
+    const starts: JfdiEvent[] = [];
+    context.log.on((event) => {
+      if (event.type === "stage_start") starts.push(event);
+    });
+
+    const ticket = await resolveTicket("Keep first-fire review settings", fixture.ticketsDirectory);
+    expect((await runPipeline(context, ticket)).status).toBe("passed");
+
+    // Round 2's review continued with the round-1 harness; the replacement the
+    // mid-run save installed was never consulted, and both stage_start events
+    // still name the original selection.
+    expect(originalReview.calls).toHaveLength(2);
+    expect(replacementReview.calls).toHaveLength(0);
+    expect(
+      starts
+        .filter((event) => event.data?.stage === "code-review")
+        .map((event) => event.data?.model),
+    ).toEqual(["original-review", "original-review"]);
+  });
+
   it("happy path: implementation → gate → code review → QA → passed", async () => {
     const stages: string[] = [];
     const context = fixture.context(async (prompt, options) => {
